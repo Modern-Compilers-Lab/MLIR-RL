@@ -1,13 +1,12 @@
 # pylint: skip-file
 
-from utils.observation_utils import AutoScheduleOperation
 from random import randint, choice, shuffle
 from tqdm import tqdm
 import json
 
 BATCH_SIZES = [4, 8, 16, 32, 64, 256, 512]
-# HEIGHTS = [2**power for power in range(5, 11)]
-HEIGHTS = [2**power for power in range(8, 13)]
+HEIGHTS = [2**power for power in range(5, 11)]
+# HEIGHTS = [2**power for power in range(8, 13)]
 CHANNELS = [2**power for power in range(3, 11)]
 KERNELS = [1, 3, 5, 7]
 DILATIONS = [1, 2, 3]
@@ -705,14 +704,14 @@ LINALG_OPERATION_GENERATORS = {
     # "batch_matmul_transpose_a": [batch_matmul_transpose_a, MEDIUM],
     # "batch_matmul_transpose_b": [batch_matmul_transpose_b, MEDIUM],
     # "batch_reduce_matmul": [batch_reduce_matmul, MEDIUM],
-    "matmul": [matmul, 3000],
+    "matmul": [matmul, MEDIUM],
     # "matmul_transpose_a": [matmul_transpose_a, MEDIUM],
     # "matmul_transpose_b": [matmul_transpose_b, MEDIUM],
     # "conv_1d": [conv_1d, MEDIUM],
     # "conv_1d_ncw_fcw": [conv_1d_ncw_fcw, MEDIUM],
     # "conv_1d_nwc_wcf": [conv_1d_nwc_wcf, MEDIUM],
     # "conv_2d": [conv_2d, 2000],
-    # "conv_2d_nchw_fchw": [conv_2d_nchw_fchw, MEDIUM],
+    "conv_2d_nchw_fchw": [conv_2d_nchw_fchw, MEDIUM],
     # "conv_2d_ngchw_fgchw": [conv_2d_ngchw_fgchw, MEDIUM],
     # "conv_2d_nhwc_fhwc": [conv_2d_nhwc_fhwc, MEDIUM],
     # "conv_2d_nhwc_hwcf": [conv_2d_nhwc_hwcf, MEDIUM],
@@ -727,7 +726,7 @@ LINALG_OPERATION_GENERATORS = {
     # "depthwise_conv_3d_ncdhw_cdhw": [depthwise_conv_3d_ncdhw_cdhw, MEDIUM],
     # "depthwise_conv_3d_ndhwc_dhwc": [depthwise_conv_3d_ndhwc_dhwc, MEDIUM],
     # "depthwise_conv_3d_ndhwc_dhwcm": [depthwise_conv_3d_ndhwc_dhwcm, MEDIUM],
-    # "pooling_nchw_max": [pooling_nchw_max, MEDIUM],
+    "pooling_nchw_max": [pooling_nchw_max, MEDIUM],
     # "pooling_nchw_sum": [pooling_nchw_sum, MEDIUM],
     # "pooling_ncw_max": [pooling_ncw_max, MEDIUM],
     # "pooling_ncw_sum": [pooling_ncw_sum, MEDIUM],
@@ -750,8 +749,12 @@ for operation_name, (generator, amount) in tqdm(LINALG_OPERATION_GENERATORS.item
     for i in tqdm(range(amount), desc=operation_name):
         
         raw_operation = generator()
-        raw_operation = "linalg.matmul ins(%arg0, %arg1 : tensor<1200x1500xf32>, tensor<1500x1000xf32>) outs(%arg2 : tensor<1200x1000xf32>) -> tensor<1200x1000xf32>"
-        operation = AutoScheduleOperation(raw_operation)
+        
+        print(raw_operation)
+        
+        exit()
+        
+        # operation = AutoScheduleOperation(raw_operation)
 
         all_operations[f"{raw_operation}_{i}"] = {
             "operation": operation.operation,
