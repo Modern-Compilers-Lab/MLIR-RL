@@ -55,13 +55,12 @@ def apply_transformation(state, code, transformation, parameters):
     
     code = code.strip()
     code = code.replace("module {\n", "")
-    code = code.replace("\n}", "")    
-    # print(code)
+    # code = code.replace("\n}", "")
     # print('\n\n\n')
     
     # print(code)
     # print('\n\n\n')
-    
+        
     if transformation == 'tiling':
         new_code = transform_dialect_tile(code, state.operation_tag, parameters)
     elif transformation == 'parallelization':
@@ -82,7 +81,7 @@ def apply_transformation_wrapper(state, code, transformation, parameters, return
     res = apply_transformation(state, code, transformation, parameters)
     return_list.append(res)
     
-def apply_transformation_with_timeout(state, code, transformation, parameters, timeout):
+def apply_transformation_with_timeout(state, code, transformation, parameters, timeout):    
     manager = multiprocessing.Manager()
     return_list = manager.list()
     process = multiprocessing.Process(target=apply_transformation_wrapper, args=(state, code, transformation, parameters, return_list))
@@ -114,7 +113,7 @@ def evaluate_code(code, timeout=20):
     
     with open(tmp_file, "w") as file:
         file.write(code)
-    
+        
     out = os.popen(f"""{command_1} {tmp_file} | {command_2} /dev/stdin""").read()
     # out = os.popen(f"""{command_1} {tmp_file}""").read()
     
@@ -395,7 +394,10 @@ def speedup_reward(new, old):
 class Env:
     def __init__(self, operations_files, truncate=10, reset_repeat=1, step_repeat=1):
         
-        operations_files = [file for file in operations_files if any([ s in file[0] for s in ['matmul', 'conv', 'generic', 'pool'] ]) ]
+        # operations_files = [file for file in operations_files if any([ s in file[0] for s in ['matmul', 'conv', 'generic', 'pool'] ]) ]
+        
+        operations_files = [[details['operation']]+[details] for file, details in operations_files.items()]
+
         # operations_files = [file for file in operations_files if any([ s in file[0] for s in ['matmul'] ]) ]
         
         self.operations_files = operations_files
@@ -501,7 +503,8 @@ class Env:
         reward = 0
         time_out = False
 
-
+        # print(state.transformed_code)
+        
         if transformation != 'no_transformation':
             
             transformed_code = apply_transformation_with_timeout(

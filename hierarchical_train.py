@@ -81,7 +81,7 @@ class Buffer:
 
 
 
-def collect_trajectory(len_trajectory, model:MyModel, logs=False):
+def collect_trajectory(len_trajectory, model:MyModel, env:ParallelEnv, logs=False):
 
     batch_state, batch_obs = env.reset()
     batch_obs = [obs.to(device) for obs in batch_obs]
@@ -340,6 +340,44 @@ def ppo_update(trajectory, model, optimizer, ppo_epochs, ppo_batch_size, logs=Fa
     return acc_loss / loss_i
 
 
+def evaluate_benchamrk(model, env, logs):
+    
+    for i, operation in enumerate(env.env.operations_files):
+        
+        print(f'Operation ({i}):', env.env.operations_files[i][0])
+        
+        # Reset the environement with the specific operation
+        state, obs = env.reset(i)
+        obs = torch.cat(obs).to(device)
+
+        while True:
+
+            with torch.no_grad():
+                # Select the action using the model
+                action, action_log_p, values, entropy = model.sample(obs)
+
+            # Apply the action and get the next state
+            next_obs, reward, terminated, truncated, next_state, final_state = env.step(state, action, model)
+            
+            done = terminated[0] or truncated[0]
+            if done:
+                final_state = final_state[0]
+                speedup_metric = final_state.root_exec_time /  final_state.exec_time
+                print('Operation:', final_state.operation_id)
+                print('Base execution time:', final_state.root_exec_time / 1e9, 'ms')
+                print('New execution time:', final_state.exec_time / 1e9, 'ms')
+                print('speedup:', speedup_metric)
+                
+                if logs:
+                        neptune_logs[f'eval/{final_state.operation_id}_speedup'].append(speedup_metric)  
+                
+                break    
+
+            state = next_state
+            obs = torch.cat(next_obs).to(device)
+            
+        print('\n\n\n')
+
 # Start the training:
 
 
@@ -348,7 +386,7 @@ CONFIG = {
     'ppo_batch_size': 64,
     'steps':10000,
     'ppo_epochs':4,
-    'logs':False,
+    'logs':True,
     'entropy_coef':0.01,
     'lr':0.001,
     'truncate':5,
@@ -356,7 +394,7 @@ CONFIG = {
     # 'json_file':"generated_data/simple_ppo_(1200,1500)x(1500,1000)_matmul.json"
     # 'json_file':"generated_data/1_matmul__1_conv2d.json"
     # 'json_file':"generated_data/simple_nn_(1x1x32x32)operations.json"
-    'json_file':"generated_data/bigger_input_nn_(32x230x230x3)operations.json"
+    'json_file':"generated_data/250_matmul_250_conv.json"
     # 'json_file':"generated_data/nassim_5_matmuls.json"
     # 'json_file':"generated_data/nassim_2_matmuls.json"
     # 'json_file':"generated_data/matmul_vision_operations.json"
@@ -369,6 +407,14 @@ env = ParallelEnv(
     json_file=CONFIG["json_file"],
     num_env=1,
     truncate=CONFIG["truncate"],
+    reset_repeat=1,
+    step_repeat=1,
+)
+
+eval_env = ParallelEnv(
+    json_file="generated_data/10_matmul_10_conv.json",
+    num_env=1,
+    truncate=5,
     reset_repeat=1,
     step_repeat=1,
 )
@@ -415,7 +461,12 @@ if logs:
 tqdm_range = tqdm(range(CONFIG['steps']), desc='Main loop')
 for step in tqdm_range:
 
-    trajectory = collect_trajectory(CONFIG['len_trajectory'], model, logs=logs)
+    trajectory = collect_trajectory(
+        CONFIG['len_trajectory'], 
+        model, 
+        env,
+        logs=False
+    )
 
     loss = ppo_update(
         trajectory, 
@@ -423,15 +474,23 @@ for step in tqdm_range:
         optimizer, 
         ppo_epochs=CONFIG['ppo_epochs'], 
         ppo_batch_size=CONFIG['ppo_batch_size'], 
-        logs=logs
+        logs=True
     )
 
     torch.save(model.state_dict(), 'models/ppo_model_4.pt')
+    
 
-    print('\n\n\n\nloss', loss, '\n\n\n\n')
-
-    # print_alert(list(running_return_stats.buffers.keys()))
-    # print_alert(running_return_stats.buffers)
+    # print('\n\n\n\nloss', loss, '\n\n\n\n')
+    if step % 100 == 0:
+        evaluate_benchamrk(
+            model=model,
+            env=eval_env,
+            logs=True
+        )
+        
+        if logs:
+            neptune_logs["params"].upload_files(['models/ppo_model_4.pt'])
+        
     
 
 if logs:

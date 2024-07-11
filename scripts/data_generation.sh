@@ -14,4 +14,4 @@
 CONDA_DIR=/share/apps/NYUAD5/miniconda/3-4.11.0
 CONDA_ENV=/home/ia2280/.conda/envs/main_env_5
 conda activate $CONDA_ENV
-python data_generation_from_vision.py
+python data_generation.py

@@ -1,12 +1,12 @@
 from utils.observation_utils import function_wrapper, lower_linalg_to_loops
 from random import randint, choice, shuffle
 from tqdm import tqdm
-import json
-import re
+import json, re, multiprocessing, os
+from copy import copy
 
-
-BATCH_SIZES = [4, 8, 16, 32, 64, 256, 512]
-HEIGHTS = [2**power for power in range(5, 11)]
+BATCH_SIZES = [4, 8, 16, 32, 64, 256]
+SIZES = [2**power for power in range(5, 11)]
+HEIGHTS = [2**power for power in range(5, 10)]
 # HEIGHTS = [2**power for power in range(8, 13)]
 CHANNELS = [2**power for power in range(3, 11)]
 KERNELS = [1, 3, 5, 7]
@@ -56,7 +56,7 @@ def ceil():
     return f"linalg.ceil ins(%arg0 : tensor<{SHAPE}xf32>) outs(%arg1: tensor<{SHAPE}xf32>) -> tensor<{SHAPE}xf32>"
 
 
-def copy():
+def copy_():
     SHAPE = "x".join([str(choice(HEIGHTS)) for _ in range(randint(1, 4))])
     return f"linalg.copy ins(%arg0 : tensor<{SHAPE}xf32>) outs(%arg1: tensor<{SHAPE}xf32>) -> tensor<{SHAPE}xf32>"
 
@@ -117,9 +117,9 @@ def batch_reduce_matmul():
 
 
 def matmul():
-    N = choice(HEIGHTS)
-    K = choice(HEIGHTS)
-    M = choice(HEIGHTS)
+    N = choice(SIZES)
+    K = choice(SIZES)
+    M = choice(SIZES)
     return f"linalg.matmul ins(%arg0, %arg1 : tensor<{N}x{K}xf32>, tensor<{K}x{M}xf32>) outs(%arg2 : tensor<{N}x{M}xf32>) -> tensor<{N}x{M}xf32>"
 
 
@@ -716,7 +716,7 @@ def get_nested_loops_data(loops):
             new_op, _, _, *map_name__args = line.strip().split(' ')
             map_name__args = ' '.join(map_name__args)
             s = map_name__args.index('(')
-            map_name, args = map_name__args[:s], map_name__args[s+1:-1].split(', ')
+            map_name, args = map_name__args[:s], map_name__args[s+1:-1].split(', ')            
             mapping_string = copy(maps[map_name])
             for i in range(len(args)):
                 mapping_string = mapping_string.replace(f'd{i}', args[i])
@@ -889,6 +889,51 @@ def transform_wrapper(operation):
 
 
 
+def evaluate_code(code, timeout=20):
+    # command_1 = """/scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/bin/mlir-opt  -loop-invariant-code-motion -cse -canonicalize -cse -eliminate-empty-tensors -empty-tensor-to-alloc-tensor -one-shot-bufferize="bufferize-function-boundaries allow-return-allocs create-deallocs function-boundary-type-conversion=identity-layout-map" -buffer-deallocation -convert-linalg-to-loops -scf-foreach-thread-lowering  -convert-vector-to-scf -convert-scf-to-openmp -canonicalize -lower-affine -expand-strided-metadata -finalize-memref-to-llvm -convert-scf-to-cf -lower-affine -convert-arith-to-llvm -convert-openmp-to-llvm -convert-vector-to-llvm -convert-cf-to-llvm -convert-func-to-llvm -convert-math-to-llvm -reconcile-unrealized-casts"""
+    command_1 = """/scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/bin/mlir-opt  -loop-invariant-code-motion -cse -canonicalize -cse -eliminate-empty-tensors -empty-tensor-to-alloc-tensor -one-shot-bufferize="bufferize-function-boundaries function-boundary-type-conversion=identity-layout-map" -buffer-deallocation -convert-linalg-to-loops  -convert-vector-to-scf -convert-scf-to-openmp -canonicalize -lower-affine -expand-strided-metadata -finalize-memref-to-llvm -convert-scf-to-cf -lower-affine -convert-arith-to-llvm -convert-openmp-to-llvm -convert-vector-to-llvm -convert-cf-to-llvm -convert-func-to-llvm -convert-math-to-llvm -reconcile-unrealized-casts"""
+    command_2 = """/scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/bin/mlir-cpu-runner -e main -entry-point-result=void -shared-libs=/scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/lib/libmlir_runner_utils.so,/scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/lib/libmlir_c_runner_utils.so,/scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/lib/libomp.so"""
+    
+    tmp_file = "/scratch/nb3891/Script/MLIR_RL_2/examples/temp_mlir.mlir"
+    # tmp_file = "generated_mlir/bigger_input_nn.mlir"
+    
+    os.environ["OMP_NUM_THREADS"] = "8"
+    
+    with open(tmp_file, "w") as file:
+        file.write(code)
+    
+    out = os.popen(f"""{command_1} {tmp_file} | {command_2} /dev/stdin""").read()
+    # out = os.popen(f"""{command_1} {tmp_file}""").read()
+    
+    if out:
+        return int(out.strip().split('\n')[-1])
+    else:
+        return None
+
+def evaluate_code_wrapper(code, return_list):
+    res = evaluate_code(code)
+    return_list.append(res)
+
+def evaluate_code_with_timeout(code, timeout):
+    manager = multiprocessing.Manager()
+    return_list = manager.list()
+    process = multiprocessing.Process(target=evaluate_code_wrapper, args=(code, return_list))
+    process.start()
+    process.join(timeout)
+
+    if process.is_alive():
+        # The function is still running, terminate the process
+        process.terminate()
+        process.join()
+
+        return None
+    else:
+        # The function completed within the timeout
+        return return_list[0]
+
+
+
+
 
 LINALG_OPERATION_GENERATORS = {
     # "add": [add, SMALL],
@@ -897,21 +942,21 @@ LINALG_OPERATION_GENERATORS = {
     # "mul": [mul, SMALL],
     # "abs": [abs, SMALL],
     # "ceil": [ceil, SMALL],
-    # "copy": [copy, MEDIUM],
+    # "copy": [copy_, MEDIUM],
     # "fill": [fill, BIG],
     # "transpose": [transpose, BIG],
     # "batch_matmul": [batch_matmul, MEDIUM],
     # "batch_matmul_transpose_a": [batch_matmul_transpose_a, MEDIUM],
     # "batch_matmul_transpose_b": [batch_matmul_transpose_b, MEDIUM],
     # "batch_reduce_matmul": [batch_reduce_matmul, MEDIUM],
-    "matmul": [matmul, MEDIUM],
+    "matmul": [matmul, 10],
     # "matmul_transpose_a": [matmul_transpose_a, MEDIUM],
     # "matmul_transpose_b": [matmul_transpose_b, MEDIUM],
     # "conv_1d": [conv_1d, MEDIUM],
     # "conv_1d_ncw_fcw": [conv_1d_ncw_fcw, MEDIUM],
     # "conv_1d_nwc_wcf": [conv_1d_nwc_wcf, MEDIUM],
     # "conv_2d": [conv_2d, 2000],
-    "conv_2d_nchw_fchw": [conv_2d_nchw_fchw, MEDIUM],
+    "conv_2d_nchw_fchw": [conv_2d_nchw_fchw, 10],
     # "conv_2d_ngchw_fgchw": [conv_2d_ngchw_fgchw, MEDIUM],
     # "conv_2d_nhwc_fhwc": [conv_2d_nhwc_fhwc, MEDIUM],
     # "conv_2d_nhwc_hwcf": [conv_2d_nhwc_hwcf, MEDIUM],
@@ -950,8 +995,8 @@ for operation_name, (generator, amount) in tqdm(LINALG_OPERATION_GENERATORS.item
         
         raw_operation = generator()
         
-        print(raw_operation)
-        
+        # print(raw_operation)
+                
         wrapped_operation = function_wrapper(raw_operation)  
         loops = lower_linalg_to_loops(wrapped_operation)            
         
@@ -959,20 +1004,26 @@ for operation_name, (generator, amount) in tqdm(LINALG_OPERATION_GENERATORS.item
         
         transform_wrapped_operation = transform_wrapper(raw_operation)
         
-        continue
+        # continue
+        exec_time = evaluate_code_with_timeout(transform_wrapped_operation, 30)
         
-        # operation = AutoScheduleOperation(raw_operation)
+        if exec_time:
+            all_operations[f"{raw_operation}"] = {
+                "operation": raw_operation,
+                "wrapped_operation": wrapped_operation,
+                "lowered_operation": loops,
+                "transform_wrapped_operation": transform_wrapped_operation,
+                "loops_data": loops_data,
+                "execution_time":exec_time,
+            }
+        else:
+            continue
+        
+        # print(raw_operation, end='\n\n\n')
+        # print(wrapped_operation, end='\n\n\n')
+        # print(loops, end='\n\n\n')
+        # print(transform_wrapped_operation, end='\n\n\n')
+        # print(loops_data, end='\n\n\n')
 
-        all_operations[f"{raw_operation}_{i}"] = {
-            "operation": operation.operation,
-            "wrapped_operation": operation.wrapped_operation,
-            "lowered_operation": operation.lowered_operation,
-            "transform_wrapped_operation": operation.transform_wrapped_operation,
-            "loops_data": operation.loops_data,
-        }
-
-        break
-    # break
-
-    # with open(f"./generated_data/linalg_one_matmul_generated_operations.json", "w") as file:
-    #     json.dump(all_operations, file)
+    with open(f"./generated_data/10_matmul_10_conv.json", "w") as file:
+        json.dump(all_operations, file)

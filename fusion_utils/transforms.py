@@ -83,18 +83,16 @@ def transform_dialect_TP(code, operation_tag, tiling_size, fusion=False):
     # if "module {" in code:
         # code = code[:-1] + transform_dilaect_code + '\n}'
     # else:
-    code = code + transform_dilaect_code + '\n'
-        
-    # print(code)
-    
+    code = code + transform_dilaect_code
+                
     tmp_file = "/scratch/nb3891/Script/MLIR_RL_2/examples/temp_mlir.mlir"    
     with open(tmp_file, "w") as file:
         file.write(code)
     
     result = os.popen(
         f'/scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/bin/mlir-opt {tmp_file} -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule',
-    ).read()    
-    
+    ).read()
+        
     result = result.replace("module {\n", "")
     result = result.replace("\n}\n", "")
     result = result.replace("module attributes {transform.with_named_sequence} {\n  }", "")

@@ -12,9 +12,7 @@ from utils.consts import (
     MAX_NUM_LOAD_STORE_DIM
 )
 
-sys.path.append('./llvm-project/build/tools/mlir/python_packages/mlir_core')
-from mlir.ir import Context, Module, AffineMapAttr
-from mlir import ir
+
 
 def remove_duplicate_args(args, shapes):
     args_shapes = list(zip(args, shapes))
