@@ -4,7 +4,9 @@ from utils.consts import PPO_ACTIONS
 from utils.consts import (
     MAX_NUM_STORES_LOADS,
     MAX_NUM_LOOPS,
-    MAX_NUM_LOAD_STORE_DIM
+    MAX_NUM_LOAD_STORE_DIM,
+    NUM_TILE_SIZES,
+    NUM_TRANSFORMATIONS
 )
 
 import torch
@@ -133,6 +135,8 @@ def collect_trajectory(len_trajectory, model:MyModel, env:ParallelEnv, logs=Fals
                 print(final_state.transformation_history)
                 print('cummulative_reward:', final_state.cummulative_reward)
                 print('speedup:', speedup_metric)
+                print('Old Exec time:', final_state.root_exec_time*1e-9, 'ms')
+                print('New Exec time:', final_state.exec_time*1e-9, 'ms')
                 print('-'*70)
                 if logs:
                     neptune_logs['train/final_speedup'].append(speedup_metric)
@@ -369,7 +373,7 @@ def evaluate_benchamrk(model, env, logs):
                 print('speedup:', speedup_metric)
                 
                 if logs:
-                        neptune_logs[f'eval/{final_state.operation_id}_speedup'].append(speedup_metric)  
+                    neptune_logs[f'eval/{final_state.operation_id}_speedup'].append(speedup_metric)  
                 
                 break    
 
@@ -386,21 +390,22 @@ CONFIG = {
     'ppo_batch_size': 64,
     'steps':10000,
     'ppo_epochs':4,
-    'logs':True,
+    'logs':False,
     'entropy_coef':0.01,
     'lr':0.001,
     'truncate':5,
     # 'json_file':"generated_data/(32x230x230x3)_(7x7x3x64)_(32x112x112x64)_conv2d.json"
     # 'json_file':"generated_data/simple_ppo_(1200,1500)x(1500,1000)_matmul.json"
-    # 'json_file':"generated_data/1_matmul__1_conv2d.json"
     # 'json_file':"generated_data/simple_nn_(1x1x32x32)operations.json"
-    'json_file':"generated_data/250_matmul_250_conv.json"
     # 'json_file':"generated_data/nassim_5_matmuls.json"
     # 'json_file':"generated_data/nassim_2_matmuls.json"
     # 'json_file':"generated_data/matmul_vision_operations.json"
     # 'json_file':"generated_data/conv_2d_50_vision_operations.json"
     # 'json_file':"generated_data/conv_2d_vision_operations.json"
     # 'json_file':"generated_data/conv_2d_nhwc_fhwc_vision_operations.json"
+    # 'json_file':"generated_data/matmul_1200x1500x1000.json"
+    'json_file':"generated_data/1_matmul__1_conv2d.json"
+    # 'json_file':"generated_data/250_matmul_250_conv.json"
 }
 
 env = ParallelEnv(
@@ -412,7 +417,7 @@ env = ParallelEnv(
 )
 
 eval_env = ParallelEnv(
-    json_file="generated_data/10_matmul_10_conv.json",
+    json_file="generated_data/1_matmul__1_conv2d.json",
     num_env=1,
     truncate=5,
     reset_repeat=1,
@@ -429,7 +434,9 @@ print_info('input_dim:', input_dim)
 
 model = MyModel(
     input_dim=input_dim,
-    num_loops=MAX_NUM_LOOPS
+    num_loops=MAX_NUM_LOOPS,
+    num_tiles=NUM_TILE_SIZES,
+    num_transformations=NUM_TRANSFORMATIONS,
 )
 
 
@@ -474,21 +481,21 @@ for step in tqdm_range:
         optimizer, 
         ppo_epochs=CONFIG['ppo_epochs'], 
         ppo_batch_size=CONFIG['ppo_batch_size'], 
-        logs=True
+        logs=False
     )
 
-    torch.save(model.state_dict(), 'models/ppo_model_4.pt')
+    # torch.save(model.state_dict(), 'models/ppo_model_4.pt')
     
 
     # print('\n\n\n\nloss', loss, '\n\n\n\n')
-    if step % 100 == 0:
+    if step % 20 == 0:
         evaluate_benchamrk(
             model=model,
             env=eval_env,
-            logs=True
+            logs=False
         )
         
-        if logs:
+        if logs and neptune_logs is not None:
             neptune_logs["params"].upload_files(['models/ppo_model_4.pt'])
         
     

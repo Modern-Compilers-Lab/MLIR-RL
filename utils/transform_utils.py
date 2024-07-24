@@ -132,86 +132,37 @@ def apply_maxpool_decomposition(code):
     return result
 
 
-def evaluate_code(code, repeat=1):
-
-    # Parse the generated code
-    module = Module.parse(code, context=context)
-
-    pm = PassManager.parse(
-        "builtin.module("
-        "cse,"
-        "one-shot-bufferize{ bufferize-function-boundaries },"
-        "func.func(buffer-deallocation),"
-        "convert-linalg-to-loops,"
-        # "convert-scf-to-cf,"
-        "convert-scf-to-openmp,"
-        "canonicalize,"
-        "lower-affine,"
-        "expand-strided-metadata,"
-        "finalize-memref-to-llvm,"
-        "convert-scf-to-cf,"
-        "lower-affine,"
-        # "convert-complex-to-llvm,"
-        "convert-arith-to-llvm,"
-        "convert-openmp-to-llvm,"
-        "convert-cf-to-llvm,"
-        "convert-func-to-llvm,"
-        "reconcile-unrealized-casts"
-        ")",
-        context=context
-    )
-
-    pm.run(module.operation)
-
-    # print(module.operation)
-
-    shared_libs = [
-        "/scratch/nb3891/Script/MLIR_RL_2/llvm-project/lib/libmlir_runner_utils.so",
-        "/scratch/nb3891/Script/MLIR_RL_2/llvm-project/lib/libmlir_c_runner_utils.so",
-    ]
-
-    execution_engine = ExecutionEngine(module, shared_libs=shared_libs)
-    c_float_p = ctypes.c_int64 * 1
-    
-
-    execution_times = []
-    for _ in range(repeat):
-        res = c_float_p(0)
-        execution_engine.invoke("main", res)
-        execution_times.append(res[0])
-
-    return sum(execution_times) / len(execution_times)
-
-
-def evaluate_code_2(code):
-    
-    # command_1 = """/scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/bin/mlir-opt  -loop-invariant-code-motion -cse -canonicalize -cse -eliminate-empty-tensors -empty-tensor-to-alloc-tensor --one-shot-bufferize="bufferize-function-boundaries allow-return-allocs create-deallocs function-boundary-type-conversion=identity-layout-map" -buffer-deallocation -convert-linalg-to-loops -scf-foreach-thread-lowering  -convert-vector-to-scf -convert-scf-to-openmp -canonicalize -lower-affine -expand-strided-metadata -finalize-memref-to-llvm -convert-scf-to-cf -lower-affine -convert-arith-to-llvm -convert-openmp-to-llvm -convert-vector-to-llvm -convert-cf-to-llvm -convert-func-to-llvm --convert-math-to-llvm -reconcile-unrealized-casts"""
-    command_1 = """/scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/bin/mlir-opt  -loop-invariant-code-motion -cse -canonicalize -cse -eliminate-empty-tensors -empty-tensor-to-alloc-tensor --one-shot-bufferize="bufferize-function-boundaries allow-return-allocs create-deallocs function-boundary-type-conversion=identity-layout-map" -buffer-deallocation -convert-linalg-to-loops  -convert-vector-to-scf -convert-scf-to-openmp -canonicalize -lower-affine -expand-strided-metadata -finalize-memref-to-llvm -convert-scf-to-cf -lower-affine -convert-arith-to-llvm -convert-openmp-to-llvm -convert-vector-to-llvm -convert-cf-to-llvm -convert-func-to-llvm --convert-math-to-llvm -reconcile-unrealized-casts"""
+def evaluate_code(code, timeout=20):
+    command_1 = """/scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/bin/mlir-opt  -loop-invariant-code-motion -cse -canonicalize -cse -eliminate-empty-tensors -empty-tensor-to-alloc-tensor -one-shot-bufferize="bufferize-function-boundaries function-boundary-type-conversion=identity-layout-map" -buffer-deallocation -convert-linalg-to-loops  -scf-foreach-thread-lowering -convert-vector-to-scf -convert-scf-to-openmp -canonicalize -lower-affine -expand-strided-metadata -finalize-memref-to-llvm -convert-scf-to-cf -lower-affine -convert-arith-to-llvm -convert-openmp-to-llvm -convert-vector-to-llvm -convert-cf-to-llvm -convert-func-to-llvm -convert-math-to-llvm -reconcile-unrealized-casts"""
     command_2 = """/scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/bin/mlir-cpu-runner -e main -entry-point-result=void -shared-libs=/scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/lib/libmlir_runner_utils.so,/scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/lib/libmlir_c_runner_utils.so,/scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/lib/libomp.so"""
     
     tmp_file = "/scratch/nb3891/Script/MLIR_RL_2/examples/temp_mlir.mlir"
+    # tmp_file = "generated_mlir/bigger_input_nn.mlir"
     
     os.environ["OMP_NUM_THREADS"] = "8"
     
     with open(tmp_file, "w") as file:
         file.write(code)
-    
+        
     out = os.popen(f"""{command_1} {tmp_file} | {command_2} /dev/stdin""").read()
+    # out = os.popen(f"""{command_1} {tmp_file}""").read()
+    
     if out:
-        out = out.split('\n')[1]
-        return int(out)
+        return int(out.strip().split('\n')[-1])
     else:
         return None
 
-
-def evaluate_code_wrapper(code, return_list):
-    res = evaluate_code_2(code)
+def evaluate_code_wrapper(code, return_list, state):
+    res = evaluate_code(code)
+    # if res:res /= 21
+    # if state:
+        # if 'conv' in state.operation_id:res /= 54
     return_list.append(res)
 
-def evaluate_code_with_timeout(code, timeout):
+def evaluate_code_with_timeout(code, timeout, state=None):
     manager = multiprocessing.Manager()
     return_list = manager.list()
-    process = multiprocessing.Process(target=evaluate_code_wrapper, args=(code, return_list))
+    process = multiprocessing.Process(target=evaluate_code_wrapper, args=(code, return_list, state))
     process.start()
     process.join(timeout)
 
@@ -224,7 +175,11 @@ def evaluate_code_with_timeout(code, timeout):
     else:
         # The function completed within the timeout
         return return_list[0]
-    
+
+
+
+
+
     
 def apply_transformation_wrapper(code, transformation, parameters, return_list):
     res = apply_transformation(code, transformation, parameters)

@@ -5,7 +5,7 @@ from torch.distributions import Categorical
 
 from tqdm import tqdm
 
-from utils.consts import PPO_ACTIONS, MAX_NUM_LOOPS
+from utils.consts import PPO_ACTIONS, MAX_NUM_LOOPS, NUM_TRANSFORMATIONS
 
 
 
@@ -17,7 +17,7 @@ class HiearchyModel(nn.Module):
             input_dim, 
             num_loops=3,
             num_transformations=3,
-            num_tiles=4
+            num_tiles=NUM_TRANSFORMATIONS
             ):
         super(HiearchyModel, self).__init__()
 
@@ -26,7 +26,7 @@ class HiearchyModel(nn.Module):
         self.num_transformations = num_transformations
         self.num_tiles = num_tiles
         
-        self.action_mask_size = 4 + MAX_NUM_LOOPS + MAX_NUM_LOOPS + 3*MAX_NUM_LOOPS - 6
+        self.action_mask_size = NUM_TRANSFORMATIONS + MAX_NUM_LOOPS + MAX_NUM_LOOPS + 3*MAX_NUM_LOOPS - 6
 
         self.backbone = nn.Sequential(
             nn.Linear(input_dim, 512),
@@ -47,7 +47,7 @@ class HiearchyModel(nn.Module):
             nn.Linear(512, 1),
         )
 
-        self.transformation_selection = nn.Linear(512, num_transformations+1) # +1 for the stop operation
+        self.transformation_selection = nn.Linear(512, num_transformations) # +1 for the stop operation
         self.interchange_fc = nn.Linear(512, (3*MAX_NUM_LOOPS - 6))
         self.tiling_fc = nn.Linear(512, num_loops * (num_tiles+1)) # +1 for the no tiling
         self.parall_fc = nn.Linear(512, num_loops * (num_tiles+1)) # +1 for the no parallelizattion
@@ -65,13 +65,13 @@ class HiearchyModel(nn.Module):
         # decompose action mask:
         L = MAX_NUM_LOOPS
     
-        TP_BEGIN = 4
+        TP_BEGIN = NUM_TRANSFORMATIONS
         T_BEGIN = TP_BEGIN + L
         I_BEGIN_2C = T_BEGIN + L
         I_BEGIN_3C = I_BEGIN_2C + (L-1)
         I_BEGIN_4C = I_BEGIN_3C + (L-2)
         
-        transform_mask = action_mask[..., :4]
+        transform_mask = action_mask[..., :NUM_TRANSFORMATIONS]
         TP_mask = action_mask[..., TP_BEGIN:T_BEGIN]
         T_mask = action_mask[..., T_BEGIN:I_BEGIN_2C]
         I_mask = action_mask[..., I_BEGIN_2C:]
@@ -108,7 +108,7 @@ class HiearchyModel(nn.Module):
             parall_index      = parall_dist.sample()
             
         else:
-            
+                        
             transformation_index = torch.zeros((len(actions),), dtype=torch.int64)
             parall_index = torch.zeros((len(actions), L), dtype=torch.int64)
             tiling_index = torch.zeros((len(actions), L), dtype=torch.int64)
@@ -127,6 +127,8 @@ class HiearchyModel(nn.Module):
                 elif action_name == 'interchange':
                     transformation_index[i] = 3
                     interchange_index[i] = parameters
+                elif action_name == 'img2col':
+                    transformation_index[i] = 4
 
 
         # Get the action prob and log_prob
@@ -136,7 +138,6 @@ class HiearchyModel(nn.Module):
         parall_log_p = F.log_softmax(parall_logits, dim=-1).gather(-1, parall_index.unsqueeze(-1)).reshape(*leading_dims, -1)
         
 
-        
         tiling_log_p = torch.where(T_mask, tiling_log_p, 0).sum(-1, keepdim=True)
         parall_log_p = torch.where(TP_mask, parall_log_p, 0).sum(-1, keepdim=True)
         
@@ -162,6 +163,9 @@ class HiearchyModel(nn.Module):
             elif transformation_index[i] == 3:
                 actions.append(['interchange', interchange_index[i].item()])
                 
+            elif transformation_index[i] == 4:
+                actions.append(['img2col', None])
+                
 
         transformation_log_p, interchange_log_p, tiling_log_p, parall_log_p = transformation_log_p.reshape(-1), interchange_log_p.reshape(-1), tiling_log_p.reshape(-1), parall_log_p.reshape(-1)
 
@@ -180,96 +184,3 @@ class HiearchyModel(nn.Module):
         
         return actions, action_log_p, values, entropy
         # return action_log_p, entropy, values, sub_entropies
-    
-    
-    
-    
-    
-
-class PPOSimpleModel(nn.Module):
-    def __init__(
-            self, 
-            input_dim, 
-            num_loops=3,
-            num_actions=None,
-            ):
-        super(PPOSimpleModel, self).__init__()
-
-        self.input_dim = input_dim
-        self.num_loops = num_loops
-        self.num_actions = num_actions if num_actions is not None else len(PPO_ACTIONS)
-        
-        self.backbone = nn.Sequential(
-            nn.Linear(input_dim, 512),
-            nn.ReLU(),
-            nn.Linear(512, 512),
-            nn.ReLU(),
-            nn.Linear(512, 512),
-            nn.ReLU(),
-        )
-
-        
-        self.policy_network = nn.Linear(512, self.num_actions)
-        self.value_network = nn.Sequential(
-            nn.Linear(512, 256),
-            nn.ReLU(),
-            nn.Linear(256, 1),
-        )
-
-
-    def sample(self, obs):
-        *leading_dims, _ = obs.shape
-        
-        x           = obs[..., :-self.num_actions]
-        action_mask = obs[..., -self.num_actions:].bool()
-                
-        # Model inference:
-        x = self.backbone(x)
-        logits = self.policy_network(x)
-        values = self.value_network(x)
-        
-        # Apply the mask on the transformations:
-        transformation_logits = torch.where(action_mask, logits, -float('inf'))
-        # print(transformation_logits, action_mask.shape, transformation_logits.shape)
-        
-        # Get the actions indices:
-        transformation_dist = Categorical(logits=transformation_logits)
-        transformation_index = transformation_dist.sample()
-        
-
-        # Get the action prob and log_prob
-        transformation_log_p = F.log_softmax(transformation_logits, dim=-1).gather(-1, transformation_index.unsqueeze(-1))
-        
-        actions = transformation_index.tolist()
-        action_log_p = transformation_log_p.reshape(-1)
-
-        return actions, action_log_p, values
-    
-    
-    
-    def get_p(self, obs, actions):
-        
-        *leading_dims, _ = obs.shape
-        
-        x           = obs[..., :-self.num_actions]
-        action_mask = obs[..., -self.num_actions:].bool()
-
-        # Model inference:
-        x = self.backbone(x)
-        logits = self.policy_network(x)
-        values = self.value_network(x)
-        
-        # Apply the mask on the transformations:
-        transformation_logits = torch.where(action_mask, logits, -float('inf'))
-        transformation_index = torch.tensor(actions)
-
-        # Get the action prob and log_prob
-        transformation_log_p = F.log_softmax(transformation_logits, dim=-1).gather(-1, transformation_index.unsqueeze(-1))
-
-
-        action_log_p = transformation_log_p.reshape(-1)
-        entropy = Categorical(logits=transformation_logits).entropy().mean()
-        
-        # return action_log_p, value, entropy, sub_entropies
-        return action_log_p, entropy, values
-  

@@ -529,53 +529,6 @@ def apply_transformation_with_timeout(state, code, transformation, parameters, t
 
 
 
-def evaluate_code(code, timeout=20):
-    # command_1 = """/scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/bin/mlir-opt  -loop-invariant-code-motion -cse -canonicalize -cse -eliminate-empty-tensors -empty-tensor-to-alloc-tensor -one-shot-bufferize="bufferize-function-boundaries allow-return-allocs create-deallocs function-boundary-type-conversion=identity-layout-map" -buffer-deallocation -convert-linalg-to-loops -scf-foreach-thread-lowering  -convert-vector-to-scf -convert-scf-to-openmp -canonicalize -lower-affine -expand-strided-metadata -finalize-memref-to-llvm -convert-scf-to-cf -lower-affine -convert-arith-to-llvm -convert-openmp-to-llvm -convert-vector-to-llvm -convert-cf-to-llvm -convert-func-to-llvm -convert-math-to-llvm -reconcile-unrealized-casts"""
-    command_1 = """/scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/bin/mlir-opt  -loop-invariant-code-motion -cse -canonicalize -cse -eliminate-empty-tensors -empty-tensor-to-alloc-tensor -one-shot-bufferize="bufferize-function-boundaries function-boundary-type-conversion=identity-layout-map" -buffer-deallocation -convert-linalg-to-loops  -convert-vector-to-scf -convert-scf-to-openmp -canonicalize -lower-affine -expand-strided-metadata -finalize-memref-to-llvm -convert-scf-to-cf -lower-affine -convert-arith-to-llvm -convert-openmp-to-llvm -convert-vector-to-llvm -convert-cf-to-llvm -convert-func-to-llvm -convert-math-to-llvm -reconcile-unrealized-casts"""
-    command_2 = """/scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/bin/mlir-cpu-runner -e main -entry-point-result=void -shared-libs=/scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/lib/libmlir_runner_utils.so,/scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/lib/libmlir_c_runner_utils.so,/scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/lib/libomp.so"""
-    
-    tmp_file = "/scratch/nb3891/Script/MLIR_RL_2/examples/temp_mlir.mlir"
-    # tmp_file = "generated_mlir/bigger_input_nn.mlir"
-    
-    os.environ["OMP_NUM_THREADS"] = "8"
-    
-    with open(tmp_file, "w") as file:
-        file.write(code)
-    
-    out = os.popen(f"""{command_1} {tmp_file} | {command_2} /dev/stdin""").read()
-    # out = os.popen(f"""{command_1} {tmp_file}""").read()
-    
-    if out:
-        return int(out.strip().split('\n')[-1])
-    else:
-        return None
-
-def evaluate_code_wrapper(code, return_list):
-    res = evaluate_code(code)
-    return_list.append(res)
-
-def evaluate_code_with_timeout(code, timeout):
-    manager = multiprocessing.Manager()
-    return_list = manager.list()
-    process = multiprocessing.Process(target=evaluate_code_wrapper, args=(code, return_list))
-    process.start()
-    process.join(timeout)
-
-    if process.is_alive():
-        # The function is still running, terminate the process
-        process.terminate()
-        process.join()
-
-        return None
-    else:
-        # The function completed within the timeout
-        return return_list[0]
-
-
-
-
-
-
 
 
 

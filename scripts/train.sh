@@ -9,6 +9,7 @@
 #SBATCH -o jobs_logs/job.%J.out
 #SBATCH -e jobs_logs/job.%J.err
 #SBATCH --mem=64G
+#SBATCH --reservation=c2
 
 CONDA_DIR=/share/apps/NYUAD5/miniconda/3-4.11.0
 CONDA_ENV=/home/ia2280/.conda/envs/main_env_5
