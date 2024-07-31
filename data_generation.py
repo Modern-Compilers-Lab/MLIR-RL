@@ -11,8 +11,8 @@ HEIGHTS = [2**power for power in range(5, 10)]
 # HEIGHTS = [2**power for power in range(8, 13)]
 CHANNELS = [2**power for power in range(3, 11)]
 KERNELS = [1, 3, 5, 7]
-DILATIONS = [1, 2, 3]
-STRIDES = [1, 2, 3]
+DILATIONS = [1]
+STRIDES = [1, 2]
 SMALL, MEDIUM, BIG = 250, 500, 1000
 
 def choice_topped(choices, max_value):
@@ -206,7 +206,8 @@ def conv_2d_nchw_fchw():
     N = choice(BATCH_SIZES)
     C = choice(CHANNELS)
     H = choice(HEIGHTS)
-    W = choice(HEIGHTS)
+    # W = choice(HEIGHTS)
+    W = H
 
     dilation = choice(DILATIONS)
     stride = choice(STRIDES)
@@ -913,8 +914,8 @@ LINALG_OPERATION_GENERATORS = {
     # "conv_1d": [conv_1d, MEDIUM],
     # "conv_1d_ncw_fcw": [conv_1d_ncw_fcw, MEDIUM],
     # "conv_1d_nwc_wcf": [conv_1d_nwc_wcf, MEDIUM],
-    "conv_2d": [conv_2d, 2000],
-    # "conv_2d_nchw_fchw": [conv_2d_nchw_fchw, 10],
+    # "conv_2d": [conv_2d, 1],
+    "conv_2d_nchw_fchw": [conv_2d_nchw_fchw, 10],
     # "conv_2d_ngchw_fgchw": [conv_2d_ngchw_fgchw, MEDIUM],
     # "conv_2d_nhwc_fhwc": [conv_2d_nhwc_fhwc, MEDIUM],
     # "conv_2d_nhwc_hwcf": [conv_2d_nhwc_hwcf, MEDIUM],
@@ -958,11 +959,11 @@ if __name__ == '__main__':
             raw_operation = generator()
             
             # print(raw_operation)
-            if 'matmul' in operation_name:
-                raw_operation = "linalg.matmul ins(%arg0, %arg1 : tensor<1200x1500xf32>, tensor<1500x1000xf32>) outs(%arg2 : tensor<1200x1000xf32>) -> tensor<1200x1000xf32>"
-            elif 'conv' in operation_name:
-                # raw_operation = "linalg.conv_2d_nhwc_hwcf {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<32x230x230x3xf32>, tensor<7x7x3x64xf32>) outs (%init: tensor<32x112x112x64xf32>) -> tensor<32x112x112x64xf32>"
-                raw_operation = "linalg.conv_2d_nchw_fchw {dilations = dense<1> : vector<2xi64>, strides = dense<2> : vector<2xi64>} ins (%input, %filter: tensor<32x3x230x230xf32>, tensor<64x3x7x7xf32>) outs (%init: tensor<32x64x112x112xf32>) -> tensor<32x64x112x112xf32>"
+            # if 'matmul' in operation_name:
+            #     raw_operation = "linalg.matmul ins(%arg0, %arg1 : tensor<1200x1500xf32>, tensor<1500x1000xf32>) outs(%arg2 : tensor<1200x1000xf32>) -> tensor<1200x1000xf32>"
+            # elif 'conv' in operation_name:
+            #     # raw_operation = "linalg.conv_2d_nhwc_hwcf {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<32x230x230x3xf32>, tensor<7x7x3x64xf32>) outs (%init: tensor<32x112x112x64xf32>) -> tensor<32x112x112x64xf32>"
+            #     raw_operation = "linalg.conv_2d_nchw_fchw {dilations = dense<1> : vector<2xi64>, strides = dense<2> : vector<2xi64>} ins (%input, %filter: tensor<32x3x230x230xf32>, tensor<64x3x7x7xf32>) outs (%init: tensor<32x64x112x112xf32>) -> tensor<32x64x112x112xf32>"
                   
             wrapped_operation = function_wrapper(raw_operation)  
             loops = lower_linalg_to_loops(wrapped_operation)            
@@ -992,7 +993,5 @@ if __name__ == '__main__':
             # print(transform_wrapped_operation, end='\n\n\n')
             # print(loops_data, end='\n\n\n')
             
-            break
-
-        with open(f"./generated_data/1_matmul__1_conv2d.json", "w") as file:
+        with open(f"./generated_data/10_matmul_10_conv2d.json", "w") as file:
             json.dump(all_operations, file)

@@ -131,7 +131,7 @@ def collect_trajectory(len_trajectory, model:MyModel, env:ParallelEnv, logs=Fals
             if done:
                 speedup_metric = final_state.root_exec_time /  final_state.exec_time
                 print('-'*70)
-                print(final_state.operation_id)
+                print(final_state.raw_operation)
                 print(final_state.transformation_history)
                 print('cummulative_reward:', final_state.cummulative_reward)
                 print('speedup:', speedup_metric)
@@ -141,10 +141,10 @@ def collect_trajectory(len_trajectory, model:MyModel, env:ParallelEnv, logs=Fals
                 if logs:
                     neptune_logs['train/final_speedup'].append(speedup_metric)
                     neptune_logs['train/cummulative_reward'].append(final_state.cummulative_reward)
-                    neptune_logs[f'train/{final_state.operation_id}_speedup'].append(speedup_metric)
+                    neptune_logs[f'train/{final_state.raw_operation}_speedup'].append(speedup_metric)
                     
                 
-                # running_return_stats.add(final_state.operation_id, speedup_metric)
+                # running_return_stats.add(final_state.raw_operation, speedup_metric)
                     
 
 
@@ -271,12 +271,12 @@ def ppo_update(trajectory, model, optimizer, ppo_epochs, ppo_batch_size, logs=Fa
         if epoch == 0:
             for i in range(len(returns)):
                 if returns[i] != 0:
-                    running_return_stats.add(stored_state[i].operation_id, returns[i].item())
+                    running_return_stats.add(stored_state[i].raw_operation, returns[i].item())
         
         
         # for i in range(len(returns)):
         #     if returns[i] != 0:
-        #         returns[i] = returns[i] / running_return_stats.std(stored_state[i].operation_id)
+        #         returns[i] = returns[i] / running_return_stats.std(stored_state[i].raw_operation)
 
         
         stored_action_index, stored_action_log_p, stored_x, stored_advantage, stored_returns = shuffle_ppo_data(stored_action_index, stored_action_log_p, stored_x, advantage, returns)
@@ -367,13 +367,13 @@ def evaluate_benchamrk(model, env, logs):
             if done:
                 final_state = final_state[0]
                 speedup_metric = final_state.root_exec_time /  final_state.exec_time
-                print('Operation:', final_state.operation_id)
+                print('Operation:', final_state.raw_operation)
                 print('Base execution time:', final_state.root_exec_time / 1e9, 'ms')
                 print('New execution time:', final_state.exec_time / 1e9, 'ms')
                 print('speedup:', speedup_metric)
                 
                 if logs:
-                    neptune_logs[f'eval/{final_state.operation_id}_speedup'].append(speedup_metric)  
+                    neptune_logs[f'eval/{final_state.raw_operation}_speedup'].append(speedup_metric)  
                 
                 break    
 
@@ -390,7 +390,7 @@ CONFIG = {
     'ppo_batch_size': 64,
     'steps':10000,
     'ppo_epochs':4,
-    'logs':False,
+    'logs':True,
     'entropy_coef':0.01,
     'lr':0.001,
     'truncate':5,
@@ -404,8 +404,9 @@ CONFIG = {
     # 'json_file':"generated_data/conv_2d_vision_operations.json"
     # 'json_file':"generated_data/conv_2d_nhwc_fhwc_vision_operations.json"
     # 'json_file':"generated_data/matmul_1200x1500x1000.json"
-    'json_file':"generated_data/1_matmul__1_conv2d.json"
-    # 'json_file':"generated_data/250_matmul_250_conv.json"
+    # 'json_file':"generated_data/1_matmul__1_conv2d.json"
+    'json_file':"generated_data/250_matmul_250_conv.json"
+    # 'json_file':"generated_data/10_matmul_10_conv2d.json",
 }
 
 env = ParallelEnv(
@@ -417,7 +418,7 @@ env = ParallelEnv(
 )
 
 eval_env = ParallelEnv(
-    json_file="generated_data/1_matmul__1_conv2d.json",
+    json_file="generated_data/10_matmul_10_conv2d.json",
     num_env=1,
     truncate=5,
     reset_repeat=1,
@@ -425,10 +426,11 @@ eval_env = ParallelEnv(
 )
 
 print_info('Env build ...')
+print_info(f'tmp_file = {env.env.tmp_file}')
 
 print(CONFIG)
 
-input_dim = MAX_NUM_LOOPS + MAX_NUM_LOOPS*MAX_NUM_LOAD_STORE_DIM*MAX_NUM_STORES_LOADS + MAX_NUM_LOOPS*MAX_NUM_LOAD_STORE_DIM + 5 + \
+input_dim =  1 + MAX_NUM_LOOPS + MAX_NUM_LOOPS*MAX_NUM_LOAD_STORE_DIM*MAX_NUM_STORES_LOADS + MAX_NUM_LOOPS*MAX_NUM_LOAD_STORE_DIM + 5 + \
     MAX_NUM_LOOPS*3*CONFIG["truncate"]
 print_info('input_dim:', input_dim)
 
@@ -481,22 +483,21 @@ for step in tqdm_range:
         optimizer, 
         ppo_epochs=CONFIG['ppo_epochs'], 
         ppo_batch_size=CONFIG['ppo_batch_size'], 
-        logs=False
+        logs=True
     )
 
-    # torch.save(model.state_dict(), 'models/ppo_model_4.pt')
-    
+    torch.save(model.state_dict(), 'models/ppo_model_matmul.pt')
 
-    # print('\n\n\n\nloss', loss, '\n\n\n\n')
+    print('\n\n\n\nloss', loss, '\n\n\n\n')
     if step % 20 == 0:
         evaluate_benchamrk(
             model=model,
             env=eval_env,
-            logs=False
+            logs=True
         )
         
         if logs and neptune_logs is not None:
-            neptune_logs["params"].upload_files(['models/ppo_model_4.pt'])
+            neptune_logs["params"].upload_files(['models/ppo_model_matmul.pt'])
         
     
 

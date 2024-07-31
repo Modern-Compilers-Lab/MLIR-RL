@@ -151,13 +151,15 @@ class HiearchyModel(nn.Module):
             elif transformation_index[i] == 1:
                 params = []
                 for j in range(parall_index[i].shape[0]):
-                    if TP_mask[i, j] == True:params.append( parall_index[i, j].item() )
+                    if TP_mask[i, j] == True:
+                        params.append( parall_index[i, j].item() )
                 actions.append(['parallelization', params])
                 
             elif transformation_index[i] == 2:
                 params = []
                 for j in range(tiling_index[i].shape[0]):
-                    if T_mask[i, j] == True:params.append( tiling_index[i, j].item() )
+                    if T_mask[i, j] == True:
+                        params.append( tiling_index[i, j].item() )
                 actions.append(['tiling', params])
                 
             elif transformation_index[i] == 3:

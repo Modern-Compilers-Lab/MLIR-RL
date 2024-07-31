@@ -77,7 +77,7 @@ def get_ast(raw_ast_info):
 
 
 
-def transform_dialect_TP(code, operation_tag, tiling_size, fusion=False):
+def transform_dialect_TP(code, operation_tag, tiling_size, tmp_file):
     
     code = code.strip()
     # t = [0]*len(tiling_size) if len(tiling_size) != 7 and fusion==False else tiling_size
@@ -89,7 +89,7 @@ def transform_dialect_TP(code, operation_tag, tiling_size, fusion=False):
     # else:
     code = code + transform_dilaect_code
                 
-    tmp_file = "/scratch/nb3891/Script/MLIR_RL_2/examples/temp_mlir.mlir"    
+    # tmp_file = "/scratch/nb3891/Script/MLIR_RL_2/examples/temp_mlir.mlir"    
     with open(tmp_file, "w") as file:
         file.write(code)
     
@@ -105,7 +105,7 @@ def transform_dialect_TP(code, operation_tag, tiling_size, fusion=False):
 
 
 
-def transform_dialect_tile(code, operation_tag, tiling_size):
+def transform_dialect_tile(code, operation_tag, tiling_size, tmp_file):
     code = code.strip()
     n_loops = sum([s != 0 for s in tiling_size])
     r = ', '.join(['!transform.any_op']*n_loops)
@@ -126,7 +126,7 @@ def transform_dialect_tile(code, operation_tag, tiling_size):
         
     # print(code)
     
-    tmp_file = "/scratch/nb3891/Script/MLIR_RL_2/examples/temp_mlir.mlir"    
+    # tmp_file = "/scratch/nb3891/Script/MLIR_RL_2/examples/temp_mlir.mlir"    
     with open(tmp_file, "w") as file:
         file.write(code)
     
@@ -144,7 +144,7 @@ def transform_dialect_tile(code, operation_tag, tiling_size):
 
 
 
-def transform_dialect_interchange(code, operation_tag, interchange_list):
+def transform_dialect_interchange(code, operation_tag, interchange_list, tmp_file):
     code = code.strip()
     
     transform_dilaect_code = f"""
@@ -161,7 +161,7 @@ def transform_dialect_interchange(code, operation_tag, interchange_list):
         
     # print(code)
     
-    tmp_file = "/scratch/nb3891/Script/MLIR_RL_2/examples/temp_mlir.mlir"    
+    # tmp_file = "/scratch/nb3891/Script/MLIR_RL_2/examples/temp_mlir.mlir"    
     with open(tmp_file, "w") as file:
         file.write(code)
     
@@ -183,7 +183,7 @@ def transform_dialect_interchange(code, operation_tag, interchange_list):
 
 
 
-def transform_dialect_fuse(code, consumer_tag, producer_tag):
+def transform_dialect_fuse(code, consumer_tag, producer_tag, tmp_file):
     code = code.strip()
     
     transform_dilaect_code = f'\nmodule attributes {{transform.with_named_sequence}} {{\n  transform.named_sequence @__transform_main(%arg1: !transform.any_op {{transform.readonly}}) {{\n    %op_{producer_tag} = transform.structured.match attributes{{tag = "{producer_tag}"}} in %arg1 : (!transform.any_op) -> !transform.any_op\n    %op_{consumer_tag} = transform.structured.match attributes{{tag = "{consumer_tag}"}} in %arg1 : (!transform.any_op) -> !transform.any_op\n\n    %forall_op_{consumer_tag} = transform.get_parent_op %op_{consumer_tag}: (!transform.any_op) -> !transform.any_op\n\n    transform.structured.fuse_into_containing_op %op_{producer_tag} into %forall_op_{consumer_tag} : (!transform.any_op, !transform.any_op) -> (!transform.any_op, !transform.any_op)\n\n    transform.yield\n  }}\n}}'
@@ -193,7 +193,7 @@ def transform_dialect_fuse(code, consumer_tag, producer_tag):
         
     # print(code)
     
-    tmp_file = "/scratch/nb3891/Script/MLIR_RL_2/examples/temp_mlir.mlir"    
+    # tmp_file = "/scratch/nb3891/Script/MLIR_RL_2/examples/temp_mlir.mlir"    
     with open(tmp_file, "w") as file:
         file.write(code)
     
@@ -210,7 +210,7 @@ def transform_dialect_fuse(code, consumer_tag, producer_tag):
 
 
 
-def transform_dialect_vectorise_(code, operation_tag):
+def transform_dialect_vectorise_(code, operation_tag, tmp_file):
   
     code = code.strip()
 
@@ -259,7 +259,7 @@ module attributes {{transform.with_named_sequence}} {{
     code = code + '\n' + transform_dilaect_code + '\n'
         
     # print(code)
-    tmp_file = "/scratch/nb3891/Script/MLIR_RL_2/examples/temp_mlir.mlir"    
+    # tmp_file = "/scratch/nb3891/Script/MLIR_RL_2/examples/temp_mlir.mlir"    
     with open(tmp_file, "w") as file:
         file.write(code)
     
@@ -274,7 +274,9 @@ module attributes {{transform.with_named_sequence}} {{
     
     return result
 
-def transform_dialect_vectorise(code, operation_tag):
+
+
+def transform_dialect_vectorise_img2col(code, operation_tag, tmp_file):
   
     code = code.strip()
 
@@ -289,7 +291,95 @@ transform.named_sequence @__transform_main(%variant_op: !transform.any_op {{tran
   %forall_op = transform.structured.match ops{{["scf.forall"]}}  in %variant_op : (!transform.any_op) -> !transform.any_op
   
   
-  %original_fill = transform.structured.match ops{{["linalg"]}} in %variant_op : (!transform.any_op) -> !transform.any_op
+  
+  %producer = transform.structured.match attributes{{tag = "img2col_producer"}} in %variant_op : (!transform.any_op) -> !transform.any_op
+  transform.structured.fuse_into_containing_op %producer into %forall_op : (!transform.any_op, !transform.any_op) -> (!transform.any_op, !transform.any_op)
+
+  %fb = transform.structured.match ops{{["func.func"]}} in %variant_op : (!transform.any_op) -> !transform.any_op
+  transform.apply_patterns to %fb {{
+    transform.apply_patterns.canonicalization
+  }} : !transform.any_op
+  transform.apply_cse to %fb : !transform.any_op
+  
+  
+  %original_fill = transform.structured.match ops{{["linalg.fill"]}} in %variant_op : (!transform.any_op) -> !transform.any_op
+  transform.structured.fuse_into_containing_op %original_fill into %forall_op : (!transform.any_op, !transform.any_op) -> (!transform.any_op, !transform.any_op)
+  
+  %fb1 = transform.structured.match ops{{["func.func"]}} in %variant_op : (!transform.any_op) -> !transform.any_op
+  transform.apply_patterns to %fb1 {{
+    transform.apply_patterns.canonicalization
+  }} : !transform.any_op
+  transform.apply_cse to %fb1 : !transform.any_op
+  
+  
+  
+   %func = transform.structured.match ops{{["func.func"]}} in %variant_op
+   : (!transform.any_op) -> !transform.any_op
+  %func_0 = transform.structured.vectorize_children_and_apply_patterns %func {{vectorize_padding}}
+    : (!transform.any_op) -> (!transform.any_op)
+
+       // Step 4. Vector backend
+  // ======================================================
+  %f = transform.structured.match ops{{["func.func"]}} in %variant_op
+    : (!transform.any_op) -> !transform.any_op
+
+  transform.apply_patterns to %f {{
+    transform.apply_patterns.vector.lower_contraction lowering_strategy = "outerproduct"
+    transform.apply_patterns.vector.transfer_permutation_patterns
+    transform.apply_patterns.vector.lower_multi_reduction lowering_strategy = "innerparallel"
+    transform.apply_patterns.vector.split_transfer_full_partial split_transfer_strategy = "vector-transfer"
+    transform.apply_patterns.vector.transfer_to_scf max_transfer_rank = 1 full_unroll = true
+    transform.apply_patterns.vector.lower_transfer max_transfer_rank = 1
+    transform.apply_patterns.vector.lower_shape_cast
+    transform.apply_patterns.vector.lower_transpose lowering_strategy = "shuffle_1d"
+    transform.apply_patterns.canonicalization
+  }} : !transform.any_op
+  
+  
+
+  transform.yield
+}}
+}}
+""".strip()
+
+    
+          
+    code = code + '\n' + transform_dilaect_code + '\n'
+        
+    # print(code)
+    # tmp_file = "/scratch/nb3891/Script/MLIR_RL_2/examples/temp_mlir.mlir"    
+    with open(tmp_file, "w") as file:
+        file.write(code)
+    
+    result = os.popen(
+        f'/scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/bin/mlir-opt {tmp_file} -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule',
+    ).read()
+    
+    result = result.replace("module {\n", "")
+    result = result.replace("\n}\n", "")
+    result = result.replace("module attributes {transform.with_named_sequence} {\n  }", "")
+    
+    
+    return result
+ 
+
+
+def transform_dialect_vectorise(code, operation_tag, tmp_file):
+  
+    code = code.strip()
+
+    transform_dilaect_code = f"""
+module attributes {{transform.with_named_sequence}} {{
+transform.named_sequence @__transform_main(%variant_op: !transform.any_op {{transform.readonly}}) 
+{{
+    
+  // %conv_gen_2 = transform.structured.match attributes{{tag = "{operation_tag}"}} in %variant_op : (!transform.any_op) -> !transform.any_op
+  // %forall_op = transform.get_parent_op %conv_gen_2: (!transform.any_op) -> !transform.any_op
+  
+  %forall_op = transform.structured.match ops{{["scf.forall"]}}  in %variant_op : (!transform.any_op) -> !transform.any_op
+  
+  
+  %original_fill = transform.structured.match ops{{["linalg.fill"]}} in %variant_op : (!transform.any_op) -> !transform.any_op
   transform.structured.fuse_into_containing_op %original_fill into %forall_op : (!transform.any_op, !transform.any_op) -> (!transform.any_op, !transform.any_op)
   
   %func = transform.structured.match ops{{["func.func"]}} in %variant_op: (!transform.any_op) -> !transform.any_op
@@ -305,7 +395,7 @@ transform.named_sequence @__transform_main(%variant_op: !transform.any_op {{tran
     code = code + '\n' + transform_dilaect_code + '\n'
         
     # print(code)
-    tmp_file = "/scratch/nb3891/Script/MLIR_RL_2/examples/temp_mlir.mlir"    
+    # tmp_file = "/scratch/nb3891/Script/MLIR_RL_2/examples/temp_mlir.mlir"    
     with open(tmp_file, "w") as file:
         file.write(code)
     
@@ -320,14 +410,14 @@ transform.named_sequence @__transform_main(%variant_op: !transform.any_op {{tran
     
     return result
 
-def evaluate_code_2(code):
+def evaluate_code_2(code, tmp_file):
     # command_1 = """/scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/bin/mlir-opt  -loop-invariant-code-motion -cse -canonicalize -cse -eliminate-empty-tensors -empty-tensor-to-alloc-tensor -one-shot-bufferize="bufferize-function-boundaries allow-return-allocs create-deallocs function-boundary-type-conversion=identity-layout-map" -buffer-deallocation -convert-linalg-to-loops -scf-foreach-thread-lowering  -convert-vector-to-scf -convert-scf-to-openmp -canonicalize -lower-affine -expand-strided-metadata -finalize-memref-to-llvm -convert-scf-to-cf -lower-affine -convert-arith-to-llvm -convert-openmp-to-llvm -convert-vector-to-llvm -convert-cf-to-llvm -convert-func-to-llvm -convert-math-to-llvm -reconcile-unrealized-casts"""
     # command_1 = """/scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/bin/mlir-opt  -loop-invariant-code-motion -cse -canonicalize -cse -eliminate-empty-tensors -empty-tensor-to-alloc-tensor -one-shot-bufferize="bufferize-function-boundaries function-boundary-type-conversion=identity-layout-map" -buffer-deallocation -convert-linalg-to-loops  -convert-vector-to-scf -convert-scf-to-openmp -canonicalize -lower-affine -expand-strided-metadata -finalize-memref-to-llvm -convert-scf-to-cf -lower-affine -convert-arith-to-llvm -convert-openmp-to-llvm -convert-vector-to-llvm -convert-cf-to-llvm -convert-func-to-llvm -convert-math-to-llvm -reconcile-unrealized-casts"""
     # command_1 = """/scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/bin/mlir-opt  -loop-invariant-code-motion -cse -canonicalize -cse -eliminate-empty-tensors -empty-tensor-to-alloc-tensor -one-shot-bufferize="bufferize-function-boundaries function-boundary-type-conversion=identity-layout-map" -buffer-deallocation -convert-linalg-to-loops  -convert-vector-to-scf -convert-scf-to-openmp"""
     command_1 = """/scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/bin/mlir-opt  -loop-invariant-code-motion -cse -canonicalize -cse -eliminate-empty-tensors -empty-tensor-to-alloc-tensor -one-shot-bufferize="bufferize-function-boundaries function-boundary-type-conversion=identity-layout-map" -buffer-deallocation -convert-linalg-to-loops  -scf-foreach-thread-lowering -convert-vector-to-scf -convert-scf-to-openmp -canonicalize -lower-affine -expand-strided-metadata -finalize-memref-to-llvm -convert-scf-to-cf -lower-affine -convert-arith-to-llvm -convert-openmp-to-llvm -convert-vector-to-llvm -convert-cf-to-llvm -convert-func-to-llvm -convert-math-to-llvm -reconcile-unrealized-casts"""
     command_2 = """/scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/bin/mlir-cpu-runner -e main -entry-point-result=void -shared-libs=/scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/lib/libmlir_runner_utils.so,/scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/lib/libmlir_c_runner_utils.so,/scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/lib/libomp.so"""
     
-    tmp_file = "/scratch/nb3891/Script/MLIR_RL_2/examples/temp_mlir.mlir"
+    # tmp_file = "/scratch/nb3891/Script/MLIR_RL_2/examples/temp_mlir.mlir"
     # tmp_file = "generated_mlir/bigger_input_nn.mlir"
     
     os.environ["OMP_NUM_THREADS"] = "8"
@@ -353,7 +443,7 @@ def evaluate_code_2(code):
 
 
 
-def transform_dialect_img2col(code, operation_tag):
+def transform_dialect_img2col(code, operation_tag, tmp_file):
   
     code = code.strip()
     
@@ -364,7 +454,7 @@ module attributes {{transform.with_named_sequence}} {{
     
     %a, %b = transform.structured.convert_conv2d_to_img2col %op_operation : (!transform.any_op) -> (!transform.any_op, !transform.any_op)
     
-    transform.annotate %a "tmp" : !transform.any_op
+    transform.annotate %a "AAAAA" : !transform.any_op
     
     %matmul_op = transform.get_producer_of_operand %b[0]: (!transform.any_op) -> !transform.any_op
     transform.annotate %matmul_op "XXXXX" : !transform.any_op
@@ -378,7 +468,7 @@ module attributes {{transform.with_named_sequence}} {{
     code = code + transform_dilaect_code
         
     # print(code)
-    tmp_file = "/scratch/nb3891/Script/MLIR_RL_2/examples/temp_mlir.mlir"    
+    # tmp_file = "/scratch/nb3891/Script/MLIR_RL_2/examples/temp_mlir.mlir"    
     with open(tmp_file, "w") as file:
         file.write(code)
     
@@ -391,6 +481,12 @@ module attributes {{transform.with_named_sequence}} {{
         result = result.replace("XXXXX", f'tag = "{operation_tag}"')
     else:
         result = result.replace("XXXXX, ", "")
+        
+    if not f'tag = "img2col_producer"' in result:
+        result = result.replace("AAAAA", f'tag = "img2col_producer"')
+    else:
+        result = result.replace("AAAAA, ", "")
+    
     
     result = result.replace("module {\n", "")
     result = result.replace("\n}\n", "")
@@ -400,7 +496,7 @@ module attributes {{transform.with_named_sequence}} {{
     return result
 
 
-def apply_conv2d_decomposition(code, operation_tag):
+def apply_conv2d_decomposition(code, operation_tag, tmp_file):
     
     code = code.strip()
     transform_dilaect_code = f"""
@@ -419,7 +515,7 @@ def apply_conv2d_decomposition(code, operation_tag):
     
     code = code + '\n' + transform_dilaect_code + '\n'
     
-    tmp_file = "/scratch/nb3891/Script/MLIR_RL_2/examples/temp_mlir.mlir"    
+    # tmp_file = "/scratch/nb3891/Script/MLIR_RL_2/examples/temp_mlir.mlir"    
     with open(tmp_file, "w") as file:
         file.write(code)
     
@@ -440,7 +536,7 @@ def apply_conv2d_decomposition(code, operation_tag):
 
 
 
-def transform_dialect_prints(code, operation_tags: list):
+def transform_dialect_prints(code, operation_tags: list, tmp_file):
     
     matchs = '\n'.join([ f""" %op_{operation_tag} = transform.structured.match attributes{{tag = "{operation_tag}"}} in %arg1 : (!transform.any_op) -> !transform.any_op """ for operation_tag in operation_tags ])
     prints = '\n'.join([ f""" transform.print %op_{operation_tag} {{name = "selected_{operation_tag}"}}: !transform.any_op """ for operation_tag in operation_tags])
@@ -460,7 +556,7 @@ def transform_dialect_prints(code, operation_tags: list):
     
     code = code + '\n' + transform_dilaect_code + '\n'
     
-    tmp_file = "/scratch/nb3891/Script/MLIR_RL_2/examples/temp_mlir.mlir"    
+    # tmp_file = "/scratch/nb3891/Script/MLIR_RL_2/examples/temp_mlir.mlir"    
     with open(tmp_file, "w") as file:
         file.write(code)
     

@@ -1,99 +1,639 @@
-#map = affine_map<(d0) -> (d0 * 14)>
+#map = affine_map<(d0) -> (d0 * 32)>
 #map1 = affine_map<(d0) -> (d0 * 4)>
-#map2 = affine_map<(d0) -> (d0 * 7)>
-#map3 = affine_map<(d0) -> (d0 * 2)>
-#map4 = affine_map<(d0, d1) -> (d0 * 2 + d1)>
-  module attributes {torch.debug_module_name = "Net"} {
-    func.func private @nanoTime() -> i64 attributes {llvm.emit_c_interface}
-    func.func private @printFlops(f64)
-    func.func private @printI64(i64)
-    func.func private @printNewline()
-    func.func private @printMemrefF32(tensor<*xf32>)
-    func.func @matmul() -> tensor<32x64x112x112xf32> {
-      %c1 = arith.constant 1 : index
-      %c7 = arith.constant 7 : index
-      %c28 = arith.constant 28 : index
-      %c112 = arith.constant 112 : index
-      %c8 = arith.constant 8 : index
-      %c32 = arith.constant 32 : index
-      %c0 = arith.constant 0 : index
-      %cst = arith.constant 2.000000e+00 : f32
-      %0 = bufferization.alloc_tensor() : tensor<32x3x230x230xf32>
-      %1 = linalg.fill ins(%cst : f32) outs(%0 : tensor<32x3x230x230xf32>) -> tensor<32x3x230x230xf32>
-      %2 = bufferization.alloc_tensor() : tensor<64x3x7x7xf32>
-      %3 = linalg.fill ins(%cst : f32) outs(%2 : tensor<64x3x7x7xf32>) -> tensor<64x3x7x7xf32>
-      %4 = bufferization.alloc_tensor() : tensor<32x64x112x112xf32>
-      %5 = linalg.fill ins(%cst : f32) outs(%4 : tensor<32x64x112x112xf32>) -> tensor<32x64x112x112xf32>
-      %6 = call @nanoTime() : () -> i64
-      %7 = scf.forall (%arg0, %arg1) in (16, 16) shared_outs(%arg2 = %5) -> (tensor<32x64x112x112xf32>) {
-        %10 = affine.apply #map(%arg1)
-        %11 = affine.apply #map1(%arg0)
-        %12 = affine.apply #map1(%arg0)
-        %13 = affine.apply #map2(%arg1)
-        %extracted_slice = tensor.extract_slice %1[0, 0, %10, 0] [32, 3, 19, 229] [1, 1, 1, 1] : tensor<32x3x230x230xf32> to tensor<32x3x19x229xf32>
-        %extracted_slice_0 = tensor.extract_slice %3[%11, 0, 0, 0] [4, 3, 7, 7] [1, 1, 1, 1] : tensor<64x3x7x7xf32> to tensor<4x3x7x7xf32>
-        %extracted_slice_1 = tensor.extract_slice %arg2[0, %12, %13, 0] [32, 4, 7, 112] [1, 1, 1, 1] : tensor<32x64x112x112xf32> to tensor<32x4x7x112xf32>
-        %14 = scf.for %arg3 = %c0 to %c32 step %c8 iter_args(%arg4 = %extracted_slice_1) -> (tensor<32x4x7x112xf32>) {
-          %17 = scf.for %arg5 = %c0 to %c112 step %c28 iter_args(%arg6 = %arg4) -> (tensor<32x4x7x112xf32>) {
-            %18 = affine.apply #map3(%arg5)
-            %extracted_slice_2 = tensor.extract_slice %extracted_slice[%arg3, 0, 0, %18] [8, 3, 19, 61] [1, 1, 1, 1] : tensor<32x3x19x229xf32> to tensor<8x3x19x61xf32>
-            %extracted_slice_3 = tensor.extract_slice %arg6[%arg3, 0, 0, %arg5] [8, 4, 7, 28] [1, 1, 1, 1] : tensor<32x4x7x112xf32> to tensor<8x4x7x28xf32>
-            %19 = scf.for %arg7 = %c0 to %c7 step %c1 iter_args(%arg8 = %extracted_slice_3) -> (tensor<8x4x7x28xf32>) {
-              %20 = scf.for %arg9 = %c0 to %c7 step %c1 iter_args(%arg10 = %arg8) -> (tensor<8x4x7x28xf32>) {
-                %21 = affine.apply #map4(%arg7, %arg9)
-                %extracted_slice_4 = tensor.extract_slice %extracted_slice_2[0, 0, %21, 0] [8, 3, 1, 61] [1, 1, 1, 1] : tensor<8x3x19x61xf32> to tensor<8x3x1x61xf32>
-                %extracted_slice_5 = tensor.extract_slice %extracted_slice_0[0, 0, %arg9, 0] [4, 3, 1, 7] [1, 1, 1, 1] : tensor<4x3x7x7xf32> to tensor<4x3x1x7xf32>
-                %extracted_slice_6 = tensor.extract_slice %arg10[0, 0, %arg7, 0] [8, 4, 1, 28] [1, 1, 1, 1] : tensor<8x4x7x28xf32> to tensor<8x4x1x28xf32>
-                %extracted_slice_7 = tensor.extract_slice %extracted_slice_4[0, 0, 0, 0] [8, 3, 1, 61] [1, 1, 1, 1] : tensor<8x3x1x61xf32> to tensor<8x3x61xf32>
-                %extracted_slice_8 = tensor.extract_slice %extracted_slice_5[0, 0, 0, 0] [4, 3, 1, 7] [1, 1, 1, 1] : tensor<4x3x1x7xf32> to tensor<4x3x7xf32>
-                %extracted_slice_9 = tensor.extract_slice %extracted_slice_6[0, 0, 0, 0] [8, 4, 1, 28] [1, 1, 1, 1] : tensor<8x4x1x28xf32> to tensor<8x4x28xf32>
-                %22 = linalg.conv_1d_ncw_fcw {tag = "operation_1", dilations = dense<1> : vector<1xi64>, strides = dense<2> : vector<1xi64>} ins(%extracted_slice_7, %extracted_slice_8 : tensor<8x3x61xf32>, tensor<4x3x7xf32>) outs(%extracted_slice_9 : tensor<8x4x28xf32>) -> tensor<8x4x28xf32>
-                %inserted_slice_10 = tensor.insert_slice %22 into %extracted_slice_6[0, 0, 0, 0] [8, 4, 1, 28] [1, 1, 1, 1] : tensor<8x4x28xf32> into tensor<8x4x1x28xf32>
-                %inserted_slice_11 = tensor.insert_slice %inserted_slice_10 into %arg10[0, 0, %arg7, 0] [8, 4, 1, 28] [1, 1, 1, 1] : tensor<8x4x1x28xf32> into tensor<8x4x7x28xf32>
-                scf.yield %inserted_slice_11 : tensor<8x4x7x28xf32>
-              }
-              scf.yield %20 : tensor<8x4x7x28xf32>
-            }
-            %inserted_slice = tensor.insert_slice %19 into %arg6[%arg3, 0, 0, %arg5] [8, 4, 7, 28] [1, 1, 1, 1] : tensor<8x4x7x28xf32> into tensor<32x4x7x112xf32>
-            scf.yield %inserted_slice : tensor<32x4x7x112xf32>
-          }
-          scf.yield %17 : tensor<32x4x7x112xf32>
-        }
-        %15 = affine.apply #map1(%arg0)
-        %16 = affine.apply #map2(%arg1)
-        scf.forall.in_parallel {
-          tensor.parallel_insert_slice %14 into %arg2[0, %15, %16, 0] [32, 4, 7, 112] [1, 1, 1, 1] : tensor<32x4x7x112xf32> into tensor<32x64x112x112xf32>
-        }
+#map2 = affine_map<(d0) -> (d0 * 8)>
+module {
+  func.func private @printMemrefF32(tensor<*xf32>)
+  func.func private @nanoTime() -> i64 attributes {llvm.emit_c_interface}
+  func.func private @printFlops(f64)
+  func.func private @printI64(i64)
+  func.func @conv() -> tensor<32x112x112x64xf32> {
+    %cst = arith.constant dense<2.000000e+00> : vector<32xf32>
+    %cst_0 = arith.constant dense<2.000000e+00> : vector<8xf32>
+    %cst_1 = arith.constant dense<2.000000e+00> : vector<8x32xf32>
+    %cst_2 = arith.constant dense<0.000000e+00> : vector<4x8x32xf32>
+    %c0 = arith.constant 0 : index
+    %0 = call @nanoTime() : () -> i64
+    %1 = bufferization.alloc_tensor() : tensor<32x230x230x3xf32>
+    %2 = bufferization.alloc_tensor() : tensor<7x7x3x64xf32>
+    %3 = bufferization.alloc_tensor() : tensor<32x112x112x64xf32>
+    %collapsed = tensor.collapse_shape %3 [[0], [1, 2], [3]] : tensor<32x112x112x64xf32> into tensor<32x12544x64xf32>
+    %4 = scf.forall (%arg0, %arg1, %arg2) in (8, 1568, 2) shared_outs(%arg3 = %collapsed) -> (tensor<32x12544x64xf32>) {
+      %8 = affine.apply #map(%arg2)
+      %9 = affine.apply #map1(%arg0)
+      %10 = affine.apply #map2(%arg1)
+      %extracted_slice = tensor.extract_slice %arg3[%9, %10, %8] [4, 8, 32] [1, 1, 1] : tensor<32x12544x64xf32> to tensor<4x8x32xf32>
+      %11 = vector.outerproduct %cst_0, %cst, %cst_1 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %12 = vector.outerproduct %cst_0, %cst, %11 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %13 = vector.outerproduct %cst_0, %cst, %12 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %14 = vector.outerproduct %cst_0, %cst, %13 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %15 = vector.outerproduct %cst_0, %cst, %14 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %16 = vector.outerproduct %cst_0, %cst, %15 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %17 = vector.outerproduct %cst_0, %cst, %16 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %18 = vector.outerproduct %cst_0, %cst, %17 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %19 = vector.outerproduct %cst_0, %cst, %18 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %20 = vector.outerproduct %cst_0, %cst, %19 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %21 = vector.outerproduct %cst_0, %cst, %20 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %22 = vector.outerproduct %cst_0, %cst, %21 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %23 = vector.outerproduct %cst_0, %cst, %22 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %24 = vector.outerproduct %cst_0, %cst, %23 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %25 = vector.outerproduct %cst_0, %cst, %24 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %26 = vector.outerproduct %cst_0, %cst, %25 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %27 = vector.outerproduct %cst_0, %cst, %26 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %28 = vector.outerproduct %cst_0, %cst, %27 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %29 = vector.outerproduct %cst_0, %cst, %28 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %30 = vector.outerproduct %cst_0, %cst, %29 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %31 = vector.outerproduct %cst_0, %cst, %30 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %32 = vector.outerproduct %cst_0, %cst, %31 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %33 = vector.outerproduct %cst_0, %cst, %32 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %34 = vector.outerproduct %cst_0, %cst, %33 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %35 = vector.outerproduct %cst_0, %cst, %34 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %36 = vector.outerproduct %cst_0, %cst, %35 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %37 = vector.outerproduct %cst_0, %cst, %36 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %38 = vector.outerproduct %cst_0, %cst, %37 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %39 = vector.outerproduct %cst_0, %cst, %38 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %40 = vector.outerproduct %cst_0, %cst, %39 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %41 = vector.outerproduct %cst_0, %cst, %40 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %42 = vector.outerproduct %cst_0, %cst, %41 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %43 = vector.outerproduct %cst_0, %cst, %42 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %44 = vector.outerproduct %cst_0, %cst, %43 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %45 = vector.outerproduct %cst_0, %cst, %44 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %46 = vector.outerproduct %cst_0, %cst, %45 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %47 = vector.outerproduct %cst_0, %cst, %46 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %48 = vector.outerproduct %cst_0, %cst, %47 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %49 = vector.outerproduct %cst_0, %cst, %48 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %50 = vector.outerproduct %cst_0, %cst, %49 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %51 = vector.outerproduct %cst_0, %cst, %50 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %52 = vector.outerproduct %cst_0, %cst, %51 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %53 = vector.outerproduct %cst_0, %cst, %52 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %54 = vector.outerproduct %cst_0, %cst, %53 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %55 = vector.outerproduct %cst_0, %cst, %54 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %56 = vector.outerproduct %cst_0, %cst, %55 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %57 = vector.outerproduct %cst_0, %cst, %56 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %58 = vector.outerproduct %cst_0, %cst, %57 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %59 = vector.outerproduct %cst_0, %cst, %58 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %60 = vector.outerproduct %cst_0, %cst, %59 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %61 = vector.outerproduct %cst_0, %cst, %60 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %62 = vector.outerproduct %cst_0, %cst, %61 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %63 = vector.outerproduct %cst_0, %cst, %62 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %64 = vector.outerproduct %cst_0, %cst, %63 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %65 = vector.outerproduct %cst_0, %cst, %64 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %66 = vector.outerproduct %cst_0, %cst, %65 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %67 = vector.outerproduct %cst_0, %cst, %66 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %68 = vector.outerproduct %cst_0, %cst, %67 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %69 = vector.outerproduct %cst_0, %cst, %68 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %70 = vector.outerproduct %cst_0, %cst, %69 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %71 = vector.outerproduct %cst_0, %cst, %70 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %72 = vector.outerproduct %cst_0, %cst, %71 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %73 = vector.outerproduct %cst_0, %cst, %72 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %74 = vector.outerproduct %cst_0, %cst, %73 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %75 = vector.outerproduct %cst_0, %cst, %74 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %76 = vector.outerproduct %cst_0, %cst, %75 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %77 = vector.outerproduct %cst_0, %cst, %76 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %78 = vector.outerproduct %cst_0, %cst, %77 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %79 = vector.outerproduct %cst_0, %cst, %78 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %80 = vector.outerproduct %cst_0, %cst, %79 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %81 = vector.outerproduct %cst_0, %cst, %80 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %82 = vector.outerproduct %cst_0, %cst, %81 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %83 = vector.outerproduct %cst_0, %cst, %82 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %84 = vector.outerproduct %cst_0, %cst, %83 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %85 = vector.outerproduct %cst_0, %cst, %84 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %86 = vector.outerproduct %cst_0, %cst, %85 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %87 = vector.outerproduct %cst_0, %cst, %86 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %88 = vector.outerproduct %cst_0, %cst, %87 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %89 = vector.outerproduct %cst_0, %cst, %88 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %90 = vector.outerproduct %cst_0, %cst, %89 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %91 = vector.outerproduct %cst_0, %cst, %90 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %92 = vector.outerproduct %cst_0, %cst, %91 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %93 = vector.outerproduct %cst_0, %cst, %92 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %94 = vector.outerproduct %cst_0, %cst, %93 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %95 = vector.outerproduct %cst_0, %cst, %94 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %96 = vector.outerproduct %cst_0, %cst, %95 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %97 = vector.outerproduct %cst_0, %cst, %96 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %98 = vector.outerproduct %cst_0, %cst, %97 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %99 = vector.outerproduct %cst_0, %cst, %98 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %100 = vector.outerproduct %cst_0, %cst, %99 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %101 = vector.outerproduct %cst_0, %cst, %100 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %102 = vector.outerproduct %cst_0, %cst, %101 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %103 = vector.outerproduct %cst_0, %cst, %102 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %104 = vector.outerproduct %cst_0, %cst, %103 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %105 = vector.outerproduct %cst_0, %cst, %104 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %106 = vector.outerproduct %cst_0, %cst, %105 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %107 = vector.outerproduct %cst_0, %cst, %106 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %108 = vector.outerproduct %cst_0, %cst, %107 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %109 = vector.outerproduct %cst_0, %cst, %108 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %110 = vector.outerproduct %cst_0, %cst, %109 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %111 = vector.outerproduct %cst_0, %cst, %110 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %112 = vector.outerproduct %cst_0, %cst, %111 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %113 = vector.outerproduct %cst_0, %cst, %112 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %114 = vector.outerproduct %cst_0, %cst, %113 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %115 = vector.outerproduct %cst_0, %cst, %114 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %116 = vector.outerproduct %cst_0, %cst, %115 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %117 = vector.outerproduct %cst_0, %cst, %116 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %118 = vector.outerproduct %cst_0, %cst, %117 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %119 = vector.outerproduct %cst_0, %cst, %118 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %120 = vector.outerproduct %cst_0, %cst, %119 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %121 = vector.outerproduct %cst_0, %cst, %120 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %122 = vector.outerproduct %cst_0, %cst, %121 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %123 = vector.outerproduct %cst_0, %cst, %122 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %124 = vector.outerproduct %cst_0, %cst, %123 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %125 = vector.outerproduct %cst_0, %cst, %124 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %126 = vector.outerproduct %cst_0, %cst, %125 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %127 = vector.outerproduct %cst_0, %cst, %126 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %128 = vector.outerproduct %cst_0, %cst, %127 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %129 = vector.outerproduct %cst_0, %cst, %128 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %130 = vector.outerproduct %cst_0, %cst, %129 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %131 = vector.outerproduct %cst_0, %cst, %130 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %132 = vector.outerproduct %cst_0, %cst, %131 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %133 = vector.outerproduct %cst_0, %cst, %132 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %134 = vector.outerproduct %cst_0, %cst, %133 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %135 = vector.outerproduct %cst_0, %cst, %134 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %136 = vector.outerproduct %cst_0, %cst, %135 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %137 = vector.outerproduct %cst_0, %cst, %136 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %138 = vector.outerproduct %cst_0, %cst, %137 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %139 = vector.outerproduct %cst_0, %cst, %138 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %140 = vector.outerproduct %cst_0, %cst, %139 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %141 = vector.outerproduct %cst_0, %cst, %140 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %142 = vector.outerproduct %cst_0, %cst, %141 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %143 = vector.outerproduct %cst_0, %cst, %142 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %144 = vector.outerproduct %cst_0, %cst, %143 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %145 = vector.outerproduct %cst_0, %cst, %144 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %146 = vector.outerproduct %cst_0, %cst, %145 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %147 = vector.outerproduct %cst_0, %cst, %146 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %148 = vector.outerproduct %cst_0, %cst, %147 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %149 = vector.outerproduct %cst_0, %cst, %148 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %150 = vector.outerproduct %cst_0, %cst, %149 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %151 = vector.outerproduct %cst_0, %cst, %150 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %152 = vector.outerproduct %cst_0, %cst, %151 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %153 = vector.outerproduct %cst_0, %cst, %152 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %154 = vector.outerproduct %cst_0, %cst, %153 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %155 = vector.outerproduct %cst_0, %cst, %154 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %156 = vector.outerproduct %cst_0, %cst, %155 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %157 = vector.outerproduct %cst_0, %cst, %156 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %158 = vector.insert %157, %cst_2 [0] : vector<8x32xf32> into vector<4x8x32xf32>
+      %159 = vector.outerproduct %cst_0, %cst, %cst_1 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %160 = vector.outerproduct %cst_0, %cst, %159 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %161 = vector.outerproduct %cst_0, %cst, %160 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %162 = vector.outerproduct %cst_0, %cst, %161 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %163 = vector.outerproduct %cst_0, %cst, %162 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %164 = vector.outerproduct %cst_0, %cst, %163 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %165 = vector.outerproduct %cst_0, %cst, %164 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %166 = vector.outerproduct %cst_0, %cst, %165 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %167 = vector.outerproduct %cst_0, %cst, %166 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %168 = vector.outerproduct %cst_0, %cst, %167 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %169 = vector.outerproduct %cst_0, %cst, %168 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %170 = vector.outerproduct %cst_0, %cst, %169 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %171 = vector.outerproduct %cst_0, %cst, %170 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %172 = vector.outerproduct %cst_0, %cst, %171 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %173 = vector.outerproduct %cst_0, %cst, %172 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %174 = vector.outerproduct %cst_0, %cst, %173 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %175 = vector.outerproduct %cst_0, %cst, %174 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %176 = vector.outerproduct %cst_0, %cst, %175 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %177 = vector.outerproduct %cst_0, %cst, %176 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %178 = vector.outerproduct %cst_0, %cst, %177 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %179 = vector.outerproduct %cst_0, %cst, %178 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %180 = vector.outerproduct %cst_0, %cst, %179 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %181 = vector.outerproduct %cst_0, %cst, %180 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %182 = vector.outerproduct %cst_0, %cst, %181 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %183 = vector.outerproduct %cst_0, %cst, %182 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %184 = vector.outerproduct %cst_0, %cst, %183 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %185 = vector.outerproduct %cst_0, %cst, %184 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %186 = vector.outerproduct %cst_0, %cst, %185 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %187 = vector.outerproduct %cst_0, %cst, %186 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %188 = vector.outerproduct %cst_0, %cst, %187 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %189 = vector.outerproduct %cst_0, %cst, %188 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %190 = vector.outerproduct %cst_0, %cst, %189 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %191 = vector.outerproduct %cst_0, %cst, %190 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %192 = vector.outerproduct %cst_0, %cst, %191 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %193 = vector.outerproduct %cst_0, %cst, %192 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %194 = vector.outerproduct %cst_0, %cst, %193 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %195 = vector.outerproduct %cst_0, %cst, %194 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %196 = vector.outerproduct %cst_0, %cst, %195 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %197 = vector.outerproduct %cst_0, %cst, %196 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %198 = vector.outerproduct %cst_0, %cst, %197 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %199 = vector.outerproduct %cst_0, %cst, %198 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %200 = vector.outerproduct %cst_0, %cst, %199 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %201 = vector.outerproduct %cst_0, %cst, %200 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %202 = vector.outerproduct %cst_0, %cst, %201 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %203 = vector.outerproduct %cst_0, %cst, %202 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %204 = vector.outerproduct %cst_0, %cst, %203 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %205 = vector.outerproduct %cst_0, %cst, %204 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %206 = vector.outerproduct %cst_0, %cst, %205 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %207 = vector.outerproduct %cst_0, %cst, %206 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %208 = vector.outerproduct %cst_0, %cst, %207 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %209 = vector.outerproduct %cst_0, %cst, %208 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %210 = vector.outerproduct %cst_0, %cst, %209 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %211 = vector.outerproduct %cst_0, %cst, %210 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %212 = vector.outerproduct %cst_0, %cst, %211 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %213 = vector.outerproduct %cst_0, %cst, %212 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %214 = vector.outerproduct %cst_0, %cst, %213 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %215 = vector.outerproduct %cst_0, %cst, %214 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %216 = vector.outerproduct %cst_0, %cst, %215 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %217 = vector.outerproduct %cst_0, %cst, %216 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %218 = vector.outerproduct %cst_0, %cst, %217 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %219 = vector.outerproduct %cst_0, %cst, %218 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %220 = vector.outerproduct %cst_0, %cst, %219 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %221 = vector.outerproduct %cst_0, %cst, %220 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %222 = vector.outerproduct %cst_0, %cst, %221 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %223 = vector.outerproduct %cst_0, %cst, %222 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %224 = vector.outerproduct %cst_0, %cst, %223 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %225 = vector.outerproduct %cst_0, %cst, %224 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %226 = vector.outerproduct %cst_0, %cst, %225 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %227 = vector.outerproduct %cst_0, %cst, %226 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %228 = vector.outerproduct %cst_0, %cst, %227 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %229 = vector.outerproduct %cst_0, %cst, %228 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %230 = vector.outerproduct %cst_0, %cst, %229 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %231 = vector.outerproduct %cst_0, %cst, %230 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %232 = vector.outerproduct %cst_0, %cst, %231 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %233 = vector.outerproduct %cst_0, %cst, %232 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %234 = vector.outerproduct %cst_0, %cst, %233 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %235 = vector.outerproduct %cst_0, %cst, %234 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %236 = vector.outerproduct %cst_0, %cst, %235 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %237 = vector.outerproduct %cst_0, %cst, %236 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %238 = vector.outerproduct %cst_0, %cst, %237 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %239 = vector.outerproduct %cst_0, %cst, %238 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %240 = vector.outerproduct %cst_0, %cst, %239 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %241 = vector.outerproduct %cst_0, %cst, %240 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %242 = vector.outerproduct %cst_0, %cst, %241 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %243 = vector.outerproduct %cst_0, %cst, %242 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %244 = vector.outerproduct %cst_0, %cst, %243 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %245 = vector.outerproduct %cst_0, %cst, %244 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %246 = vector.outerproduct %cst_0, %cst, %245 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %247 = vector.outerproduct %cst_0, %cst, %246 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %248 = vector.outerproduct %cst_0, %cst, %247 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %249 = vector.outerproduct %cst_0, %cst, %248 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %250 = vector.outerproduct %cst_0, %cst, %249 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %251 = vector.outerproduct %cst_0, %cst, %250 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %252 = vector.outerproduct %cst_0, %cst, %251 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %253 = vector.outerproduct %cst_0, %cst, %252 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %254 = vector.outerproduct %cst_0, %cst, %253 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %255 = vector.outerproduct %cst_0, %cst, %254 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %256 = vector.outerproduct %cst_0, %cst, %255 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %257 = vector.outerproduct %cst_0, %cst, %256 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %258 = vector.outerproduct %cst_0, %cst, %257 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %259 = vector.outerproduct %cst_0, %cst, %258 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %260 = vector.outerproduct %cst_0, %cst, %259 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %261 = vector.outerproduct %cst_0, %cst, %260 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %262 = vector.outerproduct %cst_0, %cst, %261 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %263 = vector.outerproduct %cst_0, %cst, %262 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %264 = vector.outerproduct %cst_0, %cst, %263 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %265 = vector.outerproduct %cst_0, %cst, %264 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %266 = vector.outerproduct %cst_0, %cst, %265 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %267 = vector.outerproduct %cst_0, %cst, %266 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %268 = vector.outerproduct %cst_0, %cst, %267 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %269 = vector.outerproduct %cst_0, %cst, %268 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %270 = vector.outerproduct %cst_0, %cst, %269 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %271 = vector.outerproduct %cst_0, %cst, %270 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %272 = vector.outerproduct %cst_0, %cst, %271 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %273 = vector.outerproduct %cst_0, %cst, %272 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %274 = vector.outerproduct %cst_0, %cst, %273 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %275 = vector.outerproduct %cst_0, %cst, %274 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %276 = vector.outerproduct %cst_0, %cst, %275 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %277 = vector.outerproduct %cst_0, %cst, %276 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %278 = vector.outerproduct %cst_0, %cst, %277 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %279 = vector.outerproduct %cst_0, %cst, %278 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %280 = vector.outerproduct %cst_0, %cst, %279 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %281 = vector.outerproduct %cst_0, %cst, %280 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %282 = vector.outerproduct %cst_0, %cst, %281 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %283 = vector.outerproduct %cst_0, %cst, %282 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %284 = vector.outerproduct %cst_0, %cst, %283 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %285 = vector.outerproduct %cst_0, %cst, %284 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %286 = vector.outerproduct %cst_0, %cst, %285 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %287 = vector.outerproduct %cst_0, %cst, %286 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %288 = vector.outerproduct %cst_0, %cst, %287 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %289 = vector.outerproduct %cst_0, %cst, %288 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %290 = vector.outerproduct %cst_0, %cst, %289 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %291 = vector.outerproduct %cst_0, %cst, %290 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %292 = vector.outerproduct %cst_0, %cst, %291 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %293 = vector.outerproduct %cst_0, %cst, %292 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %294 = vector.outerproduct %cst_0, %cst, %293 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %295 = vector.outerproduct %cst_0, %cst, %294 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %296 = vector.outerproduct %cst_0, %cst, %295 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %297 = vector.outerproduct %cst_0, %cst, %296 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %298 = vector.outerproduct %cst_0, %cst, %297 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %299 = vector.outerproduct %cst_0, %cst, %298 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %300 = vector.outerproduct %cst_0, %cst, %299 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %301 = vector.outerproduct %cst_0, %cst, %300 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %302 = vector.outerproduct %cst_0, %cst, %301 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %303 = vector.outerproduct %cst_0, %cst, %302 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %304 = vector.outerproduct %cst_0, %cst, %303 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %305 = vector.outerproduct %cst_0, %cst, %304 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %306 = vector.insert %305, %158 [1] : vector<8x32xf32> into vector<4x8x32xf32>
+      %307 = vector.outerproduct %cst_0, %cst, %cst_1 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %308 = vector.outerproduct %cst_0, %cst, %307 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %309 = vector.outerproduct %cst_0, %cst, %308 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %310 = vector.outerproduct %cst_0, %cst, %309 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %311 = vector.outerproduct %cst_0, %cst, %310 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %312 = vector.outerproduct %cst_0, %cst, %311 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %313 = vector.outerproduct %cst_0, %cst, %312 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %314 = vector.outerproduct %cst_0, %cst, %313 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %315 = vector.outerproduct %cst_0, %cst, %314 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %316 = vector.outerproduct %cst_0, %cst, %315 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %317 = vector.outerproduct %cst_0, %cst, %316 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %318 = vector.outerproduct %cst_0, %cst, %317 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %319 = vector.outerproduct %cst_0, %cst, %318 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %320 = vector.outerproduct %cst_0, %cst, %319 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %321 = vector.outerproduct %cst_0, %cst, %320 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %322 = vector.outerproduct %cst_0, %cst, %321 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %323 = vector.outerproduct %cst_0, %cst, %322 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %324 = vector.outerproduct %cst_0, %cst, %323 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %325 = vector.outerproduct %cst_0, %cst, %324 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %326 = vector.outerproduct %cst_0, %cst, %325 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %327 = vector.outerproduct %cst_0, %cst, %326 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %328 = vector.outerproduct %cst_0, %cst, %327 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %329 = vector.outerproduct %cst_0, %cst, %328 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %330 = vector.outerproduct %cst_0, %cst, %329 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %331 = vector.outerproduct %cst_0, %cst, %330 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %332 = vector.outerproduct %cst_0, %cst, %331 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %333 = vector.outerproduct %cst_0, %cst, %332 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %334 = vector.outerproduct %cst_0, %cst, %333 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %335 = vector.outerproduct %cst_0, %cst, %334 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %336 = vector.outerproduct %cst_0, %cst, %335 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %337 = vector.outerproduct %cst_0, %cst, %336 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %338 = vector.outerproduct %cst_0, %cst, %337 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %339 = vector.outerproduct %cst_0, %cst, %338 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %340 = vector.outerproduct %cst_0, %cst, %339 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %341 = vector.outerproduct %cst_0, %cst, %340 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %342 = vector.outerproduct %cst_0, %cst, %341 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %343 = vector.outerproduct %cst_0, %cst, %342 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %344 = vector.outerproduct %cst_0, %cst, %343 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %345 = vector.outerproduct %cst_0, %cst, %344 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %346 = vector.outerproduct %cst_0, %cst, %345 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %347 = vector.outerproduct %cst_0, %cst, %346 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %348 = vector.outerproduct %cst_0, %cst, %347 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %349 = vector.outerproduct %cst_0, %cst, %348 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %350 = vector.outerproduct %cst_0, %cst, %349 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %351 = vector.outerproduct %cst_0, %cst, %350 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %352 = vector.outerproduct %cst_0, %cst, %351 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %353 = vector.outerproduct %cst_0, %cst, %352 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %354 = vector.outerproduct %cst_0, %cst, %353 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %355 = vector.outerproduct %cst_0, %cst, %354 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %356 = vector.outerproduct %cst_0, %cst, %355 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %357 = vector.outerproduct %cst_0, %cst, %356 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %358 = vector.outerproduct %cst_0, %cst, %357 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %359 = vector.outerproduct %cst_0, %cst, %358 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %360 = vector.outerproduct %cst_0, %cst, %359 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %361 = vector.outerproduct %cst_0, %cst, %360 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %362 = vector.outerproduct %cst_0, %cst, %361 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %363 = vector.outerproduct %cst_0, %cst, %362 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %364 = vector.outerproduct %cst_0, %cst, %363 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %365 = vector.outerproduct %cst_0, %cst, %364 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %366 = vector.outerproduct %cst_0, %cst, %365 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %367 = vector.outerproduct %cst_0, %cst, %366 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %368 = vector.outerproduct %cst_0, %cst, %367 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %369 = vector.outerproduct %cst_0, %cst, %368 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %370 = vector.outerproduct %cst_0, %cst, %369 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %371 = vector.outerproduct %cst_0, %cst, %370 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %372 = vector.outerproduct %cst_0, %cst, %371 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %373 = vector.outerproduct %cst_0, %cst, %372 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %374 = vector.outerproduct %cst_0, %cst, %373 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %375 = vector.outerproduct %cst_0, %cst, %374 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %376 = vector.outerproduct %cst_0, %cst, %375 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %377 = vector.outerproduct %cst_0, %cst, %376 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %378 = vector.outerproduct %cst_0, %cst, %377 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %379 = vector.outerproduct %cst_0, %cst, %378 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %380 = vector.outerproduct %cst_0, %cst, %379 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %381 = vector.outerproduct %cst_0, %cst, %380 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %382 = vector.outerproduct %cst_0, %cst, %381 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %383 = vector.outerproduct %cst_0, %cst, %382 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %384 = vector.outerproduct %cst_0, %cst, %383 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %385 = vector.outerproduct %cst_0, %cst, %384 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %386 = vector.outerproduct %cst_0, %cst, %385 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %387 = vector.outerproduct %cst_0, %cst, %386 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %388 = vector.outerproduct %cst_0, %cst, %387 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %389 = vector.outerproduct %cst_0, %cst, %388 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %390 = vector.outerproduct %cst_0, %cst, %389 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %391 = vector.outerproduct %cst_0, %cst, %390 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %392 = vector.outerproduct %cst_0, %cst, %391 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %393 = vector.outerproduct %cst_0, %cst, %392 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %394 = vector.outerproduct %cst_0, %cst, %393 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %395 = vector.outerproduct %cst_0, %cst, %394 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %396 = vector.outerproduct %cst_0, %cst, %395 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %397 = vector.outerproduct %cst_0, %cst, %396 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %398 = vector.outerproduct %cst_0, %cst, %397 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %399 = vector.outerproduct %cst_0, %cst, %398 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %400 = vector.outerproduct %cst_0, %cst, %399 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %401 = vector.outerproduct %cst_0, %cst, %400 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %402 = vector.outerproduct %cst_0, %cst, %401 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %403 = vector.outerproduct %cst_0, %cst, %402 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %404 = vector.outerproduct %cst_0, %cst, %403 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %405 = vector.outerproduct %cst_0, %cst, %404 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %406 = vector.outerproduct %cst_0, %cst, %405 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %407 = vector.outerproduct %cst_0, %cst, %406 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %408 = vector.outerproduct %cst_0, %cst, %407 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %409 = vector.outerproduct %cst_0, %cst, %408 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %410 = vector.outerproduct %cst_0, %cst, %409 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %411 = vector.outerproduct %cst_0, %cst, %410 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %412 = vector.outerproduct %cst_0, %cst, %411 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %413 = vector.outerproduct %cst_0, %cst, %412 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %414 = vector.outerproduct %cst_0, %cst, %413 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %415 = vector.outerproduct %cst_0, %cst, %414 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %416 = vector.outerproduct %cst_0, %cst, %415 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %417 = vector.outerproduct %cst_0, %cst, %416 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %418 = vector.outerproduct %cst_0, %cst, %417 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %419 = vector.outerproduct %cst_0, %cst, %418 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %420 = vector.outerproduct %cst_0, %cst, %419 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %421 = vector.outerproduct %cst_0, %cst, %420 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %422 = vector.outerproduct %cst_0, %cst, %421 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %423 = vector.outerproduct %cst_0, %cst, %422 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %424 = vector.outerproduct %cst_0, %cst, %423 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %425 = vector.outerproduct %cst_0, %cst, %424 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %426 = vector.outerproduct %cst_0, %cst, %425 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %427 = vector.outerproduct %cst_0, %cst, %426 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %428 = vector.outerproduct %cst_0, %cst, %427 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %429 = vector.outerproduct %cst_0, %cst, %428 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %430 = vector.outerproduct %cst_0, %cst, %429 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %431 = vector.outerproduct %cst_0, %cst, %430 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %432 = vector.outerproduct %cst_0, %cst, %431 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %433 = vector.outerproduct %cst_0, %cst, %432 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %434 = vector.outerproduct %cst_0, %cst, %433 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %435 = vector.outerproduct %cst_0, %cst, %434 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %436 = vector.outerproduct %cst_0, %cst, %435 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %437 = vector.outerproduct %cst_0, %cst, %436 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %438 = vector.outerproduct %cst_0, %cst, %437 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %439 = vector.outerproduct %cst_0, %cst, %438 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %440 = vector.outerproduct %cst_0, %cst, %439 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %441 = vector.outerproduct %cst_0, %cst, %440 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %442 = vector.outerproduct %cst_0, %cst, %441 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %443 = vector.outerproduct %cst_0, %cst, %442 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %444 = vector.outerproduct %cst_0, %cst, %443 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %445 = vector.outerproduct %cst_0, %cst, %444 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %446 = vector.outerproduct %cst_0, %cst, %445 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %447 = vector.outerproduct %cst_0, %cst, %446 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %448 = vector.outerproduct %cst_0, %cst, %447 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %449 = vector.outerproduct %cst_0, %cst, %448 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %450 = vector.outerproduct %cst_0, %cst, %449 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %451 = vector.outerproduct %cst_0, %cst, %450 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %452 = vector.outerproduct %cst_0, %cst, %451 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %453 = vector.outerproduct %cst_0, %cst, %452 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %454 = vector.insert %453, %306 [2] : vector<8x32xf32> into vector<4x8x32xf32>
+      %455 = vector.outerproduct %cst_0, %cst, %cst_1 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %456 = vector.outerproduct %cst_0, %cst, %455 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %457 = vector.outerproduct %cst_0, %cst, %456 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %458 = vector.outerproduct %cst_0, %cst, %457 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %459 = vector.outerproduct %cst_0, %cst, %458 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %460 = vector.outerproduct %cst_0, %cst, %459 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %461 = vector.outerproduct %cst_0, %cst, %460 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %462 = vector.outerproduct %cst_0, %cst, %461 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %463 = vector.outerproduct %cst_0, %cst, %462 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %464 = vector.outerproduct %cst_0, %cst, %463 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %465 = vector.outerproduct %cst_0, %cst, %464 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %466 = vector.outerproduct %cst_0, %cst, %465 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %467 = vector.outerproduct %cst_0, %cst, %466 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %468 = vector.outerproduct %cst_0, %cst, %467 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %469 = vector.outerproduct %cst_0, %cst, %468 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %470 = vector.outerproduct %cst_0, %cst, %469 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %471 = vector.outerproduct %cst_0, %cst, %470 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %472 = vector.outerproduct %cst_0, %cst, %471 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %473 = vector.outerproduct %cst_0, %cst, %472 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %474 = vector.outerproduct %cst_0, %cst, %473 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %475 = vector.outerproduct %cst_0, %cst, %474 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %476 = vector.outerproduct %cst_0, %cst, %475 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %477 = vector.outerproduct %cst_0, %cst, %476 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %478 = vector.outerproduct %cst_0, %cst, %477 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %479 = vector.outerproduct %cst_0, %cst, %478 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %480 = vector.outerproduct %cst_0, %cst, %479 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %481 = vector.outerproduct %cst_0, %cst, %480 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %482 = vector.outerproduct %cst_0, %cst, %481 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %483 = vector.outerproduct %cst_0, %cst, %482 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %484 = vector.outerproduct %cst_0, %cst, %483 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %485 = vector.outerproduct %cst_0, %cst, %484 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %486 = vector.outerproduct %cst_0, %cst, %485 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %487 = vector.outerproduct %cst_0, %cst, %486 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %488 = vector.outerproduct %cst_0, %cst, %487 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %489 = vector.outerproduct %cst_0, %cst, %488 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %490 = vector.outerproduct %cst_0, %cst, %489 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %491 = vector.outerproduct %cst_0, %cst, %490 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %492 = vector.outerproduct %cst_0, %cst, %491 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %493 = vector.outerproduct %cst_0, %cst, %492 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %494 = vector.outerproduct %cst_0, %cst, %493 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %495 = vector.outerproduct %cst_0, %cst, %494 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %496 = vector.outerproduct %cst_0, %cst, %495 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %497 = vector.outerproduct %cst_0, %cst, %496 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %498 = vector.outerproduct %cst_0, %cst, %497 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %499 = vector.outerproduct %cst_0, %cst, %498 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %500 = vector.outerproduct %cst_0, %cst, %499 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %501 = vector.outerproduct %cst_0, %cst, %500 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %502 = vector.outerproduct %cst_0, %cst, %501 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %503 = vector.outerproduct %cst_0, %cst, %502 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %504 = vector.outerproduct %cst_0, %cst, %503 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %505 = vector.outerproduct %cst_0, %cst, %504 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %506 = vector.outerproduct %cst_0, %cst, %505 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %507 = vector.outerproduct %cst_0, %cst, %506 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %508 = vector.outerproduct %cst_0, %cst, %507 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %509 = vector.outerproduct %cst_0, %cst, %508 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %510 = vector.outerproduct %cst_0, %cst, %509 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %511 = vector.outerproduct %cst_0, %cst, %510 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %512 = vector.outerproduct %cst_0, %cst, %511 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %513 = vector.outerproduct %cst_0, %cst, %512 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %514 = vector.outerproduct %cst_0, %cst, %513 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %515 = vector.outerproduct %cst_0, %cst, %514 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %516 = vector.outerproduct %cst_0, %cst, %515 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %517 = vector.outerproduct %cst_0, %cst, %516 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %518 = vector.outerproduct %cst_0, %cst, %517 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %519 = vector.outerproduct %cst_0, %cst, %518 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %520 = vector.outerproduct %cst_0, %cst, %519 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %521 = vector.outerproduct %cst_0, %cst, %520 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %522 = vector.outerproduct %cst_0, %cst, %521 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %523 = vector.outerproduct %cst_0, %cst, %522 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %524 = vector.outerproduct %cst_0, %cst, %523 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %525 = vector.outerproduct %cst_0, %cst, %524 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %526 = vector.outerproduct %cst_0, %cst, %525 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %527 = vector.outerproduct %cst_0, %cst, %526 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %528 = vector.outerproduct %cst_0, %cst, %527 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %529 = vector.outerproduct %cst_0, %cst, %528 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %530 = vector.outerproduct %cst_0, %cst, %529 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %531 = vector.outerproduct %cst_0, %cst, %530 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %532 = vector.outerproduct %cst_0, %cst, %531 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %533 = vector.outerproduct %cst_0, %cst, %532 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %534 = vector.outerproduct %cst_0, %cst, %533 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %535 = vector.outerproduct %cst_0, %cst, %534 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %536 = vector.outerproduct %cst_0, %cst, %535 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %537 = vector.outerproduct %cst_0, %cst, %536 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %538 = vector.outerproduct %cst_0, %cst, %537 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %539 = vector.outerproduct %cst_0, %cst, %538 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %540 = vector.outerproduct %cst_0, %cst, %539 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %541 = vector.outerproduct %cst_0, %cst, %540 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %542 = vector.outerproduct %cst_0, %cst, %541 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %543 = vector.outerproduct %cst_0, %cst, %542 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %544 = vector.outerproduct %cst_0, %cst, %543 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %545 = vector.outerproduct %cst_0, %cst, %544 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %546 = vector.outerproduct %cst_0, %cst, %545 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %547 = vector.outerproduct %cst_0, %cst, %546 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %548 = vector.outerproduct %cst_0, %cst, %547 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %549 = vector.outerproduct %cst_0, %cst, %548 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %550 = vector.outerproduct %cst_0, %cst, %549 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %551 = vector.outerproduct %cst_0, %cst, %550 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %552 = vector.outerproduct %cst_0, %cst, %551 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %553 = vector.outerproduct %cst_0, %cst, %552 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %554 = vector.outerproduct %cst_0, %cst, %553 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %555 = vector.outerproduct %cst_0, %cst, %554 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %556 = vector.outerproduct %cst_0, %cst, %555 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %557 = vector.outerproduct %cst_0, %cst, %556 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %558 = vector.outerproduct %cst_0, %cst, %557 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %559 = vector.outerproduct %cst_0, %cst, %558 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %560 = vector.outerproduct %cst_0, %cst, %559 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %561 = vector.outerproduct %cst_0, %cst, %560 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %562 = vector.outerproduct %cst_0, %cst, %561 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %563 = vector.outerproduct %cst_0, %cst, %562 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %564 = vector.outerproduct %cst_0, %cst, %563 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %565 = vector.outerproduct %cst_0, %cst, %564 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %566 = vector.outerproduct %cst_0, %cst, %565 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %567 = vector.outerproduct %cst_0, %cst, %566 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %568 = vector.outerproduct %cst_0, %cst, %567 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %569 = vector.outerproduct %cst_0, %cst, %568 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %570 = vector.outerproduct %cst_0, %cst, %569 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %571 = vector.outerproduct %cst_0, %cst, %570 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %572 = vector.outerproduct %cst_0, %cst, %571 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %573 = vector.outerproduct %cst_0, %cst, %572 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %574 = vector.outerproduct %cst_0, %cst, %573 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %575 = vector.outerproduct %cst_0, %cst, %574 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %576 = vector.outerproduct %cst_0, %cst, %575 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %577 = vector.outerproduct %cst_0, %cst, %576 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %578 = vector.outerproduct %cst_0, %cst, %577 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %579 = vector.outerproduct %cst_0, %cst, %578 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %580 = vector.outerproduct %cst_0, %cst, %579 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %581 = vector.outerproduct %cst_0, %cst, %580 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %582 = vector.outerproduct %cst_0, %cst, %581 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %583 = vector.outerproduct %cst_0, %cst, %582 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %584 = vector.outerproduct %cst_0, %cst, %583 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %585 = vector.outerproduct %cst_0, %cst, %584 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %586 = vector.outerproduct %cst_0, %cst, %585 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %587 = vector.outerproduct %cst_0, %cst, %586 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %588 = vector.outerproduct %cst_0, %cst, %587 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %589 = vector.outerproduct %cst_0, %cst, %588 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %590 = vector.outerproduct %cst_0, %cst, %589 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %591 = vector.outerproduct %cst_0, %cst, %590 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %592 = vector.outerproduct %cst_0, %cst, %591 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %593 = vector.outerproduct %cst_0, %cst, %592 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %594 = vector.outerproduct %cst_0, %cst, %593 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %595 = vector.outerproduct %cst_0, %cst, %594 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %596 = vector.outerproduct %cst_0, %cst, %595 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %597 = vector.outerproduct %cst_0, %cst, %596 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %598 = vector.outerproduct %cst_0, %cst, %597 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %599 = vector.outerproduct %cst_0, %cst, %598 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %600 = vector.outerproduct %cst_0, %cst, %599 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %601 = vector.outerproduct %cst_0, %cst, %600 {kind = #vector.kind<add>} : vector<8xf32>, vector<32xf32>
+      %602 = vector.insert %601, %454 [3] : vector<8x32xf32> into vector<4x8x32xf32>
+      %603 = vector.transfer_write %602, %extracted_slice[%c0, %c0, %c0] {in_bounds = [true, true, true]} : vector<4x8x32xf32>, tensor<4x8x32xf32>
+      scf.forall.in_parallel {
+        tensor.parallel_insert_slice %603 into %arg3[%9, %10, %8] [4, 8, 32] [1, 1, 1] : tensor<4x8x32xf32> into tensor<32x12544x64xf32>
       }
-      %8 = call @nanoTime() : () -> i64
-      %9 = arith.subi %8, %6 : i64
-      call @printI64(%9) : (i64) -> ()
-      call @printNewline() : () -> ()
-      return %7 : tensor<32x64x112x112xf32>
     }
-    func.func @main() {
-      %c1 = arith.constant 1 : index
-      %c0 = arith.constant 0 : index
-      %c2 = arith.constant 2 : index
-      scf.for %arg0 = %c0 to %c2 step %c1 {
-        %0 = func.call @matmul() : () -> tensor<32x64x112x112xf32>
-      }
-      return
-    }
+    %expanded = tensor.expand_shape %4 [[0], [1, 2], [3]] : tensor<32x12544x64xf32> into tensor<32x112x112x64xf32>
+    %5 = call @nanoTime() : () -> i64
+    %6 = arith.subi %5, %0 : i64
+    %7 = arith.uitofp %6 : i64 to f64
+    call @printFlops(%7) : (f64) -> ()
+    call @printI64(%6) : (i64) -> ()
+    return %expanded : tensor<32x112x112x64xf32>
   }
-
-module attributes {transform.with_named_sequence} {
-transform.named_sequence @__transform_main(%variant_op: !transform.any_op {transform.readonly}) 
-{
-
-  %foralls = transform.structured.match ops{["scf.forall"]}  in %variant_op : (!transform.any_op) -> !transform.any_op
-
-  transform.print %foralls {name = "foralls"}: !transform.any_op 
-
-
-  transform.yield
+  func.func @main() {
+    %c1 = arith.constant 1 : index
+    %c0 = arith.constant 0 : index
+    %c2 = arith.constant 2 : index
+    scf.for %arg0 = %c0 to %c2 step %c1 {
+      %0 = func.call @conv() : () -> tensor<32x112x112x64xf32>
+    }
+    return
+  }
 }
-}
-
-
-// /scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/bin/mlir-opt examples/x4.mlir -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule
