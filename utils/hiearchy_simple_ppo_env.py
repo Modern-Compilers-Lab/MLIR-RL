@@ -142,11 +142,18 @@ def get_obs(state: OperationState):
         operation_type = 0
     elif 'conv_2d' in state.operation_type:
         operation_type = 1
+    elif state.operation_type == 'pooling':
+        operation_type = 2
+    elif state.operation_type == 'add':
+        operation_type = 3
     
     operation_type = np.array([operation_type])
     
     obs = np.concatenate((operation_type, loops_data, action_history, action_mask))
-    obs[:7] = obs[:7] / 100
+    obs[1:7] = obs[1:7] / 100
+    
+    # print(obs[:20])
+    
     return obs
 
 def initialize_action_mask(action_mask, num_loops, operation_type):
@@ -345,6 +352,7 @@ def speedup_reward(new, old):
     # log = get_log_base(1.2)
     # reward = log(old / new)
     
+    # reward  = reward / 100
     return reward
 
 
@@ -353,9 +361,10 @@ class Env:
         
         operations = [
             'linalg.matmul',
-            # 'linalg.conv_2d',
+            'linalg.conv_2d',
+            'pooling',
             # 'generic',
-            # 'pool',
+            'linalg.add',
         ]
         operations_files = { file:details for file, details in operations_files.items() if any([ s in file for s in operations ]) }
         operations_files = [[details['operation']]+[details] for file, details in operations_files.items()]
@@ -408,6 +417,11 @@ class Env:
             operation_type = 'matmul'
         elif 'linalg.conv' in raw_operation:
             operation_type = 'conv_2d'
+        elif 'pooling' in raw_operation:
+            operation_type = 'pooling'
+        elif 'linalg.add' in raw_operation:
+            operation_type = 'add'
+            
        
         # Action mask:
         # Transformations: TP, T, Interchange
@@ -462,6 +476,7 @@ class Env:
             state=state
         )
 
+        print(action_index)
         print_success(transformation, parameters)
 
         reward = 0
@@ -508,12 +523,12 @@ class Env:
             
             if (transformation == 'img2col') and (state.operation_type == 'conv_2d'):
                 
-                prints = transform_dialect_prints(transformed_code, [state.operation_tag])
+                prints = transform_dialect_prints(transformed_code, [state.operation_tag], self.tmp_file)
                 prints = post_process_transform_dialect_prints(prints)
                 raw_operation = list(prints.values())[0]
                 
                 wrapped_operation = function_wrapper(raw_operation)  
-                loops = lower_linalg_to_loops(wrapped_operation)            
+                loops = lower_linalg_to_loops(wrapped_operation, self.tmp_file)            
                 loops_data = get_nested_loops_data(loops)
                                                 
                 state = OperationState(
@@ -597,7 +612,7 @@ class Env:
         if done:
             
             if (state.operation_type == 'conv_2d') or ('pooling' in state.operation_type):
-                next_state.transformed_code = apply_conv2d_decomposition(next_state.transformed_code, next_state.operation_tag)           
+                next_state.transformed_code = apply_conv2d_decomposition(next_state.transformed_code, next_state.operation_tag, self.tmp_file)           
 
             vect_transformed_code = apply_transformation_with_timeout(
                 state=next_state,

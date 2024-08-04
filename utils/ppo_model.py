@@ -181,7 +181,7 @@ class HiearchyModel(nn.Module):
         action_log_p[is_tiling]      = tiling_log_p[is_tiling] + transformation_log_p[is_tiling]
         action_log_p[is_parall]      = parall_log_p[is_parall] + transformation_log_p[is_parall]
         action_log_p[is_no_action]   = transformation_log_p[is_no_action]
-        
+                
         entropy = transformation_dist.entropy().mean() + interchange_dist.entropy().mean() + tiling_dist.entropy().mean() + parall_dist.entropy().mean()
         
         return actions, action_log_p, values, entropy

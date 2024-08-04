@@ -28,9 +28,20 @@ def choice_topped(choices, max_value):
 
 
 def add():
-    SHAPE = "x".join([str(choice(HEIGHTS)) for _ in range(randint(1, 4))])
+    SHAPE = "x".join([str(choice(HEIGHTS)) for _ in range(randint(1, 3))])
     return f"linalg.add ins(%arg0, %arg1: tensor<{SHAPE}xf32>, tensor<{SHAPE}xf32>) outs(%arg2: tensor<{SHAPE}xf32>) -> tensor<{SHAPE}xf32>"
 
+def add_nn():
+    B = choice(BATCH_SIZES)
+    N = choice(HEIGHTS)
+    operation = f"""
+    linalg.generic {{indexing_maps = [#map2, #map4, #map2], iterator_types = ["parallel", "parallel"]}} ins(%44, %10 : tensor<{B}x{N}xf32>, tensor<{N}xf32>) outs(%42 : tensor<{B}x{N}xf32>) {{
+    ^bb0(%in: f32, %in_1: f32, %out: f32):
+      %46 = arith.addf %in, %in_1 : f32
+      linalg.yield %46 : f32
+    }}
+    """.strip()
+    return operation
 
 def sub():
     SHAPE = "x".join([str(choice(HEIGHTS)) for _ in range(randint(1, 4))])
@@ -895,7 +906,8 @@ def transform_wrapper(operation):
 
 
 LINALG_OPERATION_GENERATORS = {
-    # "add": [add, SMALL],
+    "add": [add, 10],
+    # "add_nn": [add_nn, 1],
     # "sub": [sub, SMALL],
     # "max": [max, SMALL],
     # "mul": [mul, SMALL],
@@ -908,14 +920,14 @@ LINALG_OPERATION_GENERATORS = {
     # "batch_matmul_transpose_a": [batch_matmul_transpose_a, MEDIUM],
     # "batch_matmul_transpose_b": [batch_matmul_transpose_b, MEDIUM],
     # "batch_reduce_matmul": [batch_reduce_matmul, MEDIUM],
-    "matmul": [matmul, 10],
+    # "matmul": [matmul, 250],
     # "matmul_transpose_a": [matmul_transpose_a, MEDIUM],
     # "matmul_transpose_b": [matmul_transpose_b, MEDIUM],
     # "conv_1d": [conv_1d, MEDIUM],
     # "conv_1d_ncw_fcw": [conv_1d_ncw_fcw, MEDIUM],
     # "conv_1d_nwc_wcf": [conv_1d_nwc_wcf, MEDIUM],
     # "conv_2d": [conv_2d, 1],
-    "conv_2d_nchw_fchw": [conv_2d_nchw_fchw, 10],
+    # "conv_2d_nchw_fchw": [conv_2d_nchw_fchw, 250],
     # "conv_2d_ngchw_fgchw": [conv_2d_ngchw_fgchw, MEDIUM],
     # "conv_2d_nhwc_fhwc": [conv_2d_nhwc_fhwc, MEDIUM],
     # "conv_2d_nhwc_hwcf": [conv_2d_nhwc_hwcf, MEDIUM],
@@ -930,7 +942,7 @@ LINALG_OPERATION_GENERATORS = {
     # "depthwise_conv_3d_ncdhw_cdhw": [depthwise_conv_3d_ncdhw_cdhw, MEDIUM],
     # "depthwise_conv_3d_ndhwc_dhwc": [depthwise_conv_3d_ndhwc_dhwc, MEDIUM],
     # "depthwise_conv_3d_ndhwc_dhwcm": [depthwise_conv_3d_ndhwc_dhwcm, MEDIUM],
-    # "pooling_nchw_max": [pooling_nchw_max, MEDIUM],
+    # "pooling_nchw_max": [pooling_nchw_max, 250],
     # "pooling_nchw_sum": [pooling_nchw_sum, MEDIUM],
     # "pooling_ncw_max": [pooling_ncw_max, MEDIUM],
     # "pooling_ncw_sum": [pooling_ncw_sum, MEDIUM],
@@ -964,16 +976,16 @@ if __name__ == '__main__':
             # elif 'conv' in operation_name:
             #     # raw_operation = "linalg.conv_2d_nhwc_hwcf {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<32x230x230x3xf32>, tensor<7x7x3x64xf32>) outs (%init: tensor<32x112x112x64xf32>) -> tensor<32x112x112x64xf32>"
             #     raw_operation = "linalg.conv_2d_nchw_fchw {dilations = dense<1> : vector<2xi64>, strides = dense<2> : vector<2xi64>} ins (%input, %filter: tensor<32x3x230x230xf32>, tensor<64x3x7x7xf32>) outs (%init: tensor<32x64x112x112xf32>) -> tensor<32x64x112x112xf32>"
-                  
+            
             wrapped_operation = function_wrapper(raw_operation)  
-            loops = lower_linalg_to_loops(wrapped_operation)            
+            loops = lower_linalg_to_loops(wrapped_operation, 'examples/temp_mlir.mlir')            
             
             loops_data = get_nested_loops_data(loops)
             
             transform_wrapped_operation = transform_wrapper(raw_operation)
             
             # continue
-            exec_time = evaluate_code_with_timeout(transform_wrapped_operation, 30)
+            exec_time = evaluate_code_with_timeout(transform_wrapped_operation, 30, 'examples/temp_mlir.mlir')
             
             if exec_time:
                 all_operations[f"{raw_operation}"] = {
@@ -993,5 +1005,5 @@ if __name__ == '__main__':
             # print(transform_wrapped_operation, end='\n\n\n')
             # print(loops_data, end='\n\n\n')
             
-        with open(f"./generated_data/10_matmul_10_conv2d.json", "w") as file:
+        with open(f"./generated_data/10_add.json", "w") as file:
             json.dump(all_operations, file)

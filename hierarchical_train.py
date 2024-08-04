@@ -138,7 +138,7 @@ def collect_trajectory(len_trajectory, model:MyModel, env:ParallelEnv, logs=Fals
                 print('Old Exec time:', final_state.root_exec_time*1e-9, 'ms')
                 print('New Exec time:', final_state.exec_time*1e-9, 'ms')
                 print('-'*70)
-                if logs:
+                if neptune_logs is not None and logs:
                     neptune_logs['train/final_speedup'].append(speedup_metric)
                     neptune_logs['train/cummulative_reward'].append(final_state.cummulative_reward)
                     neptune_logs[f'train/{final_state.raw_operation}_speedup'].append(speedup_metric)
@@ -266,7 +266,6 @@ def ppo_update(trajectory, model, optimizer, ppo_epochs, ppo_batch_size, logs=Fa
         stored_done = stored_done.reshape(-1).detach()
         
         advantage, returns = compute_gae(stored_done, stored_reward, stored_value, stored_next_value)
-                
         
         if epoch == 0:
             for i in range(len(returns)):
@@ -297,7 +296,7 @@ def ppo_update(trajectory, model, optimizer, ppo_epochs, ppo_batch_size, logs=Fa
             new_action_index, new_action_log_p, new_values, entropy = model.sample(x, actions=action_index)
             
             
-            
+            # print(advantage.round(decimals=2))
 
             
             advantage = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
@@ -312,11 +311,11 @@ def ppo_update(trajectory, model, optimizer, ppo_epochs, ppo_batch_size, logs=Fa
             
             returns, new_values = returns.reshape(-1), new_values.reshape(-1)
 
-            value_loss = ((returns - new_values)**2).mean()
-            
+            # value_loss = ((returns - new_values)**2).mean()
+            value_loss = ((returns - new_values).abs()).mean()
 
             loss = policy_loss - entropy_coef*entropy + 0.5*value_loss
-            
+
             optimizer.zero_grad()
             loss.backward()
             clip_factor = torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
@@ -326,7 +325,7 @@ def ppo_update(trajectory, model, optimizer, ppo_epochs, ppo_batch_size, logs=Fa
             loss_i += 1
 
             # Collecting metircs:
-            if logs:
+            if neptune_logs is not None and logs:
                 neptune_logs['train/policy_loss'].append(policy_loss.item())
                 neptune_logs['train/value_loss'].append(value_loss.item())
                 neptune_logs['train/entropy'].append(entropy.item())
@@ -368,11 +367,11 @@ def evaluate_benchamrk(model, env, logs):
                 final_state = final_state[0]
                 speedup_metric = final_state.root_exec_time /  final_state.exec_time
                 print('Operation:', final_state.raw_operation)
-                print('Base execution time:', final_state.root_exec_time / 1e9, 'ms')
-                print('New execution time:', final_state.exec_time / 1e9, 'ms')
+                print('Base execution time:', final_state.root_exec_time / 1e9, 's')
+                print('New execution time:', final_state.exec_time / 1e9, 's')
                 print('speedup:', speedup_metric)
                 
-                if logs:
+                if neptune_logs is not None and  logs:
                     neptune_logs[f'eval/{final_state.raw_operation}_speedup'].append(speedup_metric)  
                 
                 break    
@@ -405,8 +404,10 @@ CONFIG = {
     # 'json_file':"generated_data/conv_2d_nhwc_fhwc_vision_operations.json"
     # 'json_file':"generated_data/matmul_1200x1500x1000.json"
     # 'json_file':"generated_data/1_matmul__1_conv2d.json"
-    'json_file':"generated_data/250_matmul_250_conv.json"
+    # 'json_file':"generated_data/250_matmul_250_conv2d.json",
+    # 'json_file':"generated_data/250_pooling_nchw_max.json",
     # 'json_file':"generated_data/10_matmul_10_conv2d.json",
+    'json_file':"generated_data/10_add.json",
 }
 
 env = ParallelEnv(
@@ -418,7 +419,8 @@ env = ParallelEnv(
 )
 
 eval_env = ParallelEnv(
-    json_file="generated_data/10_matmul_10_conv2d.json",
+    # json_file="generated_data/10_matmul_10_conv2d.json",
+    json_file="generated_data/10_add.json",
     num_env=1,
     truncate=5,
     reset_repeat=1,
@@ -474,7 +476,7 @@ for step in tqdm_range:
         CONFIG['len_trajectory'], 
         model, 
         env,
-        logs=False
+        logs=True
     )
 
     loss = ppo_update(
@@ -486,10 +488,10 @@ for step in tqdm_range:
         logs=True
     )
 
-    torch.save(model.state_dict(), 'models/ppo_model_matmul.pt')
+    torch.save(model.state_dict(), 'models/ppo_model_conv2d.pt')
 
     print('\n\n\n\nloss', loss, '\n\n\n\n')
-    if step % 20 == 0:
+    if step % 5 == 0:
         evaluate_benchamrk(
             model=model,
             env=eval_env,
@@ -497,11 +499,11 @@ for step in tqdm_range:
         )
         
         if logs and neptune_logs is not None:
-            neptune_logs["params"].upload_files(['models/ppo_model_matmul.pt'])
+            neptune_logs["params"].upload_files(['models/ppo_model_conv2d.pt'])
         
     
 
-if logs:
+if neptune_logs is not None and logs:
     neptune_logs.stop()
     
 print_info('End training ... ')
