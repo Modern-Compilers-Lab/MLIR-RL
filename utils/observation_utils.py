@@ -451,8 +451,9 @@ def build_nested_loops_feature_vector(loops_data):
         dimensions_terms = [formula_str_to_list(term) for term in load]
         for m, dimension_term in enumerate(dimensions_terms):
             for index, factor in dimension_term:
-                n = indices_dim[index]
-                load_access_matrices[load_i, m, n] = factor
+                if index in indices_dim:
+                    n = indices_dim[index]
+                    load_access_matrices[load_i, m, n] = factor
 
     # load access matrices:
     store_data = loops_data["store_data"]

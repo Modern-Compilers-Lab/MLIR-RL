@@ -1,16 +1,25 @@
 from utils.observation_utils import function_wrapper, lower_linalg_to_loops
 from utils.transform_utils import evaluate_code_with_timeout
-from random import randint, choice, shuffle
+from random import randint, choice, shuffle, random
 from tqdm import tqdm
 import json, re, multiprocessing, os
 from copy import copy
+import numpy as np
 
-BATCH_SIZES = [4, 8, 16, 32, 64, 256]
-SIZES = [2**power for power in range(5, 11)]
-HEIGHTS = [2**power for power in range(5, 10)]
-# HEIGHTS = [2**power for power in range(8, 13)]
-CHANNELS = [2**power for power in range(3, 11)]
-KERNELS = [1, 3, 5, 7]
+
+# BATCH_SIZES = [4, 8, 16, 32, 64, 256]
+BATCH_SIZES = [128, 256]
+
+# SIZES = [2**power for power in range(5, 11)]
+SIZES = [768, 1024, 256, 1536, 2048, 512, 128, 3072]
+
+# HEIGHTS = [2**power for power in range(5, 10)]
+HEIGHTS = [14, 28, 56, 7, 112, 15, 120, 150, 130, 240, 224, 228]
+
+# CHANNELS = [2**power for power in range(3, 11)]
+CHANNELS = [32, 256, 128, 192, 512, 64, 96, 48, 288, 240, 384]
+
+KERNELS = [1, 3, 7]
 DILATIONS = [1]
 STRIDES = [1, 2]
 SMALL, MEDIUM, BIG = 250, 500, 1000
@@ -28,7 +37,8 @@ def choice_topped(choices, max_value):
 
 
 def add():
-    SHAPE = "x".join([str(choice(HEIGHTS)) for _ in range(randint(1, 3))])
+    # SHAPE = "x".join([str(choice(HEIGHTS)) for _ in range(randint(1, 3))])
+    SHAPE = "x".join([str(choice(HEIGHTS)) for _ in range(4)])
     return f"linalg.add ins(%arg0, %arg1: tensor<{SHAPE}xf32>, tensor<{SHAPE}xf32>) outs(%arg2: tensor<{SHAPE}xf32>) -> tensor<{SHAPE}xf32>"
 
 def add_nn():
@@ -703,6 +713,56 @@ def pooling_nwc_sum():
 
 
 
+def relu():
+    
+    if random() < 0.25:
+        
+        N = choice(BATCH_SIZES)
+        S = choice(SIZES)
+        SHAPE = f"{N}x{S}"
+        
+        relu_maps = """
+        #map2 = affine_map<(d0, d1) -> (d0, d1)>
+        """.strip()
+
+        relu_operation = """
+        linalg.generic {indexing_maps = [#map2, #map2], iterator_types = ["parallel", "parallel"]} ins(%38 : tensor<SHAPExf32>) outs(%35 : tensor<SHAPExf32>) {
+            ^bb0(%in: f32, %out: f32):
+            %cst_1 = arith.constant 0.000000e+00 : f32
+            %46 = arith.cmpf ugt, %in, %cst_1 : f32
+            %47 = arith.select %46, %in, %cst_1 : f32
+            linalg.yield %47 : f32
+        } -> tensor<SHAPExf32>
+        """.strip().replace('SHAPE', SHAPE)
+        
+    else:
+        
+        N = choice(BATCH_SIZES)
+        C = choice(CHANNELS)
+        W = choice(HEIGHTS)
+        
+        SHAPE = f"{N}x{C}x{W}x{W}"
+    
+        relu_maps = """
+        #map = affine_map<(d0, d1, d2, d3) -> (d0, d1, d2, d3)>
+        #map2 = affine_map<(d0, d1, d2, d3) -> (0, d1, d2, d3)>
+        """.strip()
+
+        relu_operation = """
+        linalg.generic {indexing_maps = [#map2, #map], iterator_types = ["parallel", "parallel", "parallel", "parallel"]} ins(%28 : tensor<SHAPExf32>) outs(%25 : tensor<SHAPExf32>) {
+            ^bb0(%in: f32, %out: f32):
+            %cst_1 = arith.constant 0.000000e+00 : f32
+            %90 = arith.cmpf ugt, %in, %cst_1 : f32
+            %91 = arith.select %90, %in, %cst_1 : f32
+            linalg.yield %91 : f32
+        } -> tensor<SHAPExf32>
+        """.strip().replace('SHAPE', SHAPE)
+        
+    
+    return relu_operation, relu_maps
+
+
+
 def get_nested_loops_data(loops):
     
     lines = loops.split('\n')
@@ -777,7 +837,7 @@ def remove_duplicate_args(args, shapes):
     return args, shapes
 
 
-def transform_wrapper(operation):
+def transform_wrapper(operation, maps=None):
 
     ins_outs_pattern = "(?:ins|outs)\s*\(([^())]+)\)"
     fields = re.findall(ins_outs_pattern, operation)
@@ -845,6 +905,8 @@ def transform_wrapper(operation):
     # All code:
 
     code = ""
+    if maps is not None:
+        code += f"{maps}\n"
     code += 'module attributes {torch.debug_module_name = "Net"} {\n'
     code += "func.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\n"
     code += "func.func private @printFlops(f64)\n"
@@ -906,7 +968,7 @@ def transform_wrapper(operation):
 
 
 LINALG_OPERATION_GENERATORS = {
-    "add": [add, 10],
+    # "add": [add, 250],
     # "add_nn": [add_nn, 1],
     # "sub": [sub, SMALL],
     # "max": [max, SMALL],
@@ -920,7 +982,7 @@ LINALG_OPERATION_GENERATORS = {
     # "batch_matmul_transpose_a": [batch_matmul_transpose_a, MEDIUM],
     # "batch_matmul_transpose_b": [batch_matmul_transpose_b, MEDIUM],
     # "batch_reduce_matmul": [batch_reduce_matmul, MEDIUM],
-    # "matmul": [matmul, 250],
+    # "matmul": [matmul, 1],
     # "matmul_transpose_a": [matmul_transpose_a, MEDIUM],
     # "matmul_transpose_b": [matmul_transpose_b, MEDIUM],
     # "conv_1d": [conv_1d, MEDIUM],
@@ -954,6 +1016,8 @@ LINALG_OPERATION_GENERATORS = {
     # "pooling_nhwc_sum": [pooling_nhwc_sum, MEDIUM],
     # "pooling_nwc_max": [pooling_nwc_max, MEDIUM],
     # "pooling_nwc_sum": [pooling_nwc_sum, MEDIUM],
+    
+    "relu":[relu, 200],
 }
 
 
@@ -968,7 +1032,12 @@ if __name__ == '__main__':
 
         for i in tqdm(range(amount), desc=operation_name):
             
-            raw_operation = generator()
+            maps = None
+            res = generator()
+            if isinstance(res, tuple):
+                raw_operation, maps = res
+            else:
+                raw_operation = res
             
             # print(raw_operation)
             # if 'matmul' in operation_name:
@@ -977,15 +1046,19 @@ if __name__ == '__main__':
             #     # raw_operation = "linalg.conv_2d_nhwc_hwcf {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<32x230x230x3xf32>, tensor<7x7x3x64xf32>) outs (%init: tensor<32x112x112x64xf32>) -> tensor<32x112x112x64xf32>"
             #     raw_operation = "linalg.conv_2d_nchw_fchw {dilations = dense<1> : vector<2xi64>, strides = dense<2> : vector<2xi64>} ins (%input, %filter: tensor<32x3x230x230xf32>, tensor<64x3x7x7xf32>) outs (%init: tensor<32x64x112x112xf32>) -> tensor<32x64x112x112xf32>"
             
-            wrapped_operation = function_wrapper(raw_operation)  
+            wrapped_operation = function_wrapper(raw_operation, maps=maps)  
             loops = lower_linalg_to_loops(wrapped_operation, 'examples/temp_mlir.mlir')            
-            
             loops_data = get_nested_loops_data(loops)
+            # print(loops_data)
             
-            transform_wrapped_operation = transform_wrapper(raw_operation)
-            
+            transform_wrapped_operation = transform_wrapper(raw_operation, maps=maps)
+            # print(transform_wrapped_operation)
             # continue
-            exec_time = evaluate_code_with_timeout(transform_wrapped_operation, 30, 'examples/temp_mlir.mlir')
+            # for _ in range(100):
+            exec_time = evaluate_code_with_timeout(transform_wrapped_operation, 300, 'examples/temp_mlir.mlir')
+            # print(exec_time)
+            if exec_time and exec_time < 1000000:
+                exec_time = np.median([exec_time] + [evaluate_code_with_timeout(transform_wrapped_operation, 300, 'examples/temp_mlir.mlir') for _ in range(5)])
             
             if exec_time:
                 all_operations[f"{raw_operation}"] = {
@@ -999,11 +1072,12 @@ if __name__ == '__main__':
             else:
                 continue
             
-            # print(raw_operation, end='\n\n\n')
-            # print(wrapped_operation, end='\n\n\n')
-            # print(loops, end='\n\n\n')
-            # print(transform_wrapped_operation, end='\n\n\n')
-            # print(loops_data, end='\n\n\n')
             
-        with open(f"./generated_data/10_add.json", "w") as file:
+        #     print(raw_operation, end='\n\n\n')
+        #     print(wrapped_operation, end='\n\n\n')
+        #     print(loops, end='\n\n\n')
+        #     print(transform_wrapped_operation, end='\n\n\n')
+        #     print(loops_data, end='\n\n\n')
+            
+        with open(f"./generated_data/relu.json", "w") as file:
             json.dump(all_operations, file)

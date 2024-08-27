@@ -276,6 +276,66 @@ module attributes {{transform.with_named_sequence}} {{
 
 
 
+def transform_dialect_vectorise_whole_thing(code, tmp_file):
+  
+    code = code.strip()
+
+    transform_dilaect_code = f"""
+module attributes {{transform.with_named_sequence}} {{
+transform.named_sequence @__transform_main(%variant_op: !transform.any_op {{transform.readonly}}) 
+{{
+  
+   %func = transform.structured.match ops{{["func.func"]}} in %variant_op
+   : (!transform.any_op) -> !transform.any_op
+  %func_0 = transform.structured.vectorize_children_and_apply_patterns %func {{vectorize_padding}}
+    : (!transform.any_op) -> (!transform.any_op)
+
+       // Step 4. Vector backend
+  // ======================================================
+  %f = transform.structured.match ops{{["func.func"]}} in %variant_op
+    : (!transform.any_op) -> !transform.any_op
+
+  transform.apply_patterns to %f {{
+    transform.apply_patterns.vector.lower_contraction lowering_strategy = "outerproduct"
+    transform.apply_patterns.vector.transfer_permutation_patterns
+    transform.apply_patterns.vector.lower_multi_reduction lowering_strategy = "innerparallel"
+    transform.apply_patterns.vector.split_transfer_full_partial split_transfer_strategy = "vector-transfer"
+    transform.apply_patterns.vector.transfer_to_scf max_transfer_rank = 1 full_unroll = true
+    transform.apply_patterns.vector.lower_transfer max_transfer_rank = 1
+    transform.apply_patterns.vector.lower_shape_cast
+    transform.apply_patterns.vector.lower_transpose lowering_strategy = "shuffle_1d"
+    transform.apply_patterns.canonicalization
+  }} : !transform.any_op
+  
+  
+
+  transform.yield
+}}
+}}
+""".strip()
+
+    
+          
+    code = code + '\n' + transform_dilaect_code + '\n'
+        
+    # print(code)
+    # tmp_file = "/scratch/nb3891/Script/MLIR_RL_2/examples/temp_mlir.mlir"    
+    with open(tmp_file, "w") as file:
+        file.write(code)
+    
+    result = os.popen(
+        f'/scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/bin/mlir-opt {tmp_file} -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule',
+    ).read()
+    
+    result = result.replace("module {\n", "")
+    result = result.replace("\n}\n", "")
+    result = result.replace("module attributes {transform.with_named_sequence} {\n  }", "")
+    
+    
+    return result
+ 
+
+
 def transform_dialect_vectorise_img2col(code, operation_tag, tmp_file):
   
     code = code.strip()
@@ -362,8 +422,6 @@ transform.named_sequence @__transform_main(%variant_op: !transform.any_op {{tran
     
     return result
  
-
-
 def transform_dialect_vectorise(code, operation_tag, tmp_file):
   
     code = code.strip()
@@ -409,6 +467,73 @@ transform.named_sequence @__transform_main(%variant_op: !transform.any_op {{tran
     
     
     return result
+
+
+def transform_dialect_vectorise_with_backend(code, operation_tag, tmp_file):
+  
+    code = code.strip()
+
+    transform_dilaect_code = f"""
+module attributes {{transform.with_named_sequence}} {{
+transform.named_sequence @__transform_main(%variant_op: !transform.any_op {{transform.readonly}}) 
+{{
+    
+  // %conv_gen_2 = transform.structured.match attributes{{tag = "{operation_tag}"}} in %variant_op : (!transform.any_op) -> !transform.any_op
+  // %forall_op = transform.get_parent_op %conv_gen_2: (!transform.any_op) -> !transform.any_op
+  
+  %forall_op = transform.structured.match ops{{["scf.forall"]}}  in %variant_op : (!transform.any_op) -> !transform.any_op
+  
+  
+  %original_fill = transform.structured.match ops{{["linalg.fill"]}} in %variant_op : (!transform.any_op) -> !transform.any_op
+  transform.structured.fuse_into_containing_op %original_fill into %forall_op : (!transform.any_op, !transform.any_op) -> (!transform.any_op, !transform.any_op)
+  
+  %func = transform.structured.match ops{{["func.func"]}} in %variant_op: (!transform.any_op) -> !transform.any_op
+  %func_0 = transform.structured.vectorize_children_and_apply_patterns %func {{vectorize_padding}}: (!transform.any_op) -> (!transform.any_op)
+
+  // Step 4. Vector backend
+  // ======================================================
+  %f = transform.structured.match ops{{["func.func"]}} in %variant_op
+    : (!transform.any_op) -> !transform.any_op
+
+  transform.apply_patterns to %f {{
+    transform.apply_patterns.vector.lower_contraction lowering_strategy = "outerproduct"
+    transform.apply_patterns.vector.transfer_permutation_patterns
+    transform.apply_patterns.vector.lower_multi_reduction lowering_strategy = "innerparallel"
+    transform.apply_patterns.vector.split_transfer_full_partial split_transfer_strategy = "vector-transfer"
+    transform.apply_patterns.vector.transfer_to_scf max_transfer_rank = 1 full_unroll = true
+    transform.apply_patterns.vector.lower_transfer max_transfer_rank = 1
+    transform.apply_patterns.vector.lower_shape_cast
+    transform.apply_patterns.vector.lower_transpose lowering_strategy = "shuffle_1d"
+    transform.apply_patterns.canonicalization
+  }} : !transform.any_op
+
+  transform.yield
+}}
+}}
+""".strip()
+
+    
+          
+    code = code + '\n' + transform_dilaect_code + '\n'
+        
+    # print(code)
+    # tmp_file = "/scratch/nb3891/Script/MLIR_RL_2/examples/temp_mlir.mlir"    
+    with open(tmp_file, "w") as file:
+        file.write(code)
+    
+    result = os.popen(
+        f'/scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/bin/mlir-opt {tmp_file} -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule',
+    ).read()
+    
+    result = result.replace("module {\n", "")
+    result = result.replace("\n}\n", "")
+    result = result.replace("module attributes {transform.with_named_sequence} {\n  }", "")
+    
+    
+    return result
+
+
+
 
 def evaluate_code_2(code, tmp_file):
     # command_1 = """/scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/bin/mlir-opt  -loop-invariant-code-motion -cse -canonicalize -cse -eliminate-empty-tensors -empty-tensor-to-alloc-tensor -one-shot-bufferize="bufferize-function-boundaries allow-return-allocs create-deallocs function-boundary-type-conversion=identity-layout-map" -buffer-deallocation -convert-linalg-to-loops -scf-foreach-thread-lowering  -convert-vector-to-scf -convert-scf-to-openmp -canonicalize -lower-affine -expand-strided-metadata -finalize-memref-to-llvm -convert-scf-to-cf -lower-affine -convert-arith-to-llvm -convert-openmp-to-llvm -convert-vector-to-llvm -convert-cf-to-llvm -convert-func-to-llvm -convert-math-to-llvm -reconcile-unrealized-casts"""

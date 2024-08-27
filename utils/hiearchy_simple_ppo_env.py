@@ -146,6 +146,8 @@ def get_obs(state: OperationState):
         operation_type = 2
     elif state.operation_type == 'add':
         operation_type = 3
+    elif state.operation_type == 'generic':
+        operation_type = 4
     
     operation_type = np.array([operation_type])
     
@@ -213,7 +215,7 @@ def update_action_mask(state, transformation, parameters, num_loops):
     if transformation == 'img2col':actions_mask[:NUM_TRANSFORMATIONS] = [False, True, False, False, False]
     
     if state.operation_type == "pooling" or state.operation_type == "conv_2d":
-        if transformation == 'parallelization':actions_mask[:NUM_TRANSFORMATIONS] = [False, False, True, False, False]
+        if transformation == 'parallelization':actions_mask[:NUM_TRANSFORMATIONS] = [True, False, False, False, False]
         if transformation == 'tiling':actions_mask[:NUM_TRANSFORMATIONS] = [True, False, False, False, False]
         
     elif state.operation_type == "conv_2d+img2col":
@@ -225,9 +227,10 @@ def update_action_mask(state, transformation, parameters, num_loops):
         if transformation == 'interchange':actions_mask[:NUM_TRANSFORMATIONS] = [True, False, False, True, False]
         
     else:
+        # if transformation == 'parallelization':actions_mask[:NUM_TRANSFORMATIONS] = [True, False, True, True, False]
         if transformation == 'parallelization':actions_mask[:NUM_TRANSFORMATIONS] = [True, False, False, False, False]
-        # if transformation == 'interchange':actions_mask[:NUM_TRANSFORMATIONS] = [True, False, True, True, False]
-        if transformation == 'tiling':actions_mask[:NUM_TRANSFORMATIONS] = [True, False, True, False, False]
+        if transformation == 'interchange':actions_mask[:NUM_TRANSFORMATIONS] = [True, False, True, True, False]
+        if transformation == 'tiling':actions_mask[:NUM_TRANSFORMATIONS] = [True, False, False, False, False]
     
     if num_loops == 1:
         actions_mask[3] = False
@@ -360,14 +363,18 @@ class Env:
     def __init__(self, operations_files, truncate=10, reset_repeat=1, step_repeat=1):
         
         operations = [
-            'linalg.matmul',
-            'linalg.conv_2d',
+            # 'linalg.matmul',
+            # 'linalg.conv_2d',
             'pooling',
             # 'generic',
-            'linalg.add',
+            # 'linalg.add',
         ]
         operations_files = { file:details for file, details in operations_files.items() if any([ s in file for s in operations ]) }
+        # operations_files = { file:details for file, details in operations_files.items() if "tensor<256x2048xf32>, tensor<2048x1000xf32>" in file}
+        
         operations_files = [[details['operation']]+[details] for file, details in operations_files.items()]
+                
+        
         # operations_files = [file for file in operations_files if any([ s in file[0] for s in ['matmul'] ]) ]
         
         self.operations_files = operations_files
@@ -421,6 +428,8 @@ class Env:
             operation_type = 'pooling'
         elif 'linalg.add' in raw_operation:
             operation_type = 'add'
+        elif 'linalg.generic' in raw_operation:
+            operation_type = 'generic'
             
        
         # Action mask:
@@ -493,32 +502,32 @@ class Env:
                 timeout=20,
             )
             
-            if (transformation == 'tiling') and (state.operation_type == 'conv_2d' or 'pooling' in state.operation_type):
+            # if (transformation == 'tiling') and (state.operation_type == 'conv_2d' or 'pooling' in state.operation_type):
                     
-                    if ('conv_2d_nhwc_hwcf' in state.raw_operation):
-                        second_interchange_parameters = parameters.copy()
-                        second_interchange_parameters[1] = 1
-                        second_interchange_parameters[4] = 1
-                        
-                    elif ('conv_2d_nchw_fchw' in state.raw_operation):
-                        second_interchange_parameters = parameters.copy()
-                        second_interchange_parameters[2] = 1
-                        second_interchange_parameters[5] = 1
-                        
-                    elif ('pooling' in state.raw_operation):
-                        # second_interchange_parameters = parameters.copy()
-                        second_interchange_parameters = [0]*len(parameters)
-                        second_interchange_parameters[2] = 1
-                        second_interchange_parameters[4] = 1
-                        
-                    transformed_code = apply_transformation_with_timeout(
-                        state=state,
-                        code=transformed_code,
-                        transformation=transformation,
-                        parameters=second_interchange_parameters,
-                        timeout=20,
-                    )
-                    print_success(transformation, second_interchange_parameters)
+            #     if ('conv_2d_nhwc_hwcf' in state.raw_operation):
+            #         second_interchange_parameters = parameters.copy()
+            #         second_interchange_parameters[1] = 1
+            #         second_interchange_parameters[4] = 1
+                    
+            #     elif ('conv_2d_nchw_fchw' in state.raw_operation):
+            #         second_interchange_parameters = parameters.copy()
+            #         second_interchange_parameters[2] = 1
+            #         second_interchange_parameters[5] = 1
+                    
+            #     elif ('pooling' in state.raw_operation):
+            #         # second_interchange_parameters = parameters.copy()
+            #         second_interchange_parameters = [0]*len(parameters)
+            #         second_interchange_parameters[2] = 1
+            #         second_interchange_parameters[4] = 1
+                    
+            #     transformed_code = apply_transformation_with_timeout(
+            #         state=state,
+            #         code=transformed_code,
+            #         transformation=transformation,
+            #         parameters=second_interchange_parameters,
+            #         timeout=20,
+            #     )
+            #     print_success(transformation, second_interchange_parameters)
             
             
             if (transformation == 'img2col') and (state.operation_type == 'conv_2d'):
@@ -610,17 +619,47 @@ class Env:
 
 
         if done:
-            
-            if (state.operation_type == 'conv_2d') or ('pooling' in state.operation_type):
-                next_state.transformed_code = apply_conv2d_decomposition(next_state.transformed_code, next_state.operation_tag, self.tmp_file)           
 
-            vect_transformed_code = apply_transformation_with_timeout(
-                state=next_state,
-                code=next_state.transformed_code,
-                transformation='vectorization',
-                parameters=[0],
-                timeout=20
-            )
+            # if (state.operation_type == 'conv_2d') or ('pooling' in state.operation_type):
+                
+            #     if ('conv_2d_nhwc_hwcf' in state.raw_operation):
+            #         second_interchange_parameters = parameters.copy()
+            #         second_interchange_parameters[1] = 1
+            #         second_interchange_parameters[4] = 1
+                    
+            #     elif ('conv_2d_nchw_fchw' in state.raw_operation):
+            #         second_interchange_parameters = parameters.copy()
+            #         second_interchange_parameters[2] = 1
+            #         second_interchange_parameters[5] = 1
+                    
+            #     elif ('pooling' in state.raw_operation):
+            #         # second_interchange_parameters = parameters.copy()
+            #         second_interchange_parameters = [0]*6
+            #         second_interchange_parameters[2] = 1
+            #         second_interchange_parameters[4] = 1
+                    
+            #     next_state.transformed_code = apply_transformation_with_timeout(
+            #         state=state,
+            #         code=next_state.transformed_code,
+            #         transformation='tiling',
+            #         parameters=second_interchange_parameters,
+            #         timeout=20,
+            #     )
+            #     print_success(transformation, second_interchange_parameters)
+                
+                
+            #     next_state.transformed_code = apply_conv2d_decomposition(next_state.transformed_code, next_state.operation_tag, self.tmp_file)           
+
+            if next_state.operation_type != 'generic'  and next_state.operation_type != 'pooling':
+                vect_transformed_code = apply_transformation_with_timeout(
+                    state=next_state,
+                    code=next_state.transformed_code,
+                    transformation='vectorization',
+                    parameters=[0],
+                    timeout=20
+                )
+            else:
+                vect_transformed_code = next_state.transformed_code
             
             
             new_exec_time = None

@@ -311,7 +311,7 @@ def ppo_update(trajectory, model, optimizer, ppo_epochs, ppo_batch_size, logs=Fa
             
             returns, new_values = returns.reshape(-1), new_values.reshape(-1)
 
-            # value_loss = ((returns - new_values)**2).mean()
+            value_loss = ((returns - new_values)**2).mean()
             value_loss = ((returns - new_values).abs()).mean()
 
             loss = policy_loss - entropy_coef*entropy + 0.5*value_loss
@@ -393,21 +393,10 @@ CONFIG = {
     'entropy_coef':0.01,
     'lr':0.001,
     'truncate':5,
-    # 'json_file':"generated_data/(32x230x230x3)_(7x7x3x64)_(32x112x112x64)_conv2d.json"
-    # 'json_file':"generated_data/simple_ppo_(1200,1500)x(1500,1000)_matmul.json"
-    # 'json_file':"generated_data/simple_nn_(1x1x32x32)operations.json"
-    # 'json_file':"generated_data/nassim_5_matmuls.json"
-    # 'json_file':"generated_data/nassim_2_matmuls.json"
-    # 'json_file':"generated_data/matmul_vision_operations.json"
-    # 'json_file':"generated_data/conv_2d_50_vision_operations.json"
-    # 'json_file':"generated_data/conv_2d_vision_operations.json"
-    # 'json_file':"generated_data/conv_2d_nhwc_fhwc_vision_operations.json"
-    # 'json_file':"generated_data/matmul_1200x1500x1000.json"
-    # 'json_file':"generated_data/1_matmul__1_conv2d.json"
-    # 'json_file':"generated_data/250_matmul_250_conv2d.json",
-    # 'json_file':"generated_data/250_pooling_nchw_max.json",
-    # 'json_file':"generated_data/10_matmul_10_conv2d.json",
-    'json_file':"generated_data/10_add.json",
+    # 'json_file':"generated_data/10_add.json",
+    # 'json_file':"generated_data/train_operations.json",
+    'json_file':"generated_data/eval_operations.json",
+    # 'json_file':"generated_data/resnet18_convs.json",
 }
 
 env = ParallelEnv(
@@ -420,7 +409,8 @@ env = ParallelEnv(
 
 eval_env = ParallelEnv(
     # json_file="generated_data/10_matmul_10_conv2d.json",
-    json_file="generated_data/10_add.json",
+    # json_file="generated_data/resnet18_convs.json",
+    json_file="generated_data/eval_operations.json",
     num_env=1,
     truncate=5,
     reset_repeat=1,
@@ -490,7 +480,6 @@ for step in tqdm_range:
 
     torch.save(model.state_dict(), 'models/ppo_model_conv2d.pt')
 
-    print('\n\n\n\nloss', loss, '\n\n\n\n')
     if step % 5 == 0:
         evaluate_benchamrk(
             model=model,

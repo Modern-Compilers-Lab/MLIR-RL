@@ -6,21 +6,21 @@ func.func private @printNewline()
 func.func private @printMemrefF32(tensor<*xf32>)
 
 
-func.func @matmul() -> tensor<128xf32>{
+func.func @matmul() -> tensor<1x512x7x7xf32>{
 
 %val = arith.constant 2.00000e+00 : f32
 %zero = arith.constant 0.00000e+00 : f32
 
-%tmp_arg0 = bufferization.alloc_tensor() : tensor<128xf32>
-%arg0 = linalg.fill ins(%val : f32) outs(%tmp_arg0 : tensor<128xf32>) -> tensor<128xf32>
-%tmp_arg1 = bufferization.alloc_tensor() : tensor<128xf32>
-%arg1 = linalg.fill ins(%val : f32) outs(%tmp_arg1 : tensor<128xf32>) -> tensor<128xf32>
-%tmp_arg2 = bufferization.alloc_tensor() : tensor<128xf32>
-%arg2 = linalg.fill ins(%val : f32) outs(%tmp_arg2 : tensor<128xf32>) -> tensor<128xf32>
+%tmp_input = bufferization.alloc_tensor() : tensor<1x512x9x9xf32>
+%input = linalg.fill ins(%val : f32) outs(%tmp_input : tensor<1x512x9x9xf32>) -> tensor<1x512x9x9xf32>
+%tmp_filter = bufferization.alloc_tensor() : tensor<512x512x3x3xf32>
+%filter = linalg.fill ins(%val : f32) outs(%tmp_filter : tensor<512x512x3x3xf32>) -> tensor<512x512x3x3xf32>
+%tmp_init = bufferization.alloc_tensor() : tensor<1x512x7x7xf32>
+%init = linalg.fill ins(%val : f32) outs(%tmp_init : tensor<1x512x7x7xf32>) -> tensor<1x512x7x7xf32>
 
 %t0 = func.call @nanoTime() : () -> (i64)
 
-%return_arg = linalg.add ins(%arg0, %arg1: tensor<128xf32>, tensor<128xf32>) outs(%arg2: tensor<128xf32>) -> tensor<128xf32>
+%return_arg = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<1x512x9x9xf32>, tensor<512x512x3x3xf32>) outs (%init: tensor<1x512x7x7xf32>) -> tensor<1x512x7x7xf32>
 %t = func.call @nanoTime() : () -> (i64)
 %delta = arith.subi %t, %t0 : i64
 %fp = arith.uitofp %delta : i64 to f64
@@ -28,7 +28,7 @@ func.func @matmul() -> tensor<128xf32>{
 func.call @printI64(%delta) : (i64) -> ()
 func.call @printNewline() : () -> ()
 
-return %return_arg : tensor<128xf32> 
+return %return_arg : tensor<1x512x7x7xf32> 
 }
 
 func.func @main(){
@@ -36,7 +36,7 @@ func.func @main(){
     %c0 = arith.constant 0 : index
     %n = arith.constant 2: index
     scf.for %i = %c0 to %n step %c1 {
-    %outputmain = func.call @matmul() : () -> tensor<128xf32>
+    %outputmain = func.call @matmul() : () -> tensor<1x512x7x7xf32>
     }
     return
 }
