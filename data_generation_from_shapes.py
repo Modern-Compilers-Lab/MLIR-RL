@@ -1,215 +1,17 @@
-from utils.observation_utils import function_wrapper, lower_linalg_to_loops
-from utils.transform_utils import evaluate_code_with_timeout
+from utils.observation_utils import (
+    function_wrapper, 
+    lower_linalg_to_loops,
+    get_nested_loops_data,
+    transform_wrapper,
+)
+from utils.transforms import evaluate_code_with_timeout
 import json, re
 from tqdm import tqdm
 from copy import copy
 import numpy as np
 
-def get_nested_loops_data(loops):
-    
-    lines = loops.split('\n')
 
-    loops_detailed = {}
-    loops_detailed["nested_loops"] = []
-    loops_detailed["op_count"] = {'+':0, '-':0, '*':0, '/':0, 'exp':0,}
-    loops_detailed["load_data"] = []
-    loops_detailed["store_data"] = []
-
-    maps = {}
-    args_of_loops = []
-    args_of_map = {}
-
-    for line in lines:
-        
-        if "affine_map" in line:
-            map_name, map_function = line.strip().split(' = ')
-            map_function = map_function.split(' -> ')[1][1:-2]
-            maps[map_name] = map_function
-            
-        
-        elif "affine.apply" in line:
-            new_op, _, _, *map_name__args = line.strip().split(' ')
-            map_name__args = ' '.join(map_name__args)
-            s = map_name__args.index('(')
-            map_name, args = map_name__args[:s], map_name__args[s+1:-1].split(', ')            
-            mapping_string = copy(maps[map_name])
-            for i in range(len(args)):
-                mapping_string = mapping_string.replace(f'd{i}', args[i])
-            # print(new_op, map_name, args, maps[map_name], mapping_string)
-            args_of_map[new_op] = mapping_string
-            
-        elif "affine.for" in line:
-            _, arg, _, lower, _, upper, _ = line.strip().split(' ')
-            # print(arg, lower, upper)
-            loops_detailed["nested_loops"].append((arg, int(lower), int(upper), 1))
-            args_of_loops.append(arg)
-            
-        elif "affine.load" in line:
-            # print(line.strip().split(' ')[:-2])
-            new_op, _, _, *alloc = line.strip().split(' ')[:-2]
-            alloc = ' '.join(alloc)
-            args = alloc.split('[')[1][:-1].split(', ')
-
-            for i in range(len(args)):
-                if args[i] in args_of_map:
-                    args[i] = args_of_map[args[i]]
-                    
-            loops_detailed["load_data"].append(args)
-        
-        elif "arith.addf" in line:loops_detailed["op_count"]['+'] += 1
-        elif "arith.mulf" in line:loops_detailed["op_count"]['*'] += 1
-        elif "arith.subf" in line:loops_detailed["op_count"]['-'] += 1
-        elif "arith.divf" in line:loops_detailed["op_count"]['/'] += 1
-        elif "math.exp" in line:loops_detailed["op_count"]['exp'] += 1
-
-    return loops_detailed
-
-
-def remove_duplicate_args(args, shapes):
-    args_shapes = list(zip(args, shapes))
-    seen = set()
-    result = []
-    for item in args_shapes:
-        if item not in seen:
-            seen.add(item)
-            result.append(item)
-            
-    args = [x for (x, _) in result]
-    shapes = [x for (_, x) in result]
-    return args, shapes
-
-
-def transform_wrapper(operation, maps=None):
-
-    ins_outs_pattern = "(?:ins|outs)\s*\(([^())]+)\)"
-    fields = re.findall(ins_outs_pattern, operation)
-
-    args, shapes = [], []
-    for field in fields:
-        args_field, shapes_field = field.split(':')
-        args   += args_field.split(',')
-        shapes += shapes_field.split(',')
-
-    args = [arg.strip() for arg in args]
-    shapes = [shape.strip() for shape in shapes]
-
-    args, shapes = remove_duplicate_args(args, shapes)
-    
-    # print(args, shapes)
-    
-    #############################################################
-    # consts:
-    dims = []
-    unique_dims = set()
-    for shape in shapes:
-        if shape.startswith("tensor"):
-            arg_dims = list(map(int, re.findall(r'\d+', shape[7:-5])))
-            dims.append( arg_dims )
-            unique_dims = unique_dims.union(arg_dims)
-        else: # shape == "f32"
-            dims.append( -1 )
-            unique_dims = unique_dims.union([-1])
-
-    unique_dims = sorted(list(unique_dims))
-
-    # print(unique_dims)
-    
-    consts_snippet = ""
-    for dim in unique_dims:
-        if dim != -1:
-            consts_snippet += f"  %c{dim} = arith.constant {dim} : index\n"
-
-    #############################################################
-    # allocations:
-
-    allocations_snippet = ""
-
-    for arg, shape, arg_dims in zip(args, shapes, dims):
-        # print(arg, shape, arg_dims)
-        if shape.startswith("tensor"):
-            n = shape.count("x")
-            temp_shape = "tensor<" + "?x"*n + shape[-4:] # f32> or i64> ir i32>
-            alloc_params = ", ".join([f"%c{dim}" for dim in arg_dims])
-            allocations_snippet += f"  {arg}_temp = bufferization.alloc_tensor({alloc_params}) : {temp_shape}\n"
-            allocations_snippet += f"  {arg} = tensor.cast {arg}_temp : {temp_shape} to {shape}\n"
-        else:
-            # print(arg, shape, arg_dims)
-            allocations_snippet += f"  {arg} = arith.constant 1.00000e+00 : f32\n"
-
-    # print(allocations_snippet)
-
-    #############################################################
-    # function call:
-
-    function_call_snippet = f"  %ret_arg = func.call @func_call({', '.join(args)}) : ({', '.join(shapes)}) -> ({shapes[-1]})"
-
-    #############################################################
-    # All code:
-
-    code = ""
-    if maps is not None:
-        code += f"{maps}\n"
-    code += 'module attributes {torch.debug_module_name = "Net"} {\n'
-    code += "func.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\n"
-    code += "func.func private @printFlops(f64)\n"
-    code += "func.func private @printI64(i64)\n"
-    code += "func.func private @printNewline()\n"
-    code += "func.func private @printMemrefF32(tensor<*xf32>)\n"
-    code += "\n"
-    code += "\n"
-    code +=f"func.func @matmul() -> {shapes[-1]}{{\n"
-    code += "\n"
-    code += "%val = arith.constant 2.00000e+00 : f32\n"
-    code += "%zero = arith.constant 0.00000e+00 : f32\n"
-    code += "\n"
-    
-    # code +=f"%out = bufferization.alloc_tensor() : tensor<{N}x{K}xf32>\n"
-    # code +=f"%A = linalg.fill ins(%val : f32) outs(%out : tensor<{N}x{K}xf32>) -> tensor<{N}x{K}xf32>\n"
-    for arg, shape, arg_dims in zip(args, shapes, dims):
-        if shape != 'f32':
-            tmp_arg = f'%tmp_{arg[1:]}'
-            code +=f"{tmp_arg} = bufferization.alloc_tensor() : {shape}\n"
-            code +=f"{arg} = linalg.fill ins(%val : f32) outs({tmp_arg} : {shape}) -> {shape}\n"
-        else:
-            code +=f"{arg} = arith.constant 2.00000e+00 : f32\n"
-    
-    code += "\n"
-    code += "%t0 = func.call @nanoTime() : () -> (i64)\n"
-    code += "\n"
-    
-    # code +=f"%D = linalg.matmul ins(%A, %B: tensor<{N}x{K}xf32>, tensor<{K}x{M}xf32>) outs(%C: tensor<{N}x{M}xf32>) -> tensor<{N}x{M}xf32>\n"
-    code += f"%return_arg = {operation}"
-    
-    code += "\n"
-    code += "%t = func.call @nanoTime() : () -> (i64)\n"
-    code += "%delta = arith.subi %t, %t0 : i64\n"
-    code += "%fp = arith.uitofp %delta : i64 to f64\n"
-    code += "// func.call @printFlops(%fp) : (f64) -> ()\n"
-    code += "func.call @printI64(%delta) : (i64) -> ()\n"
-    code += "func.call @printNewline() : () -> ()\n"
-    code += "\n"
-    code +=f"return %return_arg : {shapes[-1]} \n"
-    code += "}\n"
-    code += "\n"
-    code += "func.func @main(){\n"
-    code += "    %c1 = arith.constant 1: index\n"
-    code += "    %c0 = arith.constant 0 : index\n"
-    code += "    %n = arith.constant 2: index\n"
-    code += "    scf.for %i = %c0 to %n step %c1 {\n"
-    code +=f"    %outputmain = func.call @matmul() : () -> {shapes[-1]}\n"
-    code += "    }\n"
-    code += "    return\n"
-    code += "}\n"
-    code += "}\n"
-
-    return code
-
-
-
-
-# with open('collected_operations.json', 'r') as file:
-#     operations = json.load(file)    
-# matmuls = operations['matmul']
+tmp_file = 'tmp_files/temp_mlir.mlir'
 
 
 BS = 256
@@ -369,8 +171,7 @@ for type_name, type_opreations in types:
             if A[0] < 5000 and A[1] < 5000 and B[0] < 5000 and B[1] < 5000:
                 raw_operation = f"linalg.matmul ins(%arg0, %arg1 : tensor<{A[0]}x{A[1]}xf32>, tensor<{B[0]}x{B[1]}xf32>) outs(%arg2 : tensor<{A[0]}x{B[1]}xf32>) -> tensor<{A[0]}x{B[1]}xf32>"
             else:
-                continue
-        
+                continue     
         
         elif type_name == 'conv_2d':
             
@@ -386,7 +187,6 @@ for type_name, type_opreations in types:
 
             raw_operation = f"linalg.conv_2d_nchw_fchw {{dilations = dense<{dilation}> : tensor<2xi64>, strides = dense<{stride}> : tensor<2xi64>}} ins (%input, %filter: tensor<{N}x{C}x{H}x{W}xf32>, tensor<{F}x{C}x{KH}x{KW}xf32>) outs (%init: tensor<{N}x{F}x{H_}x{W_}xf32>) -> tensor<{N}x{F}x{H_}x{W_}xf32>"
 
-
         elif type_name == 'maxpooling':
             # [(None, 114, 114, 64), (3, 3), 2],
             
@@ -400,7 +200,6 @@ for type_name, type_opreations in types:
             W_ = (W - dilation * (K - 1) - 1) // stride + 1
 
             raw_operation = f"linalg.pooling_nchw_max {{dilations = dense<{dilation}> : tensor<2xi64>, strides = dense<{stride}> : tensor<2xi64>}} ins (%input, %filter: tensor<{N}x{C}x{H}x{W}xf32>, tensor<{K}x{K}xf32>) outs (%init: tensor<{N}x{C}x{H_}x{W_}xf32>) -> tensor<{N}x{C}x{H_}x{W_}xf32>"
-
 
         elif type_name == 'add':
             # [(BS, 11, 11, 672),],
@@ -456,16 +255,16 @@ for type_name, type_opreations in types:
         print(raw_operation)
     
         wrapped_operation = function_wrapper(raw_operation, maps=maps)  
-        loops = lower_linalg_to_loops(wrapped_operation, 'examples/temp_mlir.mlir')            
+        loops = lower_linalg_to_loops(wrapped_operation, tmp_file)            
         
         loops_data = get_nested_loops_data(loops)
         
         transform_wrapped_operation = transform_wrapper(raw_operation, maps=maps)
         
         # continue
-        exec_time = evaluate_code_with_timeout(transform_wrapped_operation, 300, 'examples/temp_mlir.mlir')
+        exec_time = evaluate_code_with_timeout(transform_wrapped_operation, 300, tmp_file)
         if exec_time and exec_time < 1000000:
-            exec_time = np.median([exec_time] + [evaluate_code_with_timeout(transform_wrapped_operation, 300, 'examples/temp_mlir.mlir') for _ in range(5)])
+            exec_time = np.median([exec_time] + [evaluate_code_with_timeout(transform_wrapped_operation, 300, tmp_file) for _ in range(5)])
             
         
         if exec_time:

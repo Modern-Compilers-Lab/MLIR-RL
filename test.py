@@ -1,4 +1,4 @@
-from fusion_utils.transforms import (
+from utils.transforms import (
     evaluate_code_2,
     transform_dialect_TP,
     transform_dialect_tile,
@@ -14,7 +14,6 @@ from fusion_utils.transforms import (
 )
 
 from utils.transform_utils import evaluate_code_with_timeout
-from utils.observation_utils import function_wrapper, lower_linalg_to_loops
 
 import os
 

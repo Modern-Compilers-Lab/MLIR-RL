@@ -1,4 +1,4 @@
-from utils.hiearchy_simple_ppo_env import ParallelEnv
+from utils.environment import ParallelEnv
 from utils.ppo_model import HiearchyModel as MyModel
 from utils.consts import (
     MAX_NUM_STORES_LOADS,

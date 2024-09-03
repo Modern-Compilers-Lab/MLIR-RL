@@ -1,6 +1,5 @@
-from utils.hiearchy_simple_ppo_env import ParallelEnv
+from utils.environment import ParallelEnv
 from utils.ppo_model import HiearchyModel as MyModel
-from utils.consts import PPO_ACTIONS
 from utils.consts import (
     MAX_NUM_STORES_LOADS,
     MAX_NUM_LOOPS,
@@ -389,14 +388,11 @@ CONFIG = {
     'ppo_batch_size': 64,
     'steps':10000,
     'ppo_epochs':4,
-    'logs':True,
+    'logs':False,
     'entropy_coef':0.01,
     'lr':0.001,
     'truncate':5,
-    # 'json_file':"generated_data/10_add.json",
-    # 'json_file':"generated_data/train_operations.json",
-    'json_file':"generated_data/eval_operations.json",
-    # 'json_file':"generated_data/resnet18_convs.json",
+    'json_file':"generated_data/train_operations.json",
 }
 
 env = ParallelEnv(
@@ -408,8 +404,6 @@ env = ParallelEnv(
 )
 
 eval_env = ParallelEnv(
-    # json_file="generated_data/10_matmul_10_conv2d.json",
-    # json_file="generated_data/resnet18_convs.json",
     json_file="generated_data/eval_operations.json",
     num_env=1,
     truncate=5,

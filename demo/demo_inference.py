@@ -1,4 +1,4 @@
-from fusion_utils.transforms import *
+from utils.transforms import *
 from utils.observation_utils import *
 from data_generation.data_generation_from_model import transform_wrapper
 import numpy as np

@@ -5,7 +5,7 @@ from torch.distributions import Categorical
 
 from tqdm import tqdm
 
-from utils.consts import PPO_ACTIONS, MAX_NUM_LOOPS, NUM_TRANSFORMATIONS
+from utils.consts import MAX_NUM_LOOPS, NUM_TRANSFORMATIONS
 
 
 
@@ -57,6 +57,7 @@ class HiearchyModel(nn.Module):
         
         *leading_dims, _ = obs.shape
         
+        # Spint `obs` into the input `x` and the `action_mask`
         x           = obs[..., :-(self.action_mask_size)]
         action_mask = obs[..., -(self.action_mask_size):].bool()
 
@@ -71,6 +72,7 @@ class HiearchyModel(nn.Module):
         I_BEGIN_3C = I_BEGIN_2C + (L-1)
         I_BEGIN_4C = I_BEGIN_3C + (L-2)
         
+        # Define the mask of each transformation
         transform_mask = action_mask[..., :NUM_TRANSFORMATIONS]
         TP_mask = action_mask[..., TP_BEGIN:T_BEGIN]
         T_mask = action_mask[..., T_BEGIN:I_BEGIN_2C]
