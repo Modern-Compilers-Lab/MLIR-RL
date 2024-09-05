@@ -2,8 +2,6 @@
 
 import os
 import re
-import subprocess
-import sys
 import numpy as np
 from copy import copy
 
