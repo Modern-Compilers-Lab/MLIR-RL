@@ -55,7 +55,7 @@
       %14 = arith.addf %13, %out : f32
       linalg.yield %14 : f32
     } -> tensor<32x729x128xf32>
-    %expanded = tensor.expand_shape %9 [[0], [1, 2], [3]] : tensor<32x729x128xf32> into tensor<32x27x27x128xf32>
+    %expanded = tensor.expand_shape %9 [[0], [1, 2], [3]] output_shape [32, 27, 27, 128] : tensor<32x729x128xf32> into tensor<32x27x27x128xf32>
     %10 = call @nanoTime() : () -> i64
     %11 = arith.subi %10, %6 : i64
     %12 = arith.uitofp %11 : i64 to f64

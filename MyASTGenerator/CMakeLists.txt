@@ -38,8 +38,10 @@ endif()
 
 set(STANDALONE_SOURCE_DIR ${PROJECT_SOURCE_DIR})
 set(STANDALONE_BINARY_DIR ${PROJECT_BINARY_DIR})
-include_directories(${LLVM_INCLUDE_DIRS})
-include_directories(${MLIR_INCLUDE_DIRS})
+include_directories($ENV{LLVM_INCLUDE})
+include_directories($ENV{LLVM_BUILD_INCLUDE})
+include_directories($ENV{MLIR_INCLUDE})
+include_directories($ENV{MLIR_BUILD_INCLUDE})
 include_directories(${STANDALONE_SOURCE_DIR}/include)
 include_directories(${STANDALONE_BINARY_DIR}/include)
 link_directories(${LLVM_BUILD_LIBRARY_DIR})
@@ -76,7 +78,8 @@ target_link_libraries(AstDumper
   
     MLIRMathToLLVM
     MLIRMemRefToLLVM
-    MLIRLinalgToLLVM
+    MLIRLinalgToStandard
+    MLIRFuncToLLVM
     MLIROpenMPToLLVM
     MLIRSCFToOpenMP
     MLIRBufferizationToMemRef

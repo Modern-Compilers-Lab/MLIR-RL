@@ -31,7 +31,8 @@
 // Include custom headers
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
 #include <optional>
-#include "mlir/Dialect/Transform/IR/TransformInterfaces.h"
+#include "mlir/Dialect/Transform/Interfaces/TransformInterfaces.h"
+#include "mlir/Dialect/Linalg/TransformOps/LinalgTransformOps.h"
 #include "mlir/IR/AsmState.h"
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/MLIRContext.h"
@@ -126,11 +127,11 @@ int main(int argc, char **argv)
   mlir::OwningOpRef<Operation *> module1 = mlir::parseSourceFile<mlir::ModuleOp>(sourceMgr, &context);
   Operation *ClonedTarget = module1.get();
 
-  
+
   int i = 0;
   ClonedTarget->walk([&](Operation *op){
     if (linalg::LinalgOp linalgOp = dyn_cast<linalg::LinalgOp>(op)) {
-      
+
       std::string tagName = "operation_" + std::to_string(i);
       mlir::Attribute strAttr = mlir::StringAttr::get(&context, tagName);
       linalgOp->setAttr("tag", strAttr);
@@ -138,7 +139,7 @@ int main(int argc, char **argv)
       llvm::outs() << "#START_OPERATION" << "\n";
       // printer << linalgOp; std::cout << "\n";
       llvm::outs() << linalgOp << "\n";
-      
+
       // linalgOp->print(llvm::outs());
       llvm::outs() << "#START_TAG" << "\n";
       llvm::outs() << tagName << "\n";
@@ -170,7 +171,7 @@ int main(int argc, char **argv)
     if (linalg::LinalgOp op = dyn_cast<linalg::LinalgOp>(op_)) {
 
       std::string opTagValue = getLinalgOpTag(op);
-            
+
       // Print information about the producer of each of the operands.
       for (mlir::Value operand : op->getOperands()) {
         if (Operation *producer = operand.getDefiningOp()) {
@@ -186,15 +187,15 @@ int main(int argc, char **argv)
   llvm::outs() << "#END_GRAPH\n";
 
 
-  llvm::outs() << "########################################\n"; 
+  llvm::outs() << "########################################\n";
 
 
-  
+
   // module1->dump();
   module1->print(llvm::outs());
 
 }
 
 
-// cmake .. -DMLIR_DIR=/scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/lib/cmake/mlir -DLLVM_EXTERNAL_LIT=/scratch/nb3891/Script/MLIR_RL_2/llvm-project/build/bin/llvm-lit
+// cmake .. -DMLIR_DIR=/data/mt5383/llvm-project/build-mlir/lib/cmake/mlir -DLLVM_EXTERNAL_LIT=/data/mt5383/llvm-project/build-mlir/bin/llvm-lit
 // cmake --build MyASTGenerator/build/ && MyASTGenerator/build/bin/AstDumper examples/x1.mlir
