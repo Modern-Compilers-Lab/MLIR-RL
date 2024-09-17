@@ -56,4 +56,4 @@ def tensorflow_to_tosa(model: callable, input_shape: list, output_path: str):
     os.system(f"tf-opt --pass-pipeline='builtin.module(func.func(tosa-to-tensor, tosa-to-linalg-named, tosa-to-linalg, tosa-to-arith))'  {tosa_mlir_output_path} -o {linalg_mlir_output_path}")
 
     print_info("[Linalg -> Loops] converting ...")
-    os.system(f"tf-opt --linalg-fuse-elementwise-ops --linalg-fold-unit-extent-dims --linalg-bufferize --convert-linalg-to-affine-loops {linalg_mlir_output_path} -o {loops_mlir_output_path}")
+    os.system(f"tf-opt --linalg-fuse-elementwise-ops --linalg-fold-unit-extent-dims --one-shot-bufferize=bufferize-function-boundaries --finalizing-bufferize --buffer-deallocation-pipeline --convert-linalg-to-affine-loops {linalg_mlir_output_path} -o {loops_mlir_output_path}")

@@ -15,5 +15,5 @@ CONDA_DIR=/share/apps/NYUAD5/miniconda/3-4.11.0
 CONDA_ENV=/home/ia2280/.conda/envs/main_env_5
 conda activate $CONDA_ENV
 
-cd /scratch/nb3891/Script/MLIR_RL_2/llvm-project/build
+cd /data/mt5383/llvm-project/build-mlir
 cmake --build . -j

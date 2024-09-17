@@ -1,4 +1,4 @@
-EXECUTABLE_PATH = "/scratch/nb3891/Script/MLIR_RL_2/MLScheduler/build/bin/CustomAutoSchedulerML"
+# EXECUTABLE_PATH = "/scratch/nb3891/Script/MLIR_RL_2/MLScheduler/build/bin/CustomAutoSchedulerML"
 
 
 MAX_NUM_STORES_LOADS = 5 # the maximum number of loads in the nested loops
