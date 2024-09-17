@@ -77,12 +77,12 @@ def get_obs(state: OperationState):
     """
     Build the obervation vector for the input state
     """
-    
+
     loops_data = build_nested_loops_feature_vector(state.loops_data)
-        
+
     action_history = state.actions.reshape(-1)
     action_mask = state.actions_mask
-    
+
     if state.operation_type == 'matmul':
         operation_type = 0
     elif 'conv_2d' in state.operation_type:
@@ -93,22 +93,22 @@ def get_obs(state: OperationState):
         operation_type = 3
     elif state.operation_type == 'generic':
         operation_type = 4
-    
+
     operation_type = np.array([operation_type])
-    
+
     obs = np.concatenate((
-        # The input of the policy network: 
+        # The input of the policy network:
         operation_type, # 1
         loops_data,     # MAX_NUM_LOOPS + MAX_NUM_LOOPS*MAX_NUM_LOAD_STORE_DIM*MAX_NUM_STORES_LOADS + MAX_NUM_LOOPS*MAX_NUM_LOAD_STORE_DIM + 5
         action_history, # MAX_NUM_LOOPS*3*CONFIG["truncate"]
-        
+
         # The action mask:
         action_mask     # 5 + MAX_NUM_LOOPS + MAX_NUM_LOOPS + (MAX_NUM_LOOPS-1) + (MAX_NUM_LOOPS-2) + (MAX_NUM_LOOPS-3)
     ))
-    
+
     # Normalize the upper bounds of the loops
     obs[1:7] = obs[1:7] / 100
-        
+
     return obs
 
 def initialize_action_mask(action_mask, num_loops, operation_type):
@@ -121,17 +121,17 @@ def initialize_action_mask(action_mask, num_loops, operation_type):
                    : 3-consecutive interchanges: L - 2
                    : 4-consecutive interchanges: L - 3
         Interchange: 3L - 6
-        
+
     action_mask[:5] = [end, TP, T, I, Img2Col]
     """
     L = MAX_NUM_LOOPS
-    
+
     TP_BEGIN = 5
     T_BEGIN = TP_BEGIN + L
     I_BEGIN_2C = T_BEGIN + L
     I_BEGIN_3C = I_BEGIN_2C + (L-1)
     I_BEGIN_4C = I_BEGIN_3C + (L-2)
-    
+
     if operation_type == 'conv_2d':
         action_mask[:5] = [False, False, False, False, True]
     else:
@@ -141,11 +141,11 @@ def initialize_action_mask(action_mask, num_loops, operation_type):
     action_mask[I_BEGIN_2C+num_loops-1:I_BEGIN_3C] = False
     action_mask[I_BEGIN_3C+num_loops-2:I_BEGIN_4C] = False
     action_mask[I_BEGIN_4C+num_loops-3:] = False
-    
+
     if num_loops == 1:
         action_mask[3] = False
         action_mask[I_BEGIN_2C] = True
-    
+
     return action_mask
 
 def update_action_mask(state, transformation, parameters, num_loops):
@@ -153,73 +153,73 @@ def update_action_mask(state, transformation, parameters, num_loops):
     actions_mask: (NUM_TRANSFORMATIONS + L + L + (L-1) + (L-2) + (L-3) )
     action_mask[:NUM_TRANSFORMATIONS] = [end, TP, T, I, Img2Col]
     """
-    
+
     L = MAX_NUM_LOOPS
-    
+
     TP_BEGIN = NUM_TRANSFORMATIONS
     T_BEGIN = TP_BEGIN + L
     I_BEGIN_2C = T_BEGIN + L
     I_BEGIN_3C = I_BEGIN_2C + (L-1)
     I_BEGIN_4C = I_BEGIN_3C + (L-2)
-    
+
     actions_mask = state.actions_mask
-    
-    
+
+
     if transformation == 'img2col':
         actions_mask[:NUM_TRANSFORMATIONS] = [False, True, False, False, False]
-    
-    
+
+
     if state.operation_type == "pooling" or state.operation_type == "conv_2d":
         if transformation == 'parallelization':actions_mask[:NUM_TRANSFORMATIONS] = [True, False, False, False, False]
         if transformation == 'tiling':actions_mask[:NUM_TRANSFORMATIONS] = [True, False, False, False, False]
-        
+
     elif state.operation_type == "conv_2d+img2col":
         if transformation == 'parallelization':actions_mask[:NUM_TRANSFORMATIONS] = [True, False, False, False, False]
-    
+
     elif state.operation_type == "matmul" or state.operation_type == "add":
         if transformation == 'parallelization':actions_mask[:NUM_TRANSFORMATIONS] = [True, False, False, False, False]
         if transformation == 'tiling':actions_mask[:NUM_TRANSFORMATIONS] = [True, False, True, True, False]
         if transformation == 'interchange':actions_mask[:NUM_TRANSFORMATIONS] = [True, False, False, True, False]
-        
+
     elif state.operation_type == "generic":
         if transformation == 'parallelization':actions_mask[:NUM_TRANSFORMATIONS] = [True, False, False, False, False]
         if transformation == 'interchange':actions_mask[:NUM_TRANSFORMATIONS] = [True, False, True, True, False]
         if transformation == 'tiling':actions_mask[:NUM_TRANSFORMATIONS] = [True, False, False, False, False]
-        
+
     else:
         raise ValueError("operation_type must be in [pooling, conv_2d, conv_2d+img2col, matmul, generic]")
-    
+
     if num_loops == 1:
         actions_mask[3] = False
         actions_mask[I_BEGIN_2C] = True
-    
+
     return actions_mask
 
 def update_action_history(state: OperationState, transformation, parameters):
     # actions.shape: (L, 3, truncate)
     # parallelization, tiling, interchange
-     
+
     num_loops = len(state.loops_data["nested_loops"])
     actions = state.actions
-    
+
     # actions[l, t, s] = the parameters of transformation `t` for loop `l` at step `s`
     for l in range(num_loops):
-    
+
         if transformation == 'parallelization':
             actions[l, 0, state.step_count] = parameters[l]
         elif transformation == 'tiling':
             actions[l, 1, state.step_count] = parameters[l]
         elif transformation == 'interchange':
             actions[l, 2, state.step_count] = parameters[l]
-    
+
     return actions
-    
+
 
 def sorted_divisors(n):
     """
     Get the divisors of `n` that are supperior or equal to 2
     """
-    
+
     divisors = []
     for i in range(2, n + 1):
         if n % i == 0:
@@ -230,23 +230,23 @@ def get_tiling_candidates(n, num_candidates):
     """
     Get `num_candidates` candidate tiling size for upper bound `n`
     """
-    
+
     # If upperbound equal 1, we only have candidates of 1
     if n == 1:
         return [1]*num_candidates
-    
+
     # We take the divisors of the upperbound `n`
     div = sorted_divisors(n)
-    
-    
+
+
     if len(div) >= num_candidates: # If we have enough unique divisors
-        
-        # step = len(div) // num_candidates 
-        
+
+        # step = len(div) // num_candidates
+
         step = 1
         if num_candidates <= (len(div) // 2): # If we have divisors that are twice the number of the `num_candidates`
             step = 2
-        
+
         res = div[::step][:num_candidates]
     else: # If we don't have enough unique divisors, we fill the rest of the candidates with the last dividor
         res = div + div[-1:]*(num_candidates-len(div))
@@ -260,11 +260,11 @@ def last_tiling(history):
         if transformation in ['tiling', 'parallelization']:
             return parameters
     return None
-    
+
 
 def process_action(raw_action, state: OperationState):
     """
-    Get the (transformation, parameters) from the `raw_action`. 
+    Get the (transformation, parameters) from the `raw_action`.
     """
 
     loops_data = state.loops_data
@@ -273,15 +273,15 @@ def process_action(raw_action, state: OperationState):
 
     # Sellect the tiling candidates for each loop
     candidates = [[0]+get_tiling_candidates(upper, num_candidates=NUM_TILE_SIZES) for (arg, lower, upper, step) in loops_data['nested_loops']]
-    
+
     if action_name == 'interchange': # interchange
         parameters = INTERCHANGE_ACTIONS[parameter]
         parameters = parameters[:num_loop]
         return ['interchange', list(parameters)]
-    
+
     elif action_name == 'img2col': # interchange
         return ['img2col', [0]]
-    
+
     elif action_name == 'tiling': # tiling
         tiling_parameters = []
         for i, (arg, lower, upper, step) in enumerate(loops_data['nested_loops']):
@@ -292,13 +292,13 @@ def process_action(raw_action, state: OperationState):
                     tiling_parameters.append( upper )
             else: # i >= len(parameter)
                 tiling_parameters.append(0)
-        
+
         last_tiling_parameters = last_tiling(state.transformation_history)
         if last_tiling_parameters is not None:
             tiling_parameters = [a if (a == 0) or ((a != 0) and (b % a == 0)) else b for a, b in zip(tiling_parameters, last_tiling_parameters)]
-        
+
         return ['tiling', tiling_parameters]
-    
+
     elif action_name == 'parallelization': # parallelization
         parall_parameters = []
         for i, (arg, lower, upper, step) in enumerate(loops_data['nested_loops']):
@@ -309,22 +309,22 @@ def process_action(raw_action, state: OperationState):
                     parall_parameters.append( upper )
             else: # i >= len(parameter)
                 parall_parameters.append(0)
-        
+
         return ['parallelization', parall_parameters]
-    
+
     return ['no_transformation', [0]]
 
 
 def speedup_reward(new, old, a=10):
-    
+
     # if old >= new:
     #     reward = old/new - 1
     # else: # old < new
     #     reward = - new/old + 1
-        
-        
+
+
     reward = math.log(old/new) / math.log(a)
-    
+
     return reward
 
 
@@ -332,7 +332,7 @@ def speedup_reward(new, old, a=10):
 
 class Env:
     def __init__(self, operations_files, truncate=10, reset_repeat=1, step_repeat=1):
-        
+
         operations = [
             'linalg.matmul',
             'linalg.conv_2d',
@@ -340,25 +340,25 @@ class Env:
             # 'generic',
             'linalg.add',
         ]
-        operations_files = { file:details for file, details in operations_files.items() if any([ s in file for s in operations ]) }        
+        operations_files = { file:details for file, details in operations_files.items() if any([ s in file for s in operations ]) }
         operations_files = [[details['operation']]+[details] for file, details in operations_files.items()]
-                
-        
+
+
         self.operations_files = operations_files
         self.truncate = truncate
         self.get_obs = lambda state: get_obs(state)
         self.reset_repeat = reset_repeat
         self.step_repeat = step_repeat
-        
+
         # Generate a random file to be used in order to apply the transformations and evaluate the code
         # This is done in order to enable having multiple experiments at the same time, by letting each
         # experiment use a separate unique file to read and write intermidiate representations
         random_str = generate_random_string()
-        tmp_file = "/scratch/nb3891/Script/MLIR_RL_2/tmp_files/" + random_str + ".txt"
+        tmp_file = "/data/mt5383/MLIR-RL-new/tmp_files/" + random_str + ".mlir"
         with open(tmp_file, "w") as file:
             file.write("")
         self.tmp_file = tmp_file
-        
+
         # Get the AST of the MLIR code and give a tag to each linalg operation
         # The last operation represents the operations that we want to optimize (the first operations are just linalg.fills)
         for i in tqdm(range(len(operations_files))):
@@ -366,26 +366,26 @@ class Env:
             raw_ast_info = get_raw_ast_info(code, self.tmp_file)
             code_ast, code_with_tags = get_ast(raw_ast_info)
             operations_files[i][1]["transform_wrapped_operation"] = code_with_tags
-            
+
             # We take  the operation with the last tag
             operation_tag = list(code_ast.keys())[-1]
             operations_files[i][1]["operation_tag"] = operation_tag
-        
 
 
-            
+
+
     def reset(self, idx=None):
         operations_files = self.operations_files
-        
+
         if idx is not None:
             # We get the operation with the right index
             raw_operation, operation_dict = operations_files[idx]
         else:
             # Get a random operation
             raw_operation, operation_dict = random.choice(operations_files)
-        
+
         # The number of loops in the Linalg operations
-        num_loops = len(operation_dict["loops_data"]["nested_loops"]) 
+        num_loops = len(operation_dict["loops_data"]["nested_loops"])
         # The baseline execution time of the Linalg operation
         exec_time = operation_dict['execution_time']
 
@@ -400,10 +400,10 @@ class Env:
             operation_type = 'add'
         elif 'linalg.generic' in raw_operation:
             operation_type = 'generic'
-            
-       
+
+
         # Action mask:
-        # Transformations: 5 = TP, T, Interchange, Im2col, Vectorization 
+        # Transformations: 5 = TP, T, Interchange, Im2col, Vectorization
         # TP: L loops
         # T : L loops
         # Interchange: 3L - 6 (total)
@@ -438,9 +438,9 @@ class Env:
         obs = self.get_obs(state)
         obs = torch.tensor(obs, dtype=torch.float32)
         obs = torch.unsqueeze(obs, 0)
-        
+
         return state, obs
-        
+
 
     def step(self, state, raw_action, model):
         """
@@ -465,7 +465,7 @@ class Env:
         time_out = False # A flag indication if a timeout occured in the transformation
 
         if transformation != 'no_transformation':
-            
+
             # Apply the transformation and get the new code
             transformed_code = apply_transformation_with_timeout(
                 state=state,
@@ -474,24 +474,24 @@ class Env:
                 parameters=parameters,
                 timeout=20,
             )
-            
-            
+
+
             # SPECIAL CASE:
             # If we are optimizing a convlution operation, then we can apply the Im2col transformation to turn the convolution
             # into a matrix multiplicatoin.
-            if (transformation == 'img2col') and (state.operation_type == 'conv_2d'):
-                
+            if transformed_code and  (transformation == 'img2col') and (state.operation_type == 'conv_2d'):
+
                 # Get the matmul operation that now represents the convlution and wrap it in a funciton wrapper
-                # to prepare it for the optimization in the next iterations 
-                
+                # to prepare it for the optimization in the next iterations
+
                 prints = transform_dialect_prints(transformed_code, [state.operation_tag], self.tmp_file)
                 prints = post_process_transform_dialect_prints(prints)
                 raw_operation = list(prints.values())[0]
-                
-                wrapped_operation = function_wrapper(raw_operation)  
-                loops = lower_linalg_to_loops(wrapped_operation, self.tmp_file)            
+
+                wrapped_operation = function_wrapper(raw_operation)
+                loops = lower_linalg_to_loops(wrapped_operation, self.tmp_file)
                 loops_data = get_nested_loops_data(loops)
-                                                
+
                 state = OperationState(
                     operation_tag=state.operation_tag,
                     raw_operation=raw_operation,
@@ -508,24 +508,24 @@ class Env:
                     cummulative_reward=state.cummulative_reward,
                     tmp_file=self.tmp_file
                 )
-            
-            
+
+
             new_exec_time = None
             if transformed_code: # If the code has been succefully transformed:
-                # Her we return a reward of zero because it's not the end of the schedule yet, and in our method we only execute 
+                # Her we return a reward of zero because it's not the end of the schedule yet, and in our method we only execute
                 # the code once and return the speedup by the end of the schedule
-                reward += 0 
+                reward += 0
                 new_exec_time = state.exec_time
-            
-            else: # This indicates that an error occured and that the code has not been transformed 
-                # We keep the same code as previously 
+
+            else: # This indicates that an error occured and that the code has not been transformed
+                # We keep the same code as previously
                 # We get a penalty of -5
                 time_out = True
                 print_error(f'EVAL ERROR: {transformation} {parameters} {state.transformation_history}')
                 transformed_code = state.transformed_code
                 reward = -5
-                new_exec_time = state.exec_time 
-                
+                new_exec_time = state.exec_time
+
         else: # transformation == 'no_transformation'
             transformed_code = state.transformed_code
             new_exec_time = state.exec_time
@@ -534,10 +534,10 @@ class Env:
 
         # Update state actions:
         next_state_actions = update_action_history(state, transformation, parameters)
-        
+
         # Update action mask:
         new_actions_mask = update_action_mask(state, transformation, parameters, num_loops)
-                    
+
 
 
         next_state = OperationState(
@@ -573,26 +573,26 @@ class Env:
 
         if done:
             # if (state.operation_type == 'conv_2d') or ('pooling' in state.operation_type):
-            
+
             # For convolution, before vectorization, we need to first apply another tiling in order to decompose it to 1d convolution
             if (state.operation_type == 'conv_2d'):
-                
-                
+
+
                 if ('conv_2d_nhwc_hwcf' in state.raw_operation):
                     second_interchange_parameters = parameters.copy()
                     second_interchange_parameters[1] = 1
                     second_interchange_parameters[4] = 1
-                    
+
                 elif ('conv_2d_nchw_fchw' in state.raw_operation):
                     second_interchange_parameters = parameters.copy()
                     second_interchange_parameters[2] = 1
                     second_interchange_parameters[5] = 1
-                    
+
                 elif ('pooling' in state.raw_operation):
                     second_interchange_parameters = [0]*6
                     second_interchange_parameters[2] = 1
                     second_interchange_parameters[4] = 1
-                    
+
                 next_state.transformed_code = apply_transformation_with_timeout(
                     state=state,
                     code=next_state.transformed_code,
@@ -601,9 +601,9 @@ class Env:
                     timeout=20,
                 )
 
-                next_state.transformed_code = apply_conv2d_decomposition(next_state.transformed_code, next_state.operation_tag, self.tmp_file)           
+                next_state.transformed_code = apply_conv2d_decomposition(next_state.transformed_code, next_state.operation_tag, self.tmp_file)
 
-            
+
             # Generic and pooling operations are better without vectorization
             if next_state.operation_type != 'generic' and next_state.operation_type != 'pooling':
                 vect_transformed_code = apply_transformation_with_timeout(
@@ -615,14 +615,14 @@ class Env:
                 )
             else:
                 vect_transformed_code = next_state.transformed_code
-            
-            
+
+
             new_exec_time = None
-            if vect_transformed_code: # If vectorization is successful then execute and evaluate the new code 
+            if vect_transformed_code: # If vectorization is successful then execute and evaluate the new code
                 new_exec_time = evaluate_code_with_timeout(code=vect_transformed_code, timeout=120, tmp_file=self.tmp_file)
-            
+
             if new_exec_time is not None: # If the code has been executed successfuly and we have an execution time
-                # We calculate the speedup 
+                # We calculate the speedup
                 r = speedup_reward(new_exec_time, next_state.root_exec_time)
                 reward += r
                 next_state.transformed_code = vect_transformed_code
@@ -632,7 +632,7 @@ class Env:
                 time_out = True
                 print_error(f'EVAL ERROR:{transformation} {parameters} {next_state.transformation_history}')
                 new_exec_time = next_state.exec_time
-            
+
             next_state.transformation_history += [('vectorization', [0])]
 
         next_state.cummulative_reward += reward
@@ -651,7 +651,7 @@ class ParallelEnv:
         self.num_env = num_env
         self.json_file = json_file
         self.truncate = truncate
-        
+
         with open(json_file, "r") as file:
             data = json.load(file)
             operations_files = data
