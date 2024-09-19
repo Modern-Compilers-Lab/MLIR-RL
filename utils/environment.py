@@ -187,7 +187,7 @@ def update_action_mask(state, transformation, parameters, num_loops):
         if transformation == 'tiling':actions_mask[:NUM_TRANSFORMATIONS] = [True, False, False, False, False]
 
     else:
-        raise ValueError("operation_type must be in [pooling, conv_2d, conv_2d+img2col, matmul, generic]")
+        raise ValueError("operation_type must be in [pooling, conv_2d, conv_2d+img2col, matmul, add, generic]")
 
     if num_loops == 1:
         actions_mask[3] = False
@@ -289,7 +289,7 @@ def process_action(raw_action, state: OperationState):
                 if parameter[i] != -1:
                     tiling_parameters.append( candidates[i][parameter[i]])
                 else: # parameter[i] == -1:
-                    tiling_parameters.append( upper )
+                    tiling_parameters.append(0)
             else: # i >= len(parameter)
                 tiling_parameters.append(0)
 
@@ -306,7 +306,7 @@ def process_action(raw_action, state: OperationState):
                 if parameter[i] != -1:
                     parall_parameters.append( candidates[i][parameter[i]])
                 else: # parameter[i] == -1:
-                    parall_parameters.append( upper )
+                    parall_parameters.append(0)
             else: # i >= len(parameter)
                 parall_parameters.append(0)
 
