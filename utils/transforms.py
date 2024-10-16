@@ -86,7 +86,7 @@ def transform_dialect_TP(code, operation_tag, tiling_size, tmp_file):
         file.write(code)
 
     result = os.popen(
-        f'/data/mt5383/llvm-project/build-mlir/bin/mlir-opt {tmp_file} -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule',
+        f'/scratch/mt5383/llvm-project/build-mlir/bin/mlir-opt {tmp_file} -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule',
     ).read()
 
     result = result.replace("module {\n", "", 1)
@@ -117,7 +117,7 @@ def transform_dialect_tile(code, operation_tag, tiling_size, tmp_file):
         file.write(code)
 
     result = os.popen(
-        f'/data/mt5383/llvm-project/build-mlir/bin/mlir-opt {tmp_file} -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule',
+        f'/scratch/mt5383/llvm-project/build-mlir/bin/mlir-opt {tmp_file} -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule',
     ).read()
 
     result = result.replace("module {\n", "", 1)
@@ -153,7 +153,7 @@ def transform_dialect_interchange(code, operation_tag, interchange_list, tmp_fil
         file.write(code)
 
     result = os.popen(
-        f'/data/mt5383/llvm-project/build-mlir/bin/mlir-opt {tmp_file} -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule',
+        f'/scratch/mt5383/llvm-project/build-mlir/bin/mlir-opt {tmp_file} -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule',
     ).read()
 
     result = result.replace("module {\n", "", 1)
@@ -177,7 +177,7 @@ def transform_dialect_fuse(code, consumer_tag, producer_tag, tmp_file):
         file.write(code)
 
     result = os.popen(
-        f'/data/mt5383/llvm-project/build-mlir/bin/mlir-opt {tmp_file} -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule',
+        f'/scratch/mt5383/llvm-project/build-mlir/bin/mlir-opt {tmp_file} -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule',
     ).read()
 
     result = result.replace("module {\n", "", 1)
@@ -240,7 +240,7 @@ module attributes {{transform.with_named_sequence}} {{
         file.write(code)
 
     result = os.popen(
-        f'/data/mt5383/llvm-project/build-mlir/bin/mlir-opt {tmp_file} -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule',
+        f'/scratch/mt5383/llvm-project/build-mlir/bin/mlir-opt {tmp_file} -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule',
     ).read()
 
     result = result.replace("module {\n", "", 1)
@@ -298,7 +298,7 @@ transform.named_sequence @__transform_main(%variant_op: !transform.any_op {{tran
         file.write(code)
 
     result = os.popen(
-        f'/data/mt5383/llvm-project/build-mlir/bin/mlir-opt {tmp_file} -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule',
+        f'/scratch/mt5383/llvm-project/build-mlir/bin/mlir-opt {tmp_file} -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule',
     ).read()
 
     result = result.replace("module {\n", "", 1)
@@ -384,7 +384,7 @@ transform.named_sequence @__transform_main(%variant_op: !transform.any_op {{tran
         file.write(code)
 
     result = os.popen(
-        f'/data/mt5383/llvm-project/build-mlir/bin/mlir-opt {tmp_file} -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule',
+        f'/scratch/mt5383/llvm-project/build-mlir/bin/mlir-opt {tmp_file} -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule',
     ).read()
 
     result = result.replace("module {\n", "", 1)
@@ -427,7 +427,7 @@ transform.named_sequence @__transform_main(%variant_op: !transform.any_op {{tran
         file.write(code)
 
     result = os.popen(
-        f'/data/mt5383/llvm-project/build-mlir/bin/mlir-opt {tmp_file} -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule',
+        f'/scratch/mt5383/llvm-project/build-mlir/bin/mlir-opt {tmp_file} -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule',
     ).read()
 
     result = result.replace("module {\n", "", 1)
@@ -489,7 +489,7 @@ transform.named_sequence @__transform_main(%variant_op: !transform.any_op {{tran
         file.write(code)
 
     result = os.popen(
-        f'/data/mt5383/llvm-project/build-mlir/bin/mlir-opt {tmp_file} -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule',
+        f'/scratch/mt5383/llvm-project/build-mlir/bin/mlir-opt {tmp_file} -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule',
     ).read()
 
     result = result.replace("module {\n", "", 1)
@@ -503,8 +503,8 @@ transform.named_sequence @__transform_main(%variant_op: !transform.any_op {{tran
 
 
 def evaluate_code_2(code, tmp_file):
-    command_1 = """/data/mt5383/llvm-project/build-mlir/bin/mlir-opt  -loop-invariant-code-motion -cse -canonicalize -cse -eliminate-empty-tensors -empty-tensor-to-alloc-tensor -one-shot-bufferize="bufferize-function-boundaries function-boundary-type-conversion=identity-layout-map" -buffer-deallocation -convert-linalg-to-loops  -convert-vector-to-scf -convert-scf-to-openmp -canonicalize -lower-affine -expand-strided-metadata -finalize-memref-to-llvm -convert-scf-to-cf -lower-affine -convert-arith-to-llvm -convert-openmp-to-llvm -convert-vector-to-llvm -convert-cf-to-llvm -convert-func-to-llvm -convert-math-to-llvm -reconcile-unrealized-casts"""
-    command_2 = """/data/mt5383/llvm-project/build-mlir/bin/mlir-cpu-runner -e main -entry-point-result=void -shared-libs=/data/mt5383/llvm-project/build-mlir/lib/libmlir_runner_utils.so,/data/mt5383/llvm-project/build-mlir/lib/libmlir_c_runner_utils.so,/data/mt5383/llvm-project/build/lib/libomp.so"""
+    command_1 = """/scratch/mt5383/llvm-project/build-mlir/bin/mlir-opt  -loop-invariant-code-motion -cse -canonicalize -cse -eliminate-empty-tensors -empty-tensor-to-alloc-tensor -one-shot-bufferize="bufferize-function-boundaries function-boundary-type-conversion=identity-layout-map" -buffer-deallocation -convert-linalg-to-loops  -convert-vector-to-scf -convert-scf-to-openmp -canonicalize -lower-affine -expand-strided-metadata -finalize-memref-to-llvm -convert-scf-to-cf -lower-affine -convert-arith-to-llvm -convert-openmp-to-llvm -convert-vector-to-llvm -convert-cf-to-llvm -convert-func-to-llvm -convert-math-to-llvm -reconcile-unrealized-casts"""
+    command_2 = """/scratch/mt5383/llvm-project/build-mlir/bin/mlir-cpu-runner -e main -entry-point-result=void -shared-libs=/scratch/mt5383/llvm-project/build-mlir/lib/libmlir_runner_utils.so,/scratch/mt5383/llvm-project/build-mlir/lib/libmlir_c_runner_utils.so,/scratch/mt5383/llvm-project/build/lib/libomp.so"""
 
     os.environ["OMP_NUM_THREADS"] = "8"
 
@@ -554,7 +554,7 @@ module attributes {{transform.with_named_sequence}} {{
         file.write(code)
 
     result = os.popen(
-        f'/data/mt5383/llvm-project/build-mlir/bin/mlir-opt {tmp_file} -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule',
+        f'/scratch/mt5383/llvm-project/build-mlir/bin/mlir-opt {tmp_file} -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule',
     ).read()
 
     result = result.replace("module {\n", "", 1)
@@ -589,7 +589,7 @@ def apply_conv2d_decomposition(code, operation_tag, tmp_file):
         file.write(code)
 
     result = os.popen(
-        f'/data/mt5383/llvm-project/build-mlir/bin/mlir-opt {tmp_file} -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule',
+        f'/scratch/mt5383/llvm-project/build-mlir/bin/mlir-opt {tmp_file} -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule',
     ).read()
 
     result = result.replace("module {\n", "", 1)
@@ -624,7 +624,7 @@ def transform_dialect_prints(code, operation_tags: list, tmp_file):
         file.write(code)
 
     result = os.popen(
-        f'/data/mt5383/llvm-project/build-mlir/bin/mlir-opt {tmp_file} -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule -o {tmp_file}',
+        f'/scratch/mt5383/llvm-project/build-mlir/bin/mlir-opt {tmp_file} -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule -o {tmp_file}',
     ).read()
 
     return result
@@ -727,8 +727,8 @@ def apply_transformation_with_timeout(state, code, transformation, parameters, t
 
 
 def evaluate_code(code, tmp_file):
-    command_1 = """/data/mt5383/llvm-project/build-mlir/bin/mlir-opt  -loop-invariant-code-motion -cse -canonicalize -cse -eliminate-empty-tensors -empty-tensor-to-alloc-tensor -one-shot-bufferize="bufferize-function-boundaries function-boundary-type-conversion=identity-layout-map" -buffer-deallocation -convert-linalg-to-loops  -convert-vector-to-scf -convert-scf-to-openmp -canonicalize -lower-affine -expand-strided-metadata -finalize-memref-to-llvm -convert-scf-to-cf -lower-affine -convert-arith-to-llvm -convert-openmp-to-llvm -convert-vector-to-llvm -convert-cf-to-llvm -convert-func-to-llvm -convert-math-to-llvm -reconcile-unrealized-casts"""
-    command_2 = """/data/mt5383/llvm-project/build-mlir/bin/mlir-cpu-runner -e main -entry-point-result=void -shared-libs=/data/mt5383/llvm-project/build-mlir/lib/libmlir_runner_utils.so,/data/mt5383/llvm-project/build-mlir/lib/libmlir_c_runner_utils.so,/data/mt5383/llvm-project/build/lib/libomp.so"""
+    command_1 = """/scratch/mt5383/llvm-project/build-mlir/bin/mlir-opt  -loop-invariant-code-motion -cse -canonicalize -cse -eliminate-empty-tensors -empty-tensor-to-alloc-tensor -one-shot-bufferize="bufferize-function-boundaries function-boundary-type-conversion=identity-layout-map" -buffer-deallocation -convert-linalg-to-loops  -convert-vector-to-scf -convert-scf-to-openmp -canonicalize -lower-affine -expand-strided-metadata -finalize-memref-to-llvm -convert-scf-to-cf -lower-affine -convert-arith-to-llvm -convert-openmp-to-llvm -convert-vector-to-llvm -convert-cf-to-llvm -convert-func-to-llvm -convert-math-to-llvm -reconcile-unrealized-casts"""
+    command_2 = """/scratch/mt5383/llvm-project/build-mlir/bin/mlir-cpu-runner -e main -entry-point-result=void -shared-libs=/scratch/mt5383/llvm-project/build-mlir/lib/libmlir_runner_utils.so,/scratch/mt5383/llvm-project/build-mlir/lib/libmlir_c_runner_utils.so,/scratch/mt5383/llvm-project/build/lib/libomp.so"""
 
     os.environ["OMP_NUM_THREADS"] = "8"
 

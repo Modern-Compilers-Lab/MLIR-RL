@@ -394,7 +394,7 @@ CONFIG = {
     'entropy_coef':0.01,
     'lr':0.001,
     'truncate':5,
-    'json_file':"generated_data/train_operations.json",
+    'json_file': os.path.abspath("generated_data/train_operations.json"),
 }
 
 env = ParallelEnv(
@@ -406,7 +406,7 @@ env = ParallelEnv(
 )
 
 eval_env = ParallelEnv(
-    json_file="generated_data/eval_operations.json",
+    json_file=os.path.abspath("generated_data/eval_operations.json"),
     num_env=1,
     truncate=5,
     reset_repeat=1,

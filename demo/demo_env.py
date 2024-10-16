@@ -1,3 +1,4 @@
+import os
 from utils.environment import ParallelEnv
 from utils.ppo_model import HiearchyModel as MyModel
 from utils.consts import (
@@ -21,7 +22,7 @@ CONFIG = {
     'entropy_coef':0.01,
     'lr':0.001,
     'truncate':5,
-    'json_file':"generated_data/bigger_input_nn_(32x230x230x3)operations.json",
+    'json_file': os.path.abspath("generated_data/bigger_input_nn_(32x230x230x3)operations.json"),
 }
 
 env = ParallelEnv(

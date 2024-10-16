@@ -354,7 +354,7 @@ class Env:
         # This is done in order to enable having multiple experiments at the same time, by letting each
         # experiment use a separate unique file to read and write intermidiate representations
         random_str = generate_random_string()
-        tmp_file = "/data/mt5383/MLIR-RL-new/tmp_files/" + random_str + ".mlir"
+        tmp_file = "/scratch/mt5383/MLIR-RL/tmp_files/" + random_str + ".mlir"
         with open(tmp_file, "w") as file:
             file.write("")
         self.tmp_file = tmp_file
