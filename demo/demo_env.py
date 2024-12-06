@@ -82,9 +82,9 @@ for operation, i in benchmark_operations:
             action, action_log_p, values, entropy = model.sample(obs)
 
         # Apply the action and get the next state
-        next_obs, reward, terminated, truncated, next_state, final_state = env.step(state, action, model)
+        next_obs, reward, terminated, next_state, final_state = env.step(state, action, model)
 
-        done = terminated[0] or truncated[0]
+        done = terminated[0]
         if done:
             final_state = final_state[0]
             speedup_metric = final_state.root_exec_time /  final_state.exec_time

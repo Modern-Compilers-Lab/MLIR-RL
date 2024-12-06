@@ -4,6 +4,8 @@ import os
 import re
 import numpy as np
 from copy import copy
+from dotenv import load_dotenv
+load_dotenv()
 
 from utils.consts import (
     MAX_NUM_STORES_LOADS,
@@ -21,7 +23,7 @@ def remove_duplicate_args(args, shapes):
         if item not in seen:
             seen.add(item)
             result.append(item)
-            
+
     args = [x for (x, _) in result]
     shapes = [x for (_, x) in result]
     return args, shapes
@@ -42,11 +44,11 @@ def function_wrapper(operation, maps=None):
 
     args = [arg.strip() for arg in args]
     shapes = [shape.strip() for shape in shapes]
-    
+
     out_shape = shapes[-1]
 
     args, shapes = remove_duplicate_args(args, shapes)
-    
+
     args_str = ', '.join([f'{arg}: {shape}' for (arg, shape) in zip(args, shapes)])
 
     if maps is None:
@@ -81,9 +83,9 @@ def transform_wrapper(operation, maps=None):
     shapes = [shape.strip() for shape in shapes]
 
     args, shapes = remove_duplicate_args(args, shapes)
-    
+
     # print(args, shapes)
-    
+
     #############################################################
     # consts:
     dims = []
@@ -100,7 +102,7 @@ def transform_wrapper(operation, maps=None):
     unique_dims = sorted(list(unique_dims))
 
     # print(unique_dims)
-    
+
     consts_snippet = ""
     for dim in unique_dims:
         if dim != -1:
@@ -149,7 +151,7 @@ def transform_wrapper(operation, maps=None):
     code += "%val = arith.constant 2.00000e+00 : f32\n"
     code += "%zero = arith.constant 0.00000e+00 : f32\n"
     code += "\n"
-    
+
     # code +=f"%out = bufferization.alloc_tensor() : tensor<{N}x{K}xf32>\n"
     # code +=f"%A = linalg.fill ins(%val : f32) outs(%out : tensor<{N}x{K}xf32>) -> tensor<{N}x{K}xf32>\n"
     for arg, shape, arg_dims in zip(args, shapes, dims):
@@ -159,14 +161,14 @@ def transform_wrapper(operation, maps=None):
             code +=f"{arg} = linalg.fill ins(%val : f32) outs({tmp_arg} : {shape}) -> {shape}\n"
         else:
             code +=f"{arg} = arith.constant 2.00000e+00 : f32\n"
-    
+
     code += "\n"
     code += "%t0 = func.call @nanoTime() : () -> (i64)\n"
     code += "\n"
-    
+
     # code +=f"%D = linalg.matmul ins(%A, %B: tensor<{N}x{K}xf32>, tensor<{K}x{M}xf32>) outs(%C: tensor<{N}x{M}xf32>) -> tensor<{N}x{M}xf32>\n"
     code += f"%return_arg = {operation}"
-    
+
     code += "\n"
     code += "%t = func.call @nanoTime() : () -> (i64)\n"
     code += "%delta = arith.subi %t, %t0 : i64\n"
@@ -196,7 +198,7 @@ def lower_linalg_to_loops(mlir_code, tmp_file):
     """
     Lower Linalg dialect code to Affine dialect
     """
-    # command = f'echo "{mlir_code}" | /scratch/mt5383/llvm-project/build-mlir/bin/mlir-opt --linalg-fuse-elementwise-ops --linalg-fold-unit-extent-dims --linalg-bufferize --convert-linalg-to-affine-loops /dev/stdin'
+    # command = f"echo '{mlir_code}' | {os.getenv('LLVM_BUILD_PATH')}/bin/mlir-opt --linalg-fuse-elementwise-ops --linalg-fold-unit-extent-dims --linalg-bufferize --convert-linalg-to-affine-loops /dev/stdin"
     # result = subprocess.run(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
     # tmp_file = "/scratch/nb3891/Script/MLIR_RL_2/examples/temp_mlir.mlir"
@@ -208,8 +210,8 @@ def lower_linalg_to_loops(mlir_code, tmp_file):
 #     finalizing-bufferize
 # )
 # buffer-deallocation-pipeline
-    
-    out = os.popen(f"""/scratch/mt5383/llvm-project/build-mlir/bin/mlir-opt --linalg-fuse-elementwise-ops --linalg-fold-unit-extent-dims --one-shot-bufferize=bufferize-function-boundaries --finalizing-bufferize --buffer-deallocation-pipeline --convert-linalg-to-affine-loops {tmp_file}""").read()
+
+    out = os.popen(f"{os.getenv('LLVM_BUILD_PATH')}/bin/mlir-opt --linalg-fuse-elementwise-ops --linalg-fold-unit-extent-dims --one-shot-bufferize=bufferize-function-boundaries --finalizing-bufferize --buffer-deallocation-pipeline --convert-linalg-to-affine-loops {tmp_file}").read()
 
     if out != '':
         return out
@@ -218,7 +220,7 @@ def lower_linalg_to_loops(mlir_code, tmp_file):
 
 
 def get_nested_loops_data(loops):
-    
+
     lines = loops.split('\n') if loops else []
 
     loops_detailed = {}
@@ -232,30 +234,29 @@ def get_nested_loops_data(loops):
     args_of_map = {}
 
     for line in lines:
-        
+
         if "affine_map" in line:
             map_name, map_function = line.strip().split(' = ')
             map_function = map_function.split(' -> ')[1][1:-2]
             maps[map_name] = map_function
-            
-        
+
         elif "affine.apply" in line:
             new_op, _, _, *map_name__args = line.strip().split(' ')
             map_name__args = ' '.join(map_name__args)
             s = map_name__args.index('(')
-            map_name, args = map_name__args[:s], map_name__args[s+1:-1].split(', ')            
+            map_name, args = map_name__args[:s], map_name__args[s+1:-1].split(', ')
             mapping_string = copy(maps[map_name])
             for i in range(len(args)):
                 mapping_string = mapping_string.replace(f'd{i}', args[i])
             # print(new_op, map_name, args, maps[map_name], mapping_string)
             args_of_map[new_op] = mapping_string
-            
+
         elif "affine.for" in line:
             _, arg, _, lower, _, upper, _ = line.strip().split(' ')
             # print(arg, lower, upper)
             loops_detailed["nested_loops"].append((arg, int(lower), int(upper), 1))
             args_of_loops.append(arg)
-            
+
         elif "affine.load" in line:
             # print(line.strip().split(' ')[:-2])
             new_op, _, _, *alloc = line.strip().split(' ')[:-2]
@@ -265,9 +266,9 @@ def get_nested_loops_data(loops):
             for i in range(len(args)):
                 if args[i] in args_of_map:
                     args[i] = args_of_map[args[i]]
-                    
+
             loops_detailed["load_data"].append(args)
-        
+
         elif "arith.addf" in line:loops_detailed["op_count"]['+'] += 1
         elif "arith.mulf" in line:loops_detailed["op_count"]['*'] += 1
         elif "arith.subf" in line:loops_detailed["op_count"]['-'] += 1
@@ -312,18 +313,19 @@ def formula_str_to_list(formula):
 
 
 def build_nested_loops_feature_vector(loops_data):
-    
+
     indices = [arg for (arg, lower_bound, upper_bound, step) in loops_data['nested_loops']]
-    indices_dim = {arg:i for (i, arg) in enumerate(indices)}
+    indices_dim = {arg: i for (i, arg) in enumerate(indices)}
 
     # Nested loop features: (upper/lower bounds, step)
     nested_loops = np.zeros((MAX_NUM_LOOPS))
     for i, (arg, lower_bound, upper_bound, step) in enumerate(loops_data['nested_loops']):
-        if i == MAX_NUM_LOOPS:break
+        if i == MAX_NUM_LOOPS:
+            break
         nested_loops[i] = upper_bound
 
     # load access matrices:
-    
+
     load_data = loops_data["load_data"]
 
     load_access_matrices = np.zeros((MAX_NUM_STORES_LOADS, MAX_NUM_LOAD_STORE_DIM, MAX_NUM_LOOPS), dtype=np.int16)
@@ -360,7 +362,6 @@ def build_nested_loops_feature_vector(loops_data):
     feature_vector = np.concatenate((nested_loops, load_access_matrices, store_access_matrices, operations_count))
 
     return feature_vector
-
 
 
 class AutoScheduleOperation:

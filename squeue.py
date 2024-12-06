@@ -1,8 +1,7 @@
-import sys
 import subprocess
 
 def run_command():
-    command = f'squeue | grep "mt5383"'
+    command = 'squeue | grep $USER'
     try:
         result = subprocess.run(command, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         print(result.stdout.strip('\n'))
