@@ -81,8 +81,8 @@ class HiearchyModel(nn.Module):
 
         values = self.value_network(x)
 
-        tiling_logits = tiling_logits.reshape(*leading_dims, self.num_loops, self.num_tiles+1)
-        parall_logits = parall_logits.reshape(*leading_dims, self.num_loops, self.num_tiles+1)
+        tiling_logits = tiling_logits.reshape(*leading_dims, self.num_loops, self.num_tiles + 1)
+        parall_logits = parall_logits.reshape(*leading_dims, self.num_loops, self.num_tiles + 1)
 
         # print(parall_logits.shape, tiling_logits.shape, interchange_logits.shape)
 
@@ -92,15 +92,15 @@ class HiearchyModel(nn.Module):
 
         # Get the actions indices:
         transformation_dist = Categorical(logits=transformation_logits)
-        interchange_dist    = Categorical(logits=interchange_logits)
-        tiling_dist         = Categorical(logits=tiling_logits)
-        parall_dist         = Categorical(logits=parall_logits)
+        interchange_dist = Categorical(logits=interchange_logits)
+        tiling_dist = Categorical(logits=tiling_logits)
+        parall_dist = Categorical(logits=parall_logits)
 
         if actions is None:
             transformation_index = transformation_dist.sample()
             interchange_index = interchange_dist.sample()
-            tiling_index      = tiling_dist.sample()
-            parall_index      = parall_dist.sample()
+            tiling_index = tiling_dist.sample()
+            parall_index = parall_dist.sample()
 
         else:
 
@@ -127,7 +127,7 @@ class HiearchyModel(nn.Module):
 
         # Get the action prob and log_prob
         transformation_log_p = F.log_softmax(transformation_logits, dim=-1).gather(-1, transformation_index.unsqueeze(-1)).reshape(*leading_dims, -1)
-        interchange_log_p    = F.log_softmax(interchange_logits, dim=-1).gather(-1, interchange_index.unsqueeze(-1)).reshape(*leading_dims, -1)
+        interchange_log_p = F.log_softmax(interchange_logits, dim=-1).gather(-1, interchange_index.unsqueeze(-1)).reshape(*leading_dims, -1)
         tiling_log_p = F.log_softmax(tiling_logits, dim=-1).gather(-1, tiling_index.unsqueeze(-1)).reshape(*leading_dims, -1)
         parall_log_p = F.log_softmax(parall_logits, dim=-1).gather(-1, parall_index.unsqueeze(-1)).reshape(*leading_dims, -1)
 
@@ -142,15 +142,15 @@ class HiearchyModel(nn.Module):
             elif transformation_index[i] == 1:
                 params = []
                 for j in range(parall_index[i].shape[0]):
-                    if TP_mask[i, j] == True:
+                    if TP_mask[i, j]:
                         params.append(parall_index[i, j].item())
                 actions.append(['parallelization', params])
 
             elif transformation_index[i] == 2:
                 params = []
                 for j in range(tiling_index[i].shape[0]):
-                    if T_mask[i, j] == True:
-                        params.append( tiling_index[i, j].item() )
+                    if T_mask[i, j]:
+                        params.append(tiling_index[i, j].item())
                 actions.append(['tiling', params])
 
             elif transformation_index[i] == 3:
@@ -168,9 +168,9 @@ class HiearchyModel(nn.Module):
 
         action_log_p = torch.zeros_like(transformation_index, dtype=torch.float32)
         action_log_p[is_interchange] = interchange_log_p[is_interchange] + transformation_log_p[is_interchange]
-        action_log_p[is_tiling]      = tiling_log_p[is_tiling] + transformation_log_p[is_tiling]
-        action_log_p[is_parall]      = parall_log_p[is_parall] + transformation_log_p[is_parall]
-        action_log_p[is_no_action]   = transformation_log_p[is_no_action]
+        action_log_p[is_tiling] = tiling_log_p[is_tiling] + transformation_log_p[is_tiling]
+        action_log_p[is_parall] = parall_log_p[is_parall] + transformation_log_p[is_parall]
+        action_log_p[is_no_action] = transformation_log_p[is_no_action]
 
         entropy = transformation_dist.entropy().mean() + interchange_dist.entropy().mean() + tiling_dist.entropy().mean() + parall_dist.entropy().mean()
 

@@ -4,7 +4,7 @@ import multiprocessing
 import re
 from dotenv import load_dotenv
 from utils.consts import VECT_TILE_LIMIT
-from utils.lqcd_runner import lower_and_run_code
+from typing import Any
 load_dotenv()
 
 
@@ -73,15 +73,7 @@ def get_ast(raw_ast_info):
     return ast, new_code.strip()
 
 
-def extract_loops_data_from_file(file_path, execution_time):
-    result = subprocess.run(
-        f'MyASTGenerator/build/bin/AstDumper {file_path}',
-        shell=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE
-    )
-    raw_ast_info = result.stdout.decode('utf-8')
-
+def extract_loops_data_from_ast_result(raw_ast_info: str, execution_time: float) -> dict[str, Any]:
     info, full_code = raw_ast_info.split("########################################")
     # exec_time = lower_and_run_code(full_code)
     operations_lines, _ = info.split('#BEGIN_GRAPH')
@@ -133,6 +125,29 @@ def extract_loops_data_from_file(file_path, execution_time):
         operations_details[operation_tag] = loops_detailed
 
     return operations_details
+
+def extract_loops_data_from_code(code: str, execution_time: float):
+    result = subprocess.run(
+        'MyASTGenerator/build/bin/AstDumper -',
+        shell=True,
+        input=code.encode('utf-8'),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+    raw_ast_info = result.stdout.decode('utf-8')
+
+    return extract_loops_data_from_ast_result(raw_ast_info, execution_time)
+
+def extract_loops_data_from_file(file_path: str, execution_time: float):
+    result = subprocess.run(
+        f'MyASTGenerator/build/bin/AstDumper lqcd-benchmarks/{file_path}',
+        shell=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+    raw_ast_info = result.stdout.decode('utf-8')
+
+    return extract_loops_data_from_ast_result(raw_ast_info, execution_time)
 
 
 def transform_dialect_TP(code, operation_tag, tiling_size, tmp_file):
@@ -712,18 +727,11 @@ def apply_transformation(state, code, transformation, parameters):
             return ''
         new_code = transform_dialect_tile(code, state.operation_tag, parameters, tmp_file)
     elif transformation == 'parallelization':
-        if not parameters or (state.operation_type == 'matmul' and parameters[-1] > 0):
+        if not parameters:
             return ''
-        if 'iterator_types' in code:
-            iterators_matches = re.findall(r'iterator_types\s*=\s*(\[(\s*"(parallel|reduction)"\s*,?)+\])', code)
-            for iterators_match in iterators_matches:
-                iterators = iterators_match[0]
-                iterators_list = eval(iterators)
-                if type(iterators_list) is not list or len(iterators_list) != len(parameters):
-                    continue
-                for i, iterator_type in enumerate(iterators_list):
-                    if iterator_type == "reduction" and parameters[i] > 0:
-                        return ''
+        for i, (_, _, _, _, iterator_type) in enumerate(state.loops_data['nested_loops']):
+            if iterator_type == "reduction" and parameters[i] > 0:
+                return ''
         new_code = transform_dialect_TP(code, state.operation_tag, parameters, tmp_file)
     elif transformation == 'interchange':
         new_code = transform_dialect_interchange(code, state.operation_tag, parameters, tmp_file)
@@ -732,7 +740,7 @@ def apply_transformation(state, code, transformation, parameters):
     elif transformation == 'vectorization':
         # If the operation isn't small enough for vectorization, ignore the transformation
         op_iter_space = 1
-        for _, _, upper_bound, _ in state.loops_data['nested_loops']:
+        for _, _, upper_bound, _, _ in state.loops_data['nested_loops']:
             op_iter_space *= upper_bound
         if op_iter_space > VECT_TILE_LIMIT:
             return ''

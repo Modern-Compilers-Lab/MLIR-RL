@@ -314,12 +314,12 @@ def formula_str_to_list(formula):
 
 def build_nested_loops_feature_vector(loops_data):
 
-    indices = [arg for (arg, lower_bound, upper_bound, step) in loops_data['nested_loops']]
+    indices = [arg for (arg, lower_bound, upper_bound, step, iter) in loops_data['nested_loops']]
     indices_dim = {arg: i for (i, arg) in enumerate(indices)}
 
     # Nested loop features: (upper/lower bounds, step)
-    nested_loops = np.zeros((MAX_NUM_LOOPS))
-    for i, (arg, lower_bound, upper_bound, step) in enumerate(loops_data['nested_loops']):
+    nested_loops = np.zeros((MAX_NUM_LOOPS,))
+    for i, (arg, lower_bound, upper_bound, step, iter) in enumerate(loops_data['nested_loops']):
         if i == MAX_NUM_LOOPS:
             break
         nested_loops[i] = upper_bound

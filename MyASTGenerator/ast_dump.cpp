@@ -139,7 +139,8 @@ int main(int argc, char **argv)
 
       std::string tagName = "operation_" + std::to_string(i);
       mlir::Attribute strAttr = mlir::StringAttr::get(&context, tagName);
-      linalgOp->setAttr("tag", strAttr);
+      if (!linalgOp->hasAttr("tag"))
+        linalgOp->setAttr("tag", strAttr);
 
       llvm::outs() << "#START_OPERATION" << "\n";
       // printer << linalgOp; std::cout << "\n";

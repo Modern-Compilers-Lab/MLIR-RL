@@ -121,8 +121,8 @@ def collect_trajectory(len_trajectory, model: MyModel, env: ParallelEnv, logs=Fa
             done = batch_terminated[i]
             final_state = batch_final_state[i]
             # print(done)
-            if done:
-                speedup_metric = final_state.root_exec_time /  final_state.exec_time
+            if done and final_state is not None:
+                speedup_metric = final_state.root_exec_time / final_state.exec_time
                 print('-' * 70)
                 print(final_state.raw_operation)
                 print(final_state.transformation_history)
@@ -426,10 +426,6 @@ optimizer = torch.optim.Adam(
 
 
 running_return_stats = Buffer(max_size=10000)
-
-
-len_trajectory = CONFIG['len_trajectory']
-ppo_batch_size = CONFIG['ppo_batch_size']
 
 print_info('Start training ... ')
 logs = CONFIG['logs']
