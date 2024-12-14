@@ -331,6 +331,8 @@ def build_nested_loops_feature_vector(loops_data):
     load_access_matrices = np.zeros((MAX_NUM_STORES_LOADS, MAX_NUM_LOAD_STORE_DIM, MAX_NUM_LOOPS), dtype=np.int16)
 
     for load_i, load in enumerate(load_data):
+        if load_i == MAX_NUM_STORES_LOADS:
+            break
         dimensions_terms = [formula_str_to_list(term) for term in load]
         for m, dimension_term in enumerate(dimensions_terms):
             for index, factor in dimension_term:

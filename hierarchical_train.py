@@ -10,7 +10,6 @@ from utils.consts import (
 )
 
 import torch
-import numpy as np
 
 from tqdm import tqdm
 import neptune
@@ -124,12 +123,12 @@ def collect_trajectory(len_trajectory, model: MyModel, env: ParallelEnv, logs=Fa
             if done and final_state is not None:
                 speedup_metric = final_state.root_exec_time / final_state.exec_time
                 print('-' * 70)
-                print(final_state.raw_operation)
-                print(final_state.transformation_history)
+                print(f"Bench: {final_state.bench_name}")
+                print(final_state.bench_transformation_history)
                 print('cummulative_reward:', final_state.cummulative_reward)
-                print('speedup:', speedup_metric)
-                print('Old Exec time:', final_state.root_exec_time * 1e-9, 'ms')
-                print('New Exec time:', final_state.exec_time * 1e-9, 'ms')
+                print('Speedup:', speedup_metric)
+                print('Old Exec time:', final_state.root_exec_time, 's')
+                print('New Exec time:', final_state.exec_time, 's')
                 print('-' * 70)
                 if neptune_logs is not None and logs:
                     neptune_logs['train/final_speedup'].append(speedup_metric)
@@ -328,11 +327,11 @@ def ppo_update(trajectory, model, optimizer, ppo_epochs, ppo_batch_size, logs=Fa
     return acc_loss / loss_i
 
 
-def evaluate_benchamrk(model, env, logs):
+def evaluate_benchamrk(model: MyModel, env: ParallelEnv, logs):
 
     for i, operation in enumerate(env.env.operations_files):
 
-        print(f'Operation ({i}):', env.env.operations_files[i][0])
+        print(f'Operation ({i}):', operation[0])
 
         # Reset the environement with the specific operation
         state, obs = env.reset(i)
@@ -342,21 +341,21 @@ def evaluate_benchamrk(model, env, logs):
 
             with torch.no_grad():
                 # Select the action using the model
-                action, action_log_p, values, entropy = model.sample(obs)
+                action, _, _, _ = model.sample(obs)
 
             # Apply the action and get the next state
-            next_obs, reward, terminated, truncated, next_state, final_state = env.step(state, action, model)
+            next_obs, reward, terminated, next_state, final_state = env.step(state, action)
 
-            done = terminated[0] or truncated[0]
-            if done:
-                final_state = final_state[0]
-                speedup_metric = final_state.root_exec_time /  final_state.exec_time
+            done = terminated[0]
+            final_state = final_state[0]
+            if done and final_state is not None:
+                speedup_metric = final_state.root_exec_time / final_state.exec_time
                 print('Operation:', final_state.raw_operation)
-                print('Base execution time:', final_state.root_exec_time / 1e9, 's')
-                print('New execution time:', final_state.exec_time / 1e9, 's')
-                print('speedup:', speedup_metric)
+                print('Base execution time:', final_state.root_exec_time, 's')
+                print('New execution time:', final_state.exec_time, 's')
+                print('Speedup:', speedup_metric)
 
-                if neptune_logs is not None and  logs:
+                if neptune_logs is not None and logs:
                     neptune_logs[f'eval/{final_state.raw_operation}_speedup'].append(speedup_metric)
 
                 break
@@ -374,13 +373,13 @@ CONFIG = {
     'ppo_batch_size': 64,
     'steps': 10000,
     'ppo_epochs': 4,
-    'logs': True,
+    'logs': False,
     'entropy_coef': 0.01,
     'lr': 0.001,
     'truncate': 5,
-    'json_file': os.path.abspath("generated_data/train_operations.json"),
+    # 'json_file': os.path.abspath("generated_data/train_operations.json"),
+    'json_file': os.path.abspath("lqcd-benchmarks/lqcd.json"),
     'from_lqcd': True,
-    'lqcd_benchmark': 'AB'
 }
 
 env = ParallelEnv(
@@ -459,7 +458,7 @@ for step in tqdm_range:
         logs=True
     )
 
-    torch.save(model.state_dict(), 'models/ppo_model_conv2d.pt')
+    torch.save(model.state_dict(), 'models/ppo_model.pt')
 
     if step % 5 == 0:
         evaluate_benchamrk(
@@ -469,7 +468,7 @@ for step in tqdm_range:
         )
 
         if logs and neptune_logs is not None:
-            neptune_logs["params"].upload_files(['models/ppo_model_conv2d.pt'])
+            neptune_logs["params"].upload_files(['models/ppo_model.pt'])
 
 
 if neptune_logs is not None and logs:

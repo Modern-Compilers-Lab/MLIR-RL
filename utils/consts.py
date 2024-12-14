@@ -1,7 +1,7 @@
 # EXECUTABLE_PATH = "/scratch/nb3891/Script/MLIR_RL_2/MLScheduler/build/bin/CustomAutoSchedulerML"
 
 
-MAX_NUM_STORES_LOADS = 5 # the maximum number of loads in the nested loops
+MAX_NUM_STORES_LOADS = 7 # the maximum number of loads in the nested loops
 MAX_NUM_LOOPS = 7 # the max number of nested loops
 MAX_NUM_LOAD_STORE_DIM = 7 # the max number of dimensions in load/store buffers 
 

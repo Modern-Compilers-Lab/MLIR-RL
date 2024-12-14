@@ -137,10 +137,14 @@ int main(int argc, char **argv)
   ClonedTarget->walk([&](Operation *op){
     if (linalg::LinalgOp linalgOp = dyn_cast<linalg::LinalgOp>(op)) {
 
-      std::string tagName = "operation_" + std::to_string(i);
-      mlir::Attribute strAttr = mlir::StringAttr::get(&context, tagName);
-      if (!linalgOp->hasAttr("tag"))
+      std::string tagName;
+      if (!linalgOp->hasAttr("tag")) {
+        tagName = "operation_" + std::to_string(i);
+        mlir::Attribute strAttr = mlir::StringAttr::get(&context, tagName);
         linalgOp->setAttr("tag", strAttr);
+      } else {
+        tagName = getLinalgOpTag(linalgOp);
+      }
 
       llvm::outs() << "#START_OPERATION" << "\n";
       // printer << linalgOp; std::cout << "\n";
@@ -153,24 +157,23 @@ int main(int argc, char **argv)
         llvm::outs() << "d" << index << " " << 0 << " " << loop_range << " " << 1 << " " << iterator_type << "\n";
       }
       llvm::outs() << "#START_LOAD_DATA" << "\n";
-      llvm::SmallSet<OpOperand *, 4U> used_operands;
+      llvm::SmallVector<BlockArgument, 4U> used_operands;
       bool found_use;
       for (BlockArgument arg : linalgOp.getBlock()->getArguments()) {
         found_use = false;
-        linalgOp.walk([&](Operation *nested_op){
+        linalgOp.getBlock()->walk([&](Operation *nested_op){
           if (found_use) return;
-          OpOperand *arg_operand = linalgOp.getMatchingOpOperand(arg);
           for (OpOperand &operand : nested_op->getOpOperands()) {
-            if (operand.get() == arg_operand->get()) {
-              used_operands.insert(arg_operand);
+            if (operand.get() == arg) {
+              used_operands.push_back(arg);
               found_use = true;
               break;
             }
           }
         });
       }
-      for (OpOperand *used_operand : used_operands) {
-        AffineMap operand_map = linalgOp.getMatchingIndexingMap(used_operand);
+      for (BlockArgument used_operand : used_operands) {
+        AffineMap operand_map = linalgOp.getMatchingIndexingMap(linalgOp.getMatchingOpOperand(used_operand));
         uint results_nbr = operand_map.getNumResults();
         for (auto [index, map_result] : llvm::enumerate(operand_map.getResults())) {
           map_result.print(llvm::outs());

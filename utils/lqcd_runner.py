@@ -37,20 +37,22 @@ def lower_and_run_code(code: str, function_name: str) -> float:
         pm.run(module.operation)
     execution_engine = ExecutionEngine(
         module,
-        shared_libs=os.getenv("SHARED_LIBS", "").split(","),
+        shared_libs=os.getenv("MLIR_SHARED_LIBS", "").split(","),
     )
 
     full_function_name = os.path.join(
         "lqcd-benchmarks",
         function_name + ".mlir"
     )
+    with open(full_function_name, "r") as f:
+        original_code = f.read()
 
     np_file = np.load(full_function_name + ".npz")
     expected: np.ndarray = np.load(full_function_name + ".npy")
 
     args_names: list[str] = sorted(
         np_file.files,
-        key=lambda s: code.index(s)
+        key=lambda s: original_code.index(s)
     )
     args_map: dict[str, np.ndarray] = {arr: np_file[arr] for arr in args_names}
     args = []

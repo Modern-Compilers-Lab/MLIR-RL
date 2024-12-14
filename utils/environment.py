@@ -72,6 +72,7 @@ class OperationState:
     exec_time: float
     root_exec_time: float
     transformation_history: list
+    bench_transformation_history: list
     cummulative_reward: float
     tmp_file: str
 
@@ -131,19 +132,20 @@ def initialize_action_mask(num_loops, operation_type):
     TP_BEGIN = 5
     T_BEGIN = TP_BEGIN + L
     I_BEGIN_2C = T_BEGIN + L
-    I_BEGIN_3C = I_BEGIN_2C + (L-1)
-    I_BEGIN_4C = I_BEGIN_3C + (L-2)
+    I_BEGIN_3C = I_BEGIN_2C + (L - 1)
+    I_BEGIN_4C = I_BEGIN_3C + (L - 2)
 
     action_mask = np.ones((5 + MAX_NUM_LOOPS + MAX_NUM_LOOPS + 3 * MAX_NUM_LOOPS - 6), dtype=np.bool_)
     if operation_type == 'conv_2d':
         action_mask[:5] = [False, False, False, False, True]
     else:
-        action_mask[:5] = [False, True, False, False, False]
-    action_mask[TP_BEGIN+num_loops:T_BEGIN] = False
-    action_mask[T_BEGIN+num_loops:I_BEGIN_2C] = False
-    action_mask[I_BEGIN_2C+num_loops-1:I_BEGIN_3C] = False
-    action_mask[I_BEGIN_3C+num_loops-2:I_BEGIN_4C] = False
-    action_mask[I_BEGIN_4C+num_loops-3:] = False
+        # NOTE: action_mask[:5] = [False, True, False, False, False]
+        action_mask[:5] = [False, True, True, True, False]
+    action_mask[TP_BEGIN + num_loops:T_BEGIN] = False
+    action_mask[T_BEGIN + num_loops:I_BEGIN_2C] = False
+    action_mask[I_BEGIN_2C + num_loops - 1:I_BEGIN_3C] = False
+    action_mask[I_BEGIN_3C + num_loops - 2:I_BEGIN_4C] = False
+    action_mask[I_BEGIN_4C + num_loops - 3:] = False
 
     if num_loops == 1:
         action_mask[3] = False
@@ -192,9 +194,11 @@ def update_action_mask(state, transformation, num_loops):
         if transformation == 'parallelization':
             actions_mask[:NUM_TRANSFORMATIONS] = [True, False, False, False, False]
         if transformation == 'interchange':
-            actions_mask[:NUM_TRANSFORMATIONS] = [True, False, True, True, False]
+            # NOTE: actions_mask[:NUM_TRANSFORMATIONS] = [True, False, True, True, False]
+            actions_mask[:NUM_TRANSFORMATIONS] = [True, True, True, True, False]
         if transformation == 'tiling':
-            actions_mask[:NUM_TRANSFORMATIONS] = [True, False, False, False, False]
+            # NOTE: actions_mask[:NUM_TRANSFORMATIONS] = [True, False, False, False, False]
+            actions_mask[:NUM_TRANSFORMATIONS] = [True, True, True, True, False]
 
     else:
         raise ValueError("operation_type must be in [pooling, conv_2d, conv_2d+img2col, matmul, add, generic]")
@@ -224,6 +228,22 @@ def update_action_history(state: OperationState, transformation, parameters):
 
     return actions
 
+def get_interchange_actions(num_loops: int):
+    """
+    Get all the possible interchanges for `num_loops`
+    """
+
+    interchanges = []
+    for c in [1, 2, 3]:
+        level_interchanges = []
+        for _ in range(MAX_NUM_LOOPS - c):
+            level_interchanges.append(tuple(range(num_loops)))
+        for i in range(num_loops - c):
+            params = list(range(num_loops))
+            params[i], params[i + c] = params[i + c], params[i]
+            level_interchanges[i] = tuple(params)
+        interchanges += level_interchanges
+    return interchanges
 
 def sorted_divisors(n, num_candidates):
     """
@@ -252,6 +272,8 @@ def get_tiling_candidates(n, num_candidates):
 
     if len(div) < num_candidates:  # If we don't have enough unique divisors, we fill the rest of the candidates with the last dividor
         res = div + div[-1:] * (num_candidates - len(div))
+    else:
+        res = div[:num_candidates]
     return res
 
 def last_tiling(history):
@@ -274,20 +296,22 @@ def process_action(raw_action, state: OperationState):
     action_name, parameter = raw_action
 
     # Sellect the tiling candidates for each loop
-    candidates = [
-        [0] + get_tiling_candidates(upper, num_candidates=NUM_TILE_SIZES)
-        for (arg, lower, upper, step, iter) in loops_data['nested_loops']
-    ]
+    if action_name in ['tiling', 'parallelization']:
+        candidates = [
+            [0] + get_tiling_candidates(upper, num_candidates=NUM_TILE_SIZES)
+            for (_, _, upper, _, _) in loops_data['nested_loops']
+        ]
 
-    if action_name == 'interchange':  # interchange
-        parameters = INTERCHANGE_ACTIONS[parameter]
-        parameters = parameters[:num_loops]
+    if action_name == 'interchange':
+        candidates = get_interchange_actions(num_loops)
+        parameters = candidates[parameter]
+        assert len(parameters) == num_loops
         return ['interchange', list(parameters)]
 
-    elif action_name == 'img2col':  # interchange
+    elif action_name == 'img2col':
         return ['img2col', [0]]
 
-    elif action_name == 'tiling':  # tiling
+    elif action_name == 'tiling':
         tiling_parameters = []
         for i in range(num_loops):
             if i < len(parameter):
@@ -304,7 +328,7 @@ def process_action(raw_action, state: OperationState):
 
         return ['tiling', tiling_parameters]
 
-    elif action_name == 'parallelization':  # parallelization
+    elif action_name == 'parallelization':
         parall_parameters = []
         for i in range(num_loops):
             if i < len(parameter):
@@ -334,12 +358,13 @@ def speedup_reward(new, old, a=10):
 
 
 class Env:
-    def __init__(self, json_file, truncate=10, reset_repeat=1, step_repeat=1, from_lqcd=True):
+    def __init__(self, json_file, truncate=10, reset_repeat=1, step_repeat=1, tmp_file: str = None, from_lqcd=True):
         # Generate a random file to be used in order to apply the transformations and evaluate the code
         # This is done in order to enable having multiple experiments at the same time, by letting each
         # experiment use a separate unique file to read and write intermidiate representations
         random_str = generate_random_string()
-        tmp_file = f"tmp_files/{random_str}.mlir"
+        if tmp_file is None:
+            tmp_file = f"tmp_files/{random_str}.mlir"
         with open(tmp_file, "w") as file:
             file.write("")
         self.tmp_file = tmp_file
@@ -388,13 +413,13 @@ class Env:
         self.step_repeat = step_repeat
 
     def reset(self, idx=None):
-        self.bench_index = idx
         if idx is not None:
             # We get the operation with the right index
-            raw_operation, operation_dict = self.operations_files[idx]
+            self.bench_index = idx
         else:
             # Get a random operation
-            raw_operation, operation_dict = random.choice(self.operations_files)
+            self.bench_index = random.randint(0, len(self.operations_files) - 1)
+        raw_operation, operation_dict = self.operations_files[self.bench_index]
 
         # The number of loops in the Linalg operations
         if self.from_lqcd:
@@ -450,6 +475,7 @@ class Env:
             exec_time=exec_time,
             root_exec_time=exec_time,
             transformation_history=[],
+            bench_transformation_history=[],
             cummulative_reward=0,
             tmp_file=self.tmp_file
         )
@@ -490,6 +516,7 @@ class Env:
                 transformation=transformation,
                 parameters=parameters,
                 timeout=20,
+                from_lqcd=self.from_lqcd
             )
 
             # SPECIAL CASE:
@@ -522,6 +549,7 @@ class Env:
                     exec_time=state.exec_time,
                     root_exec_time=state.root_exec_time,
                     transformation_history=state.transformation_history + [(transformation, parameters)],
+                    bench_transformation_history=state.bench_transformation_history + [(transformation, parameters)],
                     cummulative_reward=state.cummulative_reward,
                     tmp_file=self.tmp_file
                 )
@@ -534,7 +562,7 @@ class Env:
                 # We keep the same code as previously
                 # We get a penalty of -5
                 trans_failed = True
-                print_error(f'EVAL ERROR: {transformation} {parameters} {state.transformation_history}')
+                print_error(f'FAILED TRANSFORM: {transformation} {parameters} {state.transformation_history}')
                 transformed_code = state.transformed_code
                 reward = -5
             new_exec_time = state.exec_time
@@ -564,6 +592,7 @@ class Env:
             exec_time=new_exec_time,  # New execution time
             root_exec_time=state.root_exec_time,
             transformation_history=state.transformation_history + [(transformation, parameters)],
+            bench_transformation_history=state.bench_transformation_history + [(transformation, parameters)],
             cummulative_reward=state.cummulative_reward,
             tmp_file=self.tmp_file
         )
@@ -609,6 +638,7 @@ class Env:
                     transformation='tiling',
                     parameters=second_interchange_parameters,
                     timeout=20,
+                    from_lqcd=self.from_lqcd
                 )
 
                 next_state.transformed_code = apply_conv2d_decomposition(next_state.transformed_code, next_state.operation_tag, self.tmp_file)
@@ -620,7 +650,8 @@ class Env:
                     code=next_state.transformed_code,
                     transformation='vectorization',
                     parameters=[0],
-                    timeout=20
+                    timeout=20,
+                    from_lqcd=self.from_lqcd
                 )
             else:
                 vect_transformed_code = next_state.transformed_code
@@ -640,19 +671,32 @@ class Env:
                 next_state.exec_time = new_exec_time
             else:
                 reward = -20
-                print_error(f'EVAL ERROR:{transformation} {parameters} {next_state.transformation_history}')
+                if not vect_transformed_code:
+                    print_error(f'FAILED VECTORIZATION: {transformation} {parameters} {next_state.transformation_history}')
+                else:
+                    print_error(f'EVAL ERROR: {transformation} {parameters} {next_state.transformation_history}')
                 new_exec_time = next_state.exec_time
 
             next_state.transformation_history += [('vectorization', [0])]
+            next_state.bench_transformation_history += [('vectorization', [0])]
 
             if self.from_lqcd:
                 lqcd_bench_name, lqcd_bench_dict = self.operations_files[self.bench_index]
                 lqcd_op_index = lqcd_bench_dict["ops_tags"].index(next_state.operation_tag)
-                if lqcd_op_index < len(self.operations_files[self.bench_index][1]["ops_tags"]) - 1:
+                if lqcd_op_index < len(lqcd_bench_dict["ops_tags"]) - 1:
                     # Indicates that the trajectory isn't over yet, so don't reset
                     should_reset_if_done = False
 
-                    # Rextract operations data from the new code
+                    speedup_metric = next_state.root_exec_time / next_state.exec_time
+                    print('-' * 30)
+                    print(f"Operation: {next_state.bench_name} - {next_state.operation_tag}")
+                    print(next_state.transformation_history)
+                    print('Speedup:', speedup_metric)
+                    print('Old Exec time:', next_state.root_exec_time, 's')
+                    print('New Exec time:', next_state.exec_time, 's')
+                    print('-' * 30)
+
+                    # Re-extract operations data from the new code
                     new_bench_dict = extract_loops_data_from_code(next_state.transformed_code, next_state.exec_time)
                     self.operations_files[self.bench_index] = (lqcd_bench_name, new_bench_dict)
 
@@ -671,8 +715,9 @@ class Env:
                         actions_mask=actions_mask,
                         step_count=0,
                         exec_time=next_state.exec_time,
-                        root_exec_time=next_state.exec_time,
-                        transformation_history=next_state.transformation_history,
+                        root_exec_time=next_state.root_exec_time,
+                        transformation_history=[],
+                        bench_transformation_history=next_state.bench_transformation_history,
                         cummulative_reward=next_state.cummulative_reward,
                         tmp_file=self.tmp_file
                     )
@@ -690,12 +735,14 @@ class Env:
 class ParallelEnv:
     def __init__(self, json_file, num_env=1, truncate=10, reset_repeat=1, step_repeat=1, from_lqcd=True):
         self.num_env = num_env
+        tmp_files = [f"tmp_files/tmp_{i}.mlir" for i in range(num_env)]
 
         self.env = Env(
             json_file=json_file,
             truncate=truncate,
             reset_repeat=reset_repeat,
             step_repeat=step_repeat,
+            tmp_file=tmp_files[0],
             from_lqcd=from_lqcd
         )
 
