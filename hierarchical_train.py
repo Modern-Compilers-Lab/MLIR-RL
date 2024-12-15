@@ -14,6 +14,9 @@ import torch
 from tqdm import tqdm
 import neptune
 
+from dotenv import load_dotenv
+load_dotenv()
+
 
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 device = torch.device("cpu")
@@ -373,7 +376,7 @@ CONFIG = {
     'ppo_batch_size': 64,
     'steps': 10000,
     'ppo_epochs': 4,
-    'logs': False,
+    'logs': True,
     'entropy_coef': 0.01,
     'lr': 0.001,
     'truncate': 5,
@@ -433,7 +436,7 @@ neptune_logs = init_neptune(['hierchical', 'sparse_reward'] + [k + ':' + str(v) 
 if logs:
     neptune_logs["config_files"].upload_files([
         './utils/*.py',
-        './hierachy_ppo.py'
+        './hierachy_train.py'
     ])
 
 

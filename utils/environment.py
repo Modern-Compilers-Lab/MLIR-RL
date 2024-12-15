@@ -421,16 +421,22 @@ class Env:
             self.bench_index = random.randint(0, len(self.operations_files) - 1)
         raw_operation, operation_dict = self.operations_files[self.bench_index]
 
+        # The baseline execution time of the Linalg operation
+        exec_time = operation_dict['execution_time']
+
         # The number of loops in the Linalg operations
         if self.from_lqcd:
             bench_name = raw_operation
+            bench_file = os.path.join("lqcd-benchmarks", bench_name + ".mlir")
+            with open(bench_file, "r") as file:
+                code = file.read()
+            real_exec_time = lower_and_run_code(code, bench_name)
+            print_info(f"Real exec time: {real_exec_time}, expected exec time: {exec_time}")
             lqcd_operation_tag = operation_dict["ops_tags"][0]
             lqcd_operation_dict = operation_dict[lqcd_operation_tag]
             num_loops = len(lqcd_operation_dict["nested_loops"])
         else:
             num_loops = len(operation_dict["loops_data"]["nested_loops"])
-        # The baseline execution time of the Linalg operation
-        exec_time = operation_dict['execution_time']
 
         # operation_type:
         if self.from_lqcd:
@@ -597,10 +603,6 @@ class Env:
             tmp_file=self.tmp_file
         )
 
-        next_obs = self.get_obs(next_state)
-        next_obs = torch.tensor(next_obs, dtype=torch.float32)
-        next_obs = torch.unsqueeze(next_obs, 0)
-
         # Done == True if:
         #   We surpass the macimum number of steps (size of the schedule)
         #   Vectorization indicating the end of the schedule
@@ -657,12 +659,15 @@ class Env:
                 vect_transformed_code = next_state.transformed_code
 
             new_exec_time = None
-            if vect_transformed_code:  # If vectorization is successful then execute and evaluate the new code
-                if self.from_lqcd:
-                    assert next_state.bench_name is not None
-                    new_exec_time = lower_and_run_code(vect_transformed_code, next_state.bench_name)
-                else:
-                    new_exec_time = evaluate_code_with_timeout(code=vect_transformed_code, timeout=120, tmp_file=self.tmp_file)
+            if not vect_transformed_code:
+                print_error(f'FAILED VECTORIZATION: {transformation} {parameters} {next_state.transformation_history}')
+                vect_transformed_code = next_state.transformed_code
+
+            if self.from_lqcd:
+                assert next_state.bench_name is not None
+                new_exec_time = lower_and_run_code(vect_transformed_code, next_state.bench_name)
+            else:
+                new_exec_time = evaluate_code_with_timeout(code=vect_transformed_code, timeout=120, tmp_file=self.tmp_file)
 
             if new_exec_time is not None:  # If the code has been executed successfuly and we have an execution time
                 # We calculate the speedup
@@ -671,10 +676,7 @@ class Env:
                 next_state.exec_time = new_exec_time
             else:
                 reward = -20
-                if not vect_transformed_code:
-                    print_error(f'FAILED VECTORIZATION: {transformation} {parameters} {next_state.transformation_history}')
-                else:
-                    print_error(f'EVAL ERROR: {transformation} {parameters} {next_state.transformation_history}')
+                print_error(f'EVAL ERROR: {transformation} {parameters} {next_state.transformation_history}')
                 new_exec_time = next_state.exec_time
 
             next_state.transformation_history += [('vectorization', [0])]
@@ -710,19 +712,23 @@ class Env:
                         raw_operation=new_op_dict["operation"],
                         operation_type=next_state.operation_type,
                         loops_data=new_op_dict,
-                        transformed_code=lqcd_bench_dict["transform_wrapped_operation"],
+                        transformed_code=new_bench_dict["transform_wrapped_operation"],
                         actions=np.zeros((MAX_NUM_LOOPS, 3, self.truncate,)),
                         actions_mask=actions_mask,
                         step_count=0,
                         exec_time=next_state.exec_time,
                         root_exec_time=next_state.root_exec_time,
                         transformation_history=[],
-                        bench_transformation_history=next_state.bench_transformation_history,
+                        bench_transformation_history=next_state.bench_transformation_history.copy(),
                         cummulative_reward=next_state.cummulative_reward,
                         tmp_file=self.tmp_file
                     )
 
         next_state.cummulative_reward += reward
+
+        next_obs = self.get_obs(next_state)
+        next_obs = torch.tensor(next_obs, dtype=torch.float32)
+        next_obs = torch.unsqueeze(next_obs, 0)
 
         final_state = None
         if done and should_reset_if_done:

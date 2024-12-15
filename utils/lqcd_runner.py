@@ -5,6 +5,22 @@ from mlir.runtime import get_ranked_memref_descriptor
 from mlir.passmanager import PassManager
 import os
 
+def print_info(*args):
+    message = ' '.join(map(str, args))
+    print(f"\033[94m[INFO]\t {message}\033[0m")
+
+def print_success(*args):
+    message = ' '.join(map(str, args))
+    print(f"\033[92m[SUCCESS]\t {message}\033[0m")
+
+def print_alert(*args):
+    message = ' '.join(map(str, args))
+    print(f"\033[93m[ALERT]\t {message}\033[0m")
+
+def print_error(*args):
+    message = ' '.join(map(str, args))
+    print(f"\033[91m[ERROR]\t {message}\033[0m")
+
 def lower_and_run_code(code: str, function_name: str) -> float:
     pass_pipeline = """builtin.module(
         loop-invariant-code-motion,
@@ -71,7 +87,6 @@ def lower_and_run_code(code: str, function_name: str) -> float:
         actual = actual.view(np.complex128).squeeze(len(actual.shape) - 1)
     assertion = np.allclose(actual, expected)
     if not assertion:
-        with open(os.path.join("log", "asserts.txt"), "a") as f:
-            f.write(f"{function_name}: {assertion}\n")
+        print_error(f"ASSERTION FAILED: {actual} != {expected}")
 
     return delta_arg[0] / 1e9
