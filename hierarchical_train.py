@@ -449,7 +449,7 @@ for step in tqdm_range:
         CONFIG['len_trajectory'],
         model,
         env,
-        logs=True
+        logs=CONFIG['logs']
     )
 
     loss = ppo_update(
@@ -458,7 +458,7 @@ for step in tqdm_range:
         optimizer,
         ppo_epochs=CONFIG['ppo_epochs'],
         ppo_batch_size=CONFIG['ppo_batch_size'],
-        logs=True
+        logs=CONFIG['logs'],
     )
 
     torch.save(model.state_dict(), 'models/ppo_model.pt')
@@ -467,7 +467,7 @@ for step in tqdm_range:
         evaluate_benchamrk(
             model=model,
             env=eval_env,
-            logs=True
+            logs=CONFIG['logs']
         )
 
         if logs and neptune_logs is not None:

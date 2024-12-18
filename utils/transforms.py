@@ -151,6 +151,11 @@ def extract_loops_data_from_file(file_path: str, execution_time: float):
 
 
 def transform_dialect_TP(code, operation_tag, tiling_size, tmp_file):
+    if not tiling_size:
+        return ''
+    if all([a == 0 for a in tiling_size]):
+        return code
+
     code = code.strip()
     transform_dilaect_code = (
         f'\nmodule attributes {{transform.with_named_sequence}} {{\n'
@@ -180,9 +185,15 @@ def transform_dialect_TP(code, operation_tag, tiling_size, tmp_file):
 
 
 def transform_dialect_tile(code, operation_tag, tiling_size, tmp_file):
+    if not tiling_size:
+        return ''
+    if all([a == 0 for a in tiling_size]):
+        return code
+
     code = code.strip()
     n_loops = sum([s != 0 for s in tiling_size])
     r = ', '.join(['!transform.any_op'] * n_loops)
+    assert n_loops > 0, "No loops to tile"
 
     transform_dilaect_code = (
         f'\nmodule attributes {{transform.with_named_sequence}} {{\n'

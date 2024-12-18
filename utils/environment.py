@@ -21,7 +21,6 @@ from data_generation_random import get_nested_loops_data
 
 from utils.consts import (
     MAX_NUM_LOOPS,
-    INTERCHANGE_ACTIONS,
     NUM_TILE_SIZES,
     NUM_TRANSFORMATIONS
 )
@@ -139,8 +138,8 @@ def initialize_action_mask(num_loops, operation_type):
     if operation_type == 'conv_2d':
         action_mask[:5] = [False, False, False, False, True]
     else:
-        # NOTE: action_mask[:5] = [False, True, False, False, False]
-        action_mask[:5] = [False, True, True, True, False]
+        action_mask[:5] = [False, True, False, False, False]
+        # action_mask[:5] = [False, True, True, True, False]
     action_mask[TP_BEGIN + num_loops:T_BEGIN] = False
     action_mask[T_BEGIN + num_loops:I_BEGIN_2C] = False
     action_mask[I_BEGIN_2C + num_loops - 1:I_BEGIN_3C] = False
@@ -430,7 +429,7 @@ class Env:
             bench_file = os.path.join("lqcd-benchmarks", bench_name + ".mlir")
             with open(bench_file, "r") as file:
                 code = file.read()
-            real_exec_time = lower_and_run_code(code, bench_name)
+            real_exec_time, _ = lower_and_run_code(code, bench_name)
             print_info(f"Real exec time: {real_exec_time}, expected exec time: {exec_time}")
             lqcd_operation_tag = operation_dict["ops_tags"][0]
             lqcd_operation_dict = operation_dict[lqcd_operation_tag]
@@ -507,14 +506,12 @@ class Env:
             state=state
         )
 
-        print(raw_action)
-        print_success(transformation, parameters)
+        print_info("RAW:", raw_action)
+        print_success("PROCESSED:", transformation, parameters)
 
         reward = 0
-        trans_failed = False  # A flag indication if a timeout occured in the transformation
 
-        if transformation != 'no_transformation':
-
+        if transformation not in ['no_transformation', 'vectorization']:
             # Apply the transformation and get the new code
             transformed_code = apply_transformation_with_timeout(
                 state=state,
@@ -560,23 +557,55 @@ class Env:
                     tmp_file=self.tmp_file
                 )
 
-            # if transformed_code:  # If the code has been succefully transformed:
-            #     # Her we return a reward of zero because it's not the end of the schedule yet, and in our method we only execute
-            #     # the code once and return the speedup by the end of the schedule
-            #     reward += 0
-            if not transformed_code:  # This indicates that an error occured and that the code has not been transformed
-                # We keep the same code as previously
-                # We get a penalty of -5
-                trans_failed = True
-                print_error(f'FAILED TRANSFORM: {transformation} {parameters} {state.transformation_history}')
-                transformed_code = state.transformed_code
-                reward = -5
-            new_exec_time = state.exec_time
+        else:  # transformation == 'no_transformation' or 'vectorization'
+            # For convolution, before vectorization, we need to first apply another tiling in order to decompose it to 1d convolution
+            if (state.operation_type == 'conv_2d'):
+                if ('conv_2d_nhwc_hwcf' in state.raw_operation):
+                    second_interchange_parameters = parameters.copy()
+                    second_interchange_parameters[1] = 1
+                    second_interchange_parameters[4] = 1
+                elif ('conv_2d_nchw_fchw' in state.raw_operation):
+                    second_interchange_parameters = parameters.copy()
+                    second_interchange_parameters[2] = 1
+                    second_interchange_parameters[5] = 1
+                elif ('pooling' in state.raw_operation):
+                    second_interchange_parameters = [0] * 6
+                    second_interchange_parameters[2] = 1
+                    second_interchange_parameters[4] = 1
+                state.transformed_code = apply_transformation_with_timeout(
+                    state=state,
+                    code=state.transformed_code,
+                    transformation='tiling',
+                    parameters=second_interchange_parameters,
+                    timeout=20,
+                    from_lqcd=self.from_lqcd
+                )
 
-        else:  # transformation == 'no_transformation'
+                state.transformed_code = apply_conv2d_decomposition(state.transformed_code, state.operation_tag, self.tmp_file)
+
+            # Generic and pooling operations are better without vectorization
+            if state.operation_type != 'pooling':
+                # Apply the vectorization and get the new code
+                transformation = 'vectorization'
+                transformed_code = apply_transformation_with_timeout(
+                    state=state,
+                    code=state.transformed_code,
+                    transformation=transformation,
+                    parameters=parameters,
+                    timeout=20,
+                    from_lqcd=self.from_lqcd
+                )
+            else:
+                transformation = 'no_transformation'
+                transformed_code = state.transformed_code
+
+        trans_failed = not transformed_code  # This indicatesthat that the transformation failed or timed out
+        if trans_failed:
+            # We keep the same code as previously
+            # We get a penalty of -5
+            print_error(f'FAILED TRANSFORM: {transformation} {parameters} {state.transformation_history}')
             transformed_code = state.transformed_code
-            new_exec_time = state.exec_time
-            reward += 0
+            reward -= 5
 
         # Update state actions:
         next_state_actions = update_action_history(state, transformation, parameters)
@@ -595,7 +624,7 @@ class Env:
             actions=next_state_actions,  # New actions
             actions_mask=new_actions_mask,  # New action mask
             step_count=state.step_count + 1,
-            exec_time=new_exec_time,  # New execution time
+            exec_time=state.exec_time,  # New execution time
             root_exec_time=state.root_exec_time,
             transformation_history=state.transformation_history + [(transformation, parameters)],
             bench_transformation_history=state.bench_transformation_history + [(transformation, parameters)],
@@ -604,83 +633,34 @@ class Env:
         )
 
         # Done == True if:
-        #   We surpass the macimum number of steps (size of the schedule)
+        #   We surpass the maximum number of steps (size of the schedule)
         #   Vectorization indicating the end of the schedule
         #   Error occured in the transformation
         done = (next_state.step_count >= self.truncate) or \
-            (transformation == 'no_transformation') or \
-            (transformation == 'vectorization') or \
+            (transformation in ['vectorization', 'no_transformation']) or \
             (trans_failed)
         should_reset_if_done = True
 
         if done:
-            # if (state.operation_type == 'conv_2d') or ('pooling' in state.operation_type):
-
-            # For convolution, before vectorization, we need to first apply another tiling in order to decompose it to 1d convolution
-            if (state.operation_type == 'conv_2d'):
-
-                if ('conv_2d_nhwc_hwcf' in state.raw_operation):
-                    second_interchange_parameters = parameters.copy()
-                    second_interchange_parameters[1] = 1
-                    second_interchange_parameters[4] = 1
-
-                elif ('conv_2d_nchw_fchw' in state.raw_operation):
-                    second_interchange_parameters = parameters.copy()
-                    second_interchange_parameters[2] = 1
-                    second_interchange_parameters[5] = 1
-
-                elif ('pooling' in state.raw_operation):
-                    second_interchange_parameters = [0] * 6
-                    second_interchange_parameters[2] = 1
-                    second_interchange_parameters[4] = 1
-
-                next_state.transformed_code = apply_transformation_with_timeout(
-                    state=state,
-                    code=next_state.transformed_code,
-                    transformation='tiling',
-                    parameters=second_interchange_parameters,
-                    timeout=20,
-                    from_lqcd=self.from_lqcd
-                )
-
-                next_state.transformed_code = apply_conv2d_decomposition(next_state.transformed_code, next_state.operation_tag, self.tmp_file)
-
-            # Generic and pooling operations are better without vectorization
-            if next_state.operation_type != 'pooling' and transformation != 'vectorization':
-                vect_transformed_code = apply_transformation_with_timeout(
-                    state=next_state,
-                    code=next_state.transformed_code,
-                    transformation='vectorization',
-                    parameters=[0],
-                    timeout=20,
-                    from_lqcd=self.from_lqcd
-                )
-            else:
-                vect_transformed_code = next_state.transformed_code
-
-            new_exec_time = None
-            if not vect_transformed_code:
-                print_error(f'FAILED VECTORIZATION: {transformation} {parameters} {next_state.transformation_history}')
-                vect_transformed_code = next_state.transformed_code
-
             if self.from_lqcd:
                 assert next_state.bench_name is not None
-                new_exec_time = lower_and_run_code(vect_transformed_code, next_state.bench_name)
+                new_exec_time, bench_passed_or_exception = lower_and_run_code(transformed_code, next_state.bench_name)
+                if new_exec_time is None:
+                    print_error(f"EXECUTION ERROR: {bench_passed_or_exception}")
+                elif not bench_passed_or_exception:
+                    reward -= 20
+                    print_error("ASSERTION FAILED")
             else:
-                new_exec_time = evaluate_code_with_timeout(code=vect_transformed_code, timeout=120, tmp_file=self.tmp_file)
+                new_exec_time = evaluate_code_with_timeout(transformed_code, 120, self.tmp_file)
 
             if new_exec_time is not None:  # If the code has been executed successfuly and we have an execution time
                 # We calculate the speedup
                 reward += speedup_reward(new_exec_time, next_state.root_exec_time)
-                next_state.transformed_code = vect_transformed_code
                 next_state.exec_time = new_exec_time
             else:
-                reward = -20
+                reward -= 20
                 print_error(f'EVAL ERROR: {transformation} {parameters} {next_state.transformation_history}')
                 new_exec_time = next_state.exec_time
-
-            next_state.transformation_history += [('vectorization', [0])]
-            next_state.bench_transformation_history += [('vectorization', [0])]
 
             if self.from_lqcd:
                 lqcd_bench_name, lqcd_bench_dict = self.operations_files[self.bench_index]

@@ -4,24 +4,9 @@ from mlir.execution_engine import ExecutionEngine, ctypes
 from mlir.runtime import get_ranked_memref_descriptor
 from mlir.passmanager import PassManager
 import os
+from typing import Union, Optional
 
-def print_info(*args):
-    message = ' '.join(map(str, args))
-    print(f"\033[94m[INFO]\t {message}\033[0m")
-
-def print_success(*args):
-    message = ' '.join(map(str, args))
-    print(f"\033[92m[SUCCESS]\t {message}\033[0m")
-
-def print_alert(*args):
-    message = ' '.join(map(str, args))
-    print(f"\033[93m[ALERT]\t {message}\033[0m")
-
-def print_error(*args):
-    message = ' '.join(map(str, args))
-    print(f"\033[91m[ERROR]\t {message}\033[0m")
-
-def lower_and_run_code(code: str, function_name: str) -> float:
+def lower_and_run_code(code: str, function_name: str) -> tuple[Optional[float], Union[Exception, bool]]:
     pass_pipeline = """builtin.module(
         loop-invariant-code-motion,
         canonicalize,
@@ -34,12 +19,12 @@ def lower_and_run_code(code: str, function_name: str) -> float:
         convert-scf-to-cf,
         lower-affine,
 
-        convert-math-to-llvm,
+        convert-openmp-to-llvm,
         convert-vector-to-llvm,
+        convert-math-to-llvm,
         convert-func-to-llvm,
         convert-index-to-llvm,
         convert-arith-to-llvm,
-        convert-openmp-to-llvm,
         convert-cf-to-llvm,
 
         reconcile-unrealized-casts,
@@ -80,13 +65,14 @@ def lower_and_run_code(code: str, function_name: str) -> float:
     delta_arg = (ctypes.c_int64 * 1)(0)
     args.append(delta_arg)
 
-    execution_engine.invoke("main", *args)
-    execution_engine.invoke("main", *args)
+    try:
+        execution_engine.invoke("main", *args)
+        execution_engine.invoke("main", *args)
+    except Exception as e:
+        return None, e
     actual = args_map[args_names[-1]]
     if expected.dtype == np.complex128:
         actual = actual.view(np.complex128).squeeze(len(actual.shape) - 1)
     assertion = np.allclose(actual, expected)
-    if not assertion:
-        print_error(f"ASSERTION FAILED: {actual} != {expected}")
 
-    return delta_arg[0] / 1e9
+    return delta_arg[0] / 1e9, assertion
