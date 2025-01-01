@@ -8,10 +8,8 @@
 #SBATCH -c 28
 #SBATCH --mem=64G
 #SBATCH -t 02-00
-#SBATCH -o /scratch/mt5383/MLIR-RL/scripts/hierarchical.out
-#SBATCH -e /scratch/mt5383/MLIR-RL/scripts/hierarchical.err
-#SBATCH --mail-type=ALL
-#SBATCH --mail-user=mt5383@nyu.edu
+#SBATCH -o /scratch/na3758/MLIR-RL/scripts/hierarchical.out
+#SBATCH -e /scratch/na3758/MLIR-RL/scripts/hierarchical.err
 
 #Resource requiremenmt commands end here
 
@@ -23,4 +21,4 @@ eval "$(conda shell.bash hook)"
 conda activate main
 
 #Execute the code
-python /scratch/mt5383/MLIR-RL/hierarchical_train.py
+python /scratch/na3758/MLIR-RL/hierarchical_train.py
