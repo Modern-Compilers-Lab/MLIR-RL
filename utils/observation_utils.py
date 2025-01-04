@@ -254,7 +254,8 @@ def get_nested_loops_data(loops):
         elif "affine.for" in line:
             _, arg, _, lower, _, upper, _ = line.strip().split(' ')
             # print(arg, lower, upper)
-            loops_detailed["nested_loops"].append((arg, int(lower), int(upper), 1))
+            # TODO: treat iterator types better
+            loops_detailed["nested_loops"].append((arg, int(lower), int(upper), 1, 'parallel'))
             args_of_loops.append(arg)
 
         elif "affine.load" in line:

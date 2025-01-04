@@ -382,6 +382,7 @@ CONFIG = {
     'truncate': 5,
     # 'json_file': os.path.abspath("generated_data/train_operations.json"),
     'json_file': os.path.abspath("lqcd-benchmarks/lqcd.json"),
+    # 'from_lqcd': False,
     'from_lqcd': True,
 }
 

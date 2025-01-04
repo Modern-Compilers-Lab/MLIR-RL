@@ -5,6 +5,7 @@ from utils.observation_utils import (
 )
 from utils.transforms import (
     apply_conv2d_decomposition,
+    extract_loops_data_from_ast_result,
     get_raw_ast_info,
     get_ast,
     transform_dialect_prints,
@@ -14,7 +15,7 @@ from utils.transforms import (
     extract_loops_data_from_file,
     extract_loops_data_from_code,
 )
-from utils.lqcd_runner import lower_and_run_code
+from utils.lqcd_runner import lower_and_run_code_with_timeout
 from typing import Optional
 
 from data_generation_random import get_nested_loops_data
@@ -257,7 +258,7 @@ def sorted_divisors(n, num_candidates):
         i *= 2
     return sorted(divisors)
 
-def get_tiling_candidates(n, num_candidates):
+def get_tiling_candidates(n, num_candidates, iter):
     """
     Get `num_candidates` candidate tiling size for upper bound `n`
     """
@@ -265,6 +266,10 @@ def get_tiling_candidates(n, num_candidates):
     # If upperbound equal 1, we only have candidates of 1
     if n == 1:
         return [1] * num_candidates
+
+    # If iterator type is 'reduction', we don't take any candidate
+    if iter == 'reduction':
+        return [0] * num_candidates
 
     # We take the divisors of the upperbound `n`
     div = sorted_divisors(n, num_candidates)
@@ -296,9 +301,10 @@ def process_action(raw_action, state: OperationState):
 
     # Sellect the tiling candidates for each loop
     if action_name in ['tiling', 'parallelization']:
+        # Get loop upper bounds
         candidates = [
-            [0] + get_tiling_candidates(upper, num_candidates=NUM_TILE_SIZES)
-            for (_, _, upper, _, _) in loops_data['nested_loops']
+            [0] + get_tiling_candidates(upper, num_candidates=NUM_TILE_SIZES, iter=iter)
+            for (arg, lower, upper, step, iter) in loops_data['nested_loops']
         ]
 
     if action_name == 'interchange':
@@ -373,8 +379,10 @@ class Env:
             with open(json_file, "r") as file:
                 benchmarks_json: dict[str, float] = json.load(file)
             benchmarks_data: list[tuple[str, dict]] = []
+            self.exec_times = {}
             for bench_name, exec_time in benchmarks_json.items():
                 bench_file = os.path.join("lqcd-benchmarks", bench_name + ".mlir")
+                self.exec_times[bench_name] = exec_time
                 benchmark_data = extract_loops_data_from_file(bench_file, exec_time)
                 benchmarks_data.append((bench_name, benchmark_data))
             self.operations_files = benchmarks_data
@@ -382,11 +390,11 @@ class Env:
             with open(json_file, "r") as file:
                 operations_files = json.load(file)
             operations = [
-                # 'linalg.matmul',
-                # 'linalg.conv_2d',
+                'linalg.matmul',
+                'linalg.conv_2d',
                 # 'pooling',
-                'generic',
-                # 'linalg.add',
+                # 'generic',
+                'linalg.add',
             ]
             operations_files = {file: details for file, details in operations_files.items() if any([s in file for s in operations])}
             operations_files = [[details['operation'], details] for file, details in operations_files.items()]
@@ -396,6 +404,7 @@ class Env:
             for i in tqdm(range(len(operations_files))):
                 code = operations_files[i][1]["transform_wrapped_operation"]
                 raw_ast_info = get_raw_ast_info(code, self.tmp_file)
+                operations_files[i][1] = extract_loops_data_from_ast_result(raw_ast_info, operations_files[i][1]["execution_time"])
                 code_ast, code_with_tags = get_ast(raw_ast_info)
                 operations_files[i][1]["transform_wrapped_operation"] = code_with_tags
 
@@ -420,22 +429,28 @@ class Env:
             self.bench_index = random.randint(0, len(self.operations_files) - 1)
         raw_operation, operation_dict = self.operations_files[self.bench_index]
 
-        # The baseline execution time of the Linalg operation
-        exec_time = operation_dict['execution_time']
-
         # The number of loops in the Linalg operations
         if self.from_lqcd:
             bench_name = raw_operation
             bench_file = os.path.join("lqcd-benchmarks", bench_name + ".mlir")
             with open(bench_file, "r") as file:
                 code = file.read()
-            real_exec_time, _ = lower_and_run_code(code, bench_name)
+            real_exec_time, _ = lower_and_run_code_with_timeout(code, bench_name)
+            exec_time = self.exec_times[bench_name]
             print_info(f"Real exec time: {real_exec_time}, expected exec time: {exec_time}")
-            lqcd_operation_tag = operation_dict["ops_tags"][0]
-            lqcd_operation_dict = operation_dict[lqcd_operation_tag]
-            num_loops = len(lqcd_operation_dict["nested_loops"])
+            # Reload original features
+            benchmark_data = extract_loops_data_from_file(bench_file, exec_time)
+            self.operations_files[self.bench_index] = (bench_name, benchmark_data)
+            operation_dict = benchmark_data
+            operation_tag = operation_dict["ops_tags"][-1]
+            block_operation_dict = operation_dict[operation_tag]
+            num_loops = len(block_operation_dict["nested_loops"])
         else:
-            num_loops = len(operation_dict["loops_data"]["nested_loops"])
+            # The baseline execution time of the Linalg operation
+            exec_time = operation_dict['execution_time']
+            operation_tag = operation_dict["ops_tags"][-1]
+            block_operation_dict = operation_dict[operation_tag]
+            num_loops = len(block_operation_dict["nested_loops"])
 
         # operation_type:
         if self.from_lqcd:
@@ -468,11 +483,11 @@ class Env:
 
         state = OperationState(
             bench_name=bench_name if self.from_lqcd else None,
-            operation_tag=lqcd_operation_tag if self.from_lqcd else operation_dict["operation_tag"],
-            raw_operation=lqcd_operation_dict["operation"] if self.from_lqcd else raw_operation,
+            operation_tag=operation_tag,
+            raw_operation=block_operation_dict["operation"] if self.from_lqcd else raw_operation,
             operation_type=operation_type,
             # lowered_operation=operation_dict["lowered_operation"],
-            loops_data=lqcd_operation_dict if self.from_lqcd else operation_dict["loops_data"],
+            loops_data=block_operation_dict,
             transformed_code=operation_dict["transform_wrapped_operation"],
             actions=actions,
             actions_mask=actions_mask,
@@ -510,7 +525,7 @@ class Env:
         print_success("PROCESSED:", transformation, parameters)
 
         reward = 0
-
+        print_info("ORIGINAL CODE:", state.transformed_code)
         if transformation not in ['no_transformation', 'vectorization']:
             # Apply the transformation and get the new code
             transformed_code = apply_transformation_with_timeout(
@@ -644,7 +659,8 @@ class Env:
         if done:
             if self.from_lqcd:
                 assert next_state.bench_name is not None
-                new_exec_time, bench_passed_or_exception = lower_and_run_code(transformed_code, next_state.bench_name)
+                print_info("TRANSFORMED CODE:", transformed_code)
+                new_exec_time, bench_passed_or_exception = lower_and_run_code_with_timeout(transformed_code, next_state.bench_name)
                 if new_exec_time is None:
                     print_error(f"EXECUTION ERROR: {bench_passed_or_exception}")
                 elif not bench_passed_or_exception:
@@ -665,7 +681,7 @@ class Env:
             if self.from_lqcd:
                 lqcd_bench_name, lqcd_bench_dict = self.operations_files[self.bench_index]
                 lqcd_op_index = lqcd_bench_dict["ops_tags"].index(next_state.operation_tag)
-                if lqcd_op_index < len(lqcd_bench_dict["ops_tags"]) - 1:
+                if lqcd_op_index > 0:
                     # Indicates that the trajectory isn't over yet, so don't reset
                     should_reset_if_done = False
 
@@ -683,7 +699,7 @@ class Env:
                     self.operations_files[self.bench_index] = (lqcd_bench_name, new_bench_dict)
 
                     # Build a new state that points to the next operation
-                    new_op_tag = lqcd_bench_dict["ops_tags"][lqcd_op_index + 1]
+                    new_op_tag = lqcd_bench_dict["ops_tags"][lqcd_op_index - 1]
                     new_op_dict = new_bench_dict[new_op_tag]
                     actions_mask = initialize_action_mask(len(new_op_dict['nested_loops']), next_state.operation_type)
                     next_state = OperationState(
