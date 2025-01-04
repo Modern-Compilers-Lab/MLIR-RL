@@ -162,7 +162,7 @@ def transform_dialect_TP(code, operation_tag, tiling_size, tmp_file):
         f'  transform.named_sequence @__transform_main(%arg1: !transform.any_op {{transform.readonly}}) {{\n'
         f'    %op_{operation_tag} = transform.structured.match attributes{{tag = "{operation_tag}"}} in %arg1 : (!transform.any_op) -> !transform.any_op\n'
         f'    %tiled_op_{operation_tag}, %forall_op_{operation_tag} = transform.structured.tile_using_forall %op_{operation_tag} tile_sizes {str(tiling_size)} : (!transform.any_op) -> (!transform.any_op, !transform.any_op)\n'
-        f'    %parallel_op_{operation_tag} = transform.loop.forall_to_parallel %forall_op_{operation_tag} : (!transform.any_op) -> !transform.any_op\n'
+        # f'    %parallel_op_{operation_tag} = transform.loop.forall_to_parallel %forall_op_{operation_tag} : (!transform.any_op) -> !transform.any_op\n'
         f'    transform.yield\n'
         f'  }}\n'
         f'}}'
@@ -849,7 +849,7 @@ def apply_transformation_with_timeout(state, code, transformation, parameters, t
 
 
 def evaluate_code(code, tmp_file):
-    command_1 = f"{os.getenv('LLVM_BUILD_PATH')}/bin/mlir-opt  -loop-invariant-code-motion -cse -canonicalize -cse -eliminate-empty-tensors -empty-tensor-to-alloc-tensor -one-shot-bufferize='bufferize-function-boundaries function-boundary-type-conversion=identity-layout-map' -buffer-deallocation -convert-linalg-to-loops  -convert-vector-to-scf -convert-scf-to-openmp -canonicalize -lower-affine -expand-strided-metadata -finalize-memref-to-llvm -convert-scf-to-cf -lower-affine -convert-arith-to-llvm -convert-openmp-to-llvm -convert-vector-to-llvm -convert-cf-to-llvm -convert-func-to-llvm -convert-math-to-llvm -reconcile-unrealized-casts"
+    command_1 = f"{os.getenv('LLVM_BUILD_PATH')}/bin/mlir-opt  -loop-invariant-code-motion -cse -canonicalize -cse -eliminate-empty-tensors -empty-tensor-to-alloc-tensor -one-shot-bufferize='bufferize-function-boundaries function-boundary-type-conversion=identity-layout-map' -buffer-deallocation -scf-forall-to-parallel -convert-linalg-to-loops  -convert-vector-to-scf -convert-scf-to-openmp -canonicalize -lower-affine -expand-strided-metadata -finalize-memref-to-llvm -convert-scf-to-cf -lower-affine -convert-arith-to-llvm -convert-openmp-to-llvm -convert-vector-to-llvm -convert-cf-to-llvm -convert-func-to-llvm -convert-math-to-llvm -reconcile-unrealized-casts"
     command_2 = f"{os.getenv('LLVM_BUILD_PATH')}/bin/mlir-cpu-runner -e main -entry-point-result=void -shared-libs={os.getenv('LLVM_BUILD_PATH')}/lib/libmlir_runner_utils.so,{os.getenv('LLVM_BUILD_PATH')}/lib/libmlir_c_runner_utils.so,{os.getenv('LLVM_BUILD_PATH')}/lib/libomp.so"
 
     os.environ["OMP_NUM_THREADS"] = "8"

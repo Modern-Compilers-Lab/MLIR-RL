@@ -5,6 +5,7 @@ from mlir.runtime import get_ranked_memref_descriptor
 from mlir.passmanager import PassManager
 import os
 from typing import Union, Optional
+import multiprocessing
 
 def lower_and_run_code(code: str, function_name: str) -> tuple[Optional[float], Union[Exception, bool]]:
     pass_pipeline = """builtin.module(
@@ -13,6 +14,7 @@ def lower_and_run_code(code: str, function_name: str) -> tuple[Optional[float], 
         convert-vector-to-scf,
         convert-linalg-to-loops,
         buffer-deallocation-pipeline,
+        scf-forall-to-parallel,
         convert-scf-to-openmp,
         expand-strided-metadata,
         finalize-memref-to-llvm,
@@ -76,3 +78,28 @@ def lower_and_run_code(code: str, function_name: str) -> tuple[Optional[float], 
     assertion = np.allclose(actual, expected)
 
     return delta_arg[0] / 1e9, assertion
+
+
+def lower_and_run_code_wrapper(code: str, function_name: str, exec_times, assertions):
+    exec_time, assertion = lower_and_run_code(code, function_name)
+    exec_times.append(exec_time)
+    assertions.append(assertion)
+
+
+def lower_and_run_code_with_timeout(code: str, function_name: str, timeout: Optional[float]=None):
+    manager = multiprocessing.Manager()
+    exec_times = manager.list()
+    assertions = manager.list()
+    process = multiprocessing.Process(target=lower_and_run_code_wrapper, args=(code, function_name, exec_times, assertions))
+    process.start()
+    process.join(timeout)
+
+    if process.is_alive():
+        # The function is still running, terminate the process
+        process.terminate()
+        process.join()
+
+        return None, False
+    else:
+        # The function completed within the timeout
+        return exec_times[0], assertions[0]
