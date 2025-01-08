@@ -44,6 +44,8 @@ class Config(metaclass=Singleton):
     """Maximum number of steps in the schedule"""
     json_file: str
     """Path to the JSON file containing the benchmarks code or features."""
+    tags: list[str]
+    """List of tags to add to the neptune experiment"""
     logging: bool
     """Flag to enable logging to neptune"""
 
@@ -71,6 +73,7 @@ class Config(metaclass=Singleton):
         self.lr = 0.001
         self.truncate = 5
         self.json_file = ""
+        self.tags = []
         self.logging = True
         self.loaded = False
 
@@ -99,6 +102,7 @@ class Config(metaclass=Singleton):
         self.lr = config["lr"]
         self.truncate = config["truncate"]
         self.json_file = config["json_file"]
+        self.tags = config["tags"]
         self.logging = config["logging"]
         # Check the configuration values
         assert self.data_format in ["json", "mlir"], "Invalid data format. Should be 'json' or 'mlir'."
@@ -130,6 +134,7 @@ class Config(metaclass=Singleton):
             "lr": self.lr,
             "truncate": self.truncate,
             "json_file": self.json_file,
+            "tags": self.tags,
             "logging": self.logging
         }
 

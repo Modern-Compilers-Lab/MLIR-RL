@@ -61,7 +61,7 @@ optimizer = torch.optim.Adam(
 )
 
 # Set neptune logs if enabled
-neptune_logs = init_neptune(['hierchical', 'sparse_reward']) if cfg.logging else None
+neptune_logs = init_neptune(['hierchical', 'sparse_reward'] + cfg.tags) if cfg.logging else None
 
 # Start training
 print_info('Start training ... ')
