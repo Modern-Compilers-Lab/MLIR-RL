@@ -68,7 +68,7 @@ class Env:
             # Build benchmark features
             for bench_name, exec_time in benchmarks_json.items():
                 bench_file = os.path.join(cfg.benchmarks_folder_path, bench_name + ".mlir")
-                benchmark_data = extract_bench_features_from_file(bench_name, bench_file, exec_time * 10e9)
+                benchmark_data = extract_bench_features_from_file(bench_name, bench_file, exec_time * 10**9)
                 self.benchmarks_data.append((bench_name, benchmark_data))
         else:
             # Load operations data from json file
@@ -95,7 +95,6 @@ class Env:
                 benchmark_data = extract_bench_features_from_code(bench_name, code, exec_time)
                 self.benchmarks_data.append((bench_name, benchmark_data))
 
-        self.truncate = cfg.truncate
         self.reset_repeat = reset_repeat
         self.step_repeat = step_repeat
 
@@ -121,8 +120,12 @@ class Env:
         if cfg.data_format == "mlir":
             # Get benchmark file
             bench_file = os.path.join(cfg.benchmarks_folder_path, bench_name + ".mlir")
+            # Get root execution time
+            with open(cfg.json_file, "r") as file:
+                benchmarks_json: dict[str, float] = json.load(file)
+            root_exec_time = benchmarks_json[bench_name] * 10**9
             # Reload original code and features
-            benchmark_data = extract_bench_features_from_file(bench_name, bench_file, benchmark_data.exec_time)
+            benchmark_data = extract_bench_features_from_file(bench_name, bench_file, root_exec_time)
             self.benchmarks_data[self.bench_index] = (bench_name, benchmark_data)
         # TODO: Add case where data_format is "json" and reload data from json file if needed (if optimization mode is "all")
 
@@ -156,7 +159,7 @@ class Env:
 
         # Action history:
         # 3 because we have 3 transformations that require parameters: TP, T, I
-        actions = np.zeros((cfg.max_num_loops, 3, self.truncate,))
+        actions = np.zeros((cfg.max_num_loops, 3, cfg.truncate,))
 
         state = OperationState(
             bench_name=bench_name,
@@ -325,7 +328,7 @@ class Env:
         #   We surpass the maximum number of steps (size of the schedule)
         #   Vectorization indicating the end of the schedule
         #   Error occured in the transformation
-        done = (next_state.step_count >= self.truncate) or \
+        done = (next_state.step_count >= cfg.truncate) or \
             (transformation in ['vectorization', 'no_transformation']) or \
             (trans_failed)
         should_reset_if_done = True
@@ -335,8 +338,6 @@ class Env:
             if cfg.use_bindings:
                 new_exec_time, bench_passed = evaluate_code_with_bindings_and_timeout(transformed_code, next_state.bench_name)
             else:
-                print("TRANSFORMED CODE")
-                print(transformed_code)
                 new_exec_time, bench_passed = evaluate_code_with_cmd_and_timeout(transformed_code, self.tmp_file, timeout=120)
             # Print infos and update reward
             if new_exec_time is None:
@@ -365,8 +366,8 @@ class Env:
                     print(f"Operation: {next_state.bench_name} - {next_state.operation_tag}")
                     print(next_state.transformation_history)
                     print('Speedup:', speedup_metric)
-                    print('Old Exec time:', next_state.root_exec_time * 10e-9, 's')
-                    print('New Exec time:', next_state.exec_time * 10e-9, 's')
+                    print('Old Exec time:', next_state.root_exec_time * 10**-9, 's')
+                    print('New Exec time:', next_state.exec_time * 10**-9, 's')
                     print('-' * 30)
 
                     # Re-extract operations data from the new code
@@ -383,7 +384,7 @@ class Env:
                         operation_type=next_state.operation_type,
                         operation_features=new_op_features,
                         transformed_code=new_bench_data.code,
-                        actions=np.zeros((cfg.max_num_loops, 3, self.truncate)),
+                        actions=np.zeros((cfg.max_num_loops, 3, cfg.truncate)),
                         actions_mask=actions_mask,
                         step_count=0,
                         exec_time=next_state.exec_time,
@@ -777,9 +778,7 @@ class ParallelEnv:
         """Initialize parallel environments.
 
         Args:
-            json_file (str): The path to the json file containing the benchmarks code or features.
             num_env (int): number of environments. Defaults to 1.
-            truncate (int): The maximum number of steps in the schedule. Defaults to 10.
             reset_repeat (int): The number of times to repeat the reset function. Defaults to 1.
             step_repeat (int): The number of times to repeat the step function. Defaults to 1.
         """
