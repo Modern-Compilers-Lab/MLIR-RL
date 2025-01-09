@@ -783,12 +783,10 @@ class ParallelEnv:
             step_repeat (int): The number of times to repeat the step function. Defaults to 1.
         """
         self.num_env = num_env
-        tmp_files = [f"tmp/tmp_{i}.mlir" for i in range(num_env)]
         self.envs = [
             Env(
                 reset_repeat=reset_repeat,
-                step_repeat=step_repeat,
-                tmp_file=tmp_files[i]
+                step_repeat=step_repeat
             ) for i in range(num_env)
         ]
 
