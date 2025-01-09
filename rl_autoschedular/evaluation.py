@@ -6,6 +6,7 @@ from mlir.runtime import get_ranked_memref_descriptor
 from mlir.passmanager import PassManager
 from typing import Union, Optional
 import multiprocessing
+from rl_autoschedular import config as cfg
 
 
 # ================================== Evaluation Functions (Python Bindings) ==================================
@@ -59,7 +60,7 @@ def evaluate_code_with_bindings(code: str, function_name: str) -> tuple[Optional
     )
 
     full_function_name = os.path.join(
-        "lqcd-benchmarks",
+        cfg.benchmarks_folder_path,
         function_name + ".mlir"
     )
     with open(full_function_name, "r") as f:
@@ -92,7 +93,7 @@ def evaluate_code_with_bindings(code: str, function_name: str) -> tuple[Optional
         actual = actual.view(np.complex128).squeeze(len(actual.shape) - 1)
     assertion = np.allclose(actual, expected)
 
-    return delta_arg[0] / 1e9, assertion
+    return delta_arg[0], assertion
 
 
 def evaluate_code_with_bindings_wrapper(code: str, function_name: str, exec_times, assertions):

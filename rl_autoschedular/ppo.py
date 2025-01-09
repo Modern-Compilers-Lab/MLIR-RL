@@ -91,8 +91,8 @@ def collect_trajectory(len_trajectory: int, model: Model, env: ParallelEnv, devi
                 print(final_state.transformation_history)
                 print('cummulative_reward:', final_state.cummulative_reward)
                 print('Speedup:', speedup_metric)
-                print('Old Exec time:', final_state.root_exec_time * 10e-9, 's')
-                print('New Exec time:', final_state.exec_time * 10e-9, 's')
+                print('Old Exec time:', final_state.root_exec_time * 10**-9, 's')
+                print('New Exec time:', final_state.exec_time * 10**-9, 's')
                 print('-' * 70)
                 if neptune_logs is not None:
                     neptune_logs['train/final_speedup'].append(speedup_metric)
