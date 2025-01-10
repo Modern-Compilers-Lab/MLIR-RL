@@ -1,5 +1,6 @@
 import os
 import re
+import subprocess
 from typing import Optional
 from rl_autoschedular.observation import extract_bench_features_from_code
 from utils.log import print_alert
@@ -337,34 +338,35 @@ def transform_dialect_vectorise_with_vectorizer(code: str, operation_tag: str, t
 
     code = code.strip()
 
-    transform_dilaect_code = f"""
-module attributes {{transform.with_named_sequence}} {{
-    transform.named_sequence @__transform_main(%variant_op: !transform.any_op {{transform.readonly}}) {{
-        %operation = transform.structured.match attributes{{tag = "{operation_tag}"}} in %variant_op : (!transform.any_op) -> !transform.any_op
-        transform.structured.vectorize %operation : !transform.any_op
+    vect_code_process = subprocess.run(
+        f'{os.getenv("VECTORIZER_BIN_PATH")} - {operation_tag}',
+        shell=True,
+        input=code.encode('utf-8'),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+    vect_code = vect_code_process.stdout.decode('utf-8')
 
-        %f = transform.structured.match ops{{["func.func"]}} in %variant_op
-            : (!transform.any_op) -> !transform.any_op
-
-        transform.apply_patterns to %f {{
-            transform.apply_patterns.vector.lower_masked_transfers
-            transform.apply_patterns.vector.transfer_permutation_patterns
+    transform_dialect_code = """
+module attributes {transform.with_named_sequence} {
+    transform.named_sequence @__transform_main(%variant_op: !transform.any_op {transform.readonly}) {
+        %f = transform.structured.match ops{[\"func.func\"]} in %variant_op : (!transform.any_op) -> !transform.any_op
+        transform.apply_patterns to %f {
             transform.apply_patterns.vector.lower_contraction lowering_strategy = "outerproduct"
+            transform.apply_patterns.vector.transfer_permutation_patterns
             transform.apply_patterns.vector.lower_multi_reduction lowering_strategy = "innerparallel"
-            transform.apply_patterns.vector.lower_transfer
+            transform.apply_patterns.vector.split_transfer_full_partial split_transfer_strategy = "vector-transfer"
+            transform.apply_patterns.vector.transfer_to_scf max_transfer_rank = 1 full_unroll = true
+            transform.apply_patterns.vector.lower_transfer max_transfer_rank = 1
             transform.apply_patterns.vector.lower_shape_cast
             transform.apply_patterns.vector.lower_transpose lowering_strategy = "shuffle_1d"
-            transform.apply_patterns.vector.lower_masks
-            transform.apply_patterns.vector.rank_reducing_subview_patterns
             transform.apply_patterns.canonicalization
-        }} : !transform.any_op
-
+        } : !transform.any_op
         transform.yield
-    }}
-}}
-""".strip()
+    }
+}""".strip()
 
-    code = code + '\n' + transform_dilaect_code + '\n'
+    code = vect_code + '\n' + transform_dialect_code + '\n'
 
     with open(tmp_file_path, "w") as file:
         file.write(code)
