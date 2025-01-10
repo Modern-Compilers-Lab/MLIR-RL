@@ -6,7 +6,7 @@ from tqdm import tqdm
 import math
 import os
 import string
-from typing import Optional, Literal
+from typing import Optional
 from rl_autoschedular import config as cfg
 from rl_autoschedular.state import OperationState, BenchmarkFeatures
 from rl_autoschedular.observation import (
@@ -637,7 +637,7 @@ class Env:
             i *= 2
         return sorted(divisors)
 
-    def get_tiling_candidates(self, n: int, num_candidates: int, iter: Literal['parallel', 'reduction']):
+    def get_tiling_candidates(self, n: int, num_candidates: int):
         """Get `num_candidates` candidate tiling size for upper bound `n`
 
         Args:
@@ -652,10 +652,6 @@ class Env:
         # If upperbound equal 1, we only have candidates of 1
         if n == 1:
             return [1] * num_candidates
-
-        # If iterator type is 'reduction', we don't take any candidate
-        if iter == 'reduction':
-            return [0] * num_candidates
 
         # We take the divisors of the upperbound `n`
         div = self.sorted_divisors(n, num_candidates)
@@ -698,7 +694,7 @@ class Env:
         if action_name in ['tiling', 'parallelization']:
             # Get loop upper bounds
             candidates = [
-                [0] + self.get_tiling_candidates(loop.upper_bound, num_candidates=cfg.num_tile_sizes, iter=loop.iterator_type)
+                [0] + self.get_tiling_candidates(loop.upper_bound, num_candidates=cfg.num_tile_sizes)
                 for loop in op_features.nested_loops
             ]
 

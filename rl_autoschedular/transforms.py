@@ -5,12 +5,12 @@ from typing import Optional
 from rl_autoschedular.observation import extract_bench_features_from_code
 from utils.log import print_alert
 from rl_autoschedular import config as cfg
-from rl_autoschedular.state import OperationState
+from rl_autoschedular.state import OperationState, NestedLoopFeatures
 
 
 # ====================================== Transform dialect functions ======================================
 
-def transform_dialect_TP(code: str, operation_tag: str, tiling_size: list[int], tmp_file_path: str):
+def transform_dialect_TP(code: str, operation_tag: str, tiling_size: list[int], nested_loops_features: list[NestedLoopFeatures], tmp_file_path: str):
     """Apply the tiling and parallelization transformation to the specified operation in the given code.
 
     Args:
@@ -28,18 +28,38 @@ def transform_dialect_TP(code: str, operation_tag: str, tiling_size: list[int], 
         return code
 
     code = code.strip()
-    transform_dilaect_code = (
+
+    # Set tiling with parallelization for loops that can be parallelized
+    parallel_tiling_sizes = [0 if nested_loops_features[i].iterator_type == "reduction" else tiling_size[i] for i in range(len(tiling_size))]
+    if any([a != 0 for a in parallel_tiling_sizes]):
+        parallel_transform_dialect_code = (
+            f'    %parallel_{operation_tag} = transform.structured.match attributes{{tag = "{operation_tag}"}} in %arg1 : (!transform.any_op) -> !transform.any_op\n'
+            f'    %parallel_tiled_{operation_tag}, %forall_{operation_tag} = transform.structured.tile_using_forall %parallel_{operation_tag} tile_sizes {str(parallel_tiling_sizes)} : (!transform.any_op) -> (!transform.any_op, !transform.any_op)\n'
+        )
+    else:
+        parallel_transform_dialect_code = ''
+
+    # Set tiling only for reduction loops
+    only_tiling_sizes = [tiling_size[i] if nested_loops_features[i].iterator_type == "reduction" else 0 for i in range(len(tiling_size))]
+    if any([a != 0 for a in only_tiling_sizes]):
+        only_tiling_transform_dialect_code = (
+            f'    %reduction_{operation_tag} = transform.structured.match attributes{{tag = "{operation_tag}"}} in %arg1 : (!transform.any_op) -> !transform.any_op\n'
+            f'    %reduction_tiled_{operation_tag}, %loops_{operation_tag} = transform.structured.tile_using_for %reduction_{operation_tag} tile_sizes {str(only_tiling_sizes)} : (!transform.any_op) -> (!transform.any_op, !transform.any_op)\n'
+        )
+    else:
+        only_tiling_transform_dialect_code = ''
+
+    # Add full transform dialect code into the main code
+    transform_dialect_code = (
         f'\nmodule attributes {{transform.with_named_sequence}} {{\n'
         f'  transform.named_sequence @__transform_main(%arg1: !transform.any_op {{transform.readonly}}) {{\n'
-        f'    %op_{operation_tag} = transform.structured.match attributes{{tag = "{operation_tag}"}} in %arg1 : (!transform.any_op) -> !transform.any_op\n'
-        f'    %tiled_op_{operation_tag}, %forall_op_{operation_tag} = transform.structured.tile_using_forall %op_{operation_tag} tile_sizes {str(tiling_size)} : (!transform.any_op) -> (!transform.any_op, !transform.any_op)\n'
-        # f'    %parallel_op_{operation_tag} = transform.loop.forall_to_parallel %forall_op_{operation_tag} : (!transform.any_op) -> !transform.any_op\n'
+        f'{parallel_transform_dialect_code}'
+        f'{only_tiling_transform_dialect_code}'
         f'    transform.yield\n'
         f'  }}\n'
         f'}}'
     )
-
-    code = code + transform_dilaect_code
+    code = code + transform_dialect_code
 
     with open(tmp_file_path, "w") as file:
         file.write(code)
@@ -465,12 +485,7 @@ def apply_transformation(state: OperationState, code: str, transformation: str, 
         if not parameters:
             print_alert("REASON: No parameters")
             return ''
-        # If a reduction loop is parallelized, ignore the transformation
-        for i, nested_loop in enumerate(operation_features.nested_loops):
-            if nested_loop.iterator_type == "reduction" and parameters[i] > 0:
-                print_alert("REASON: Reduction parallelization")
-                return ''
-        new_code = transform_dialect_TP(code, state.operation_tag, parameters, tmp_file)
+        new_code = transform_dialect_TP(code, state.operation_tag, parameters, state.operation_features.nested_loops, tmp_file)
     elif transformation == 'interchange':
         new_code = transform_dialect_interchange(code, state.operation_tag, parameters, tmp_file)
     elif transformation == 'img2col':
