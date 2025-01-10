@@ -82,6 +82,7 @@ def collect_trajectory(len_trajectory: int, model: Model, env: ParallelEnv, devi
 
         for i in range(env.num_env):
             done = batch_terminated[i]
+            reward = batch_reward[i]
             final_state = batch_final_state[i]
             # print(done)
             if done and final_state is not None:
@@ -89,6 +90,7 @@ def collect_trajectory(len_trajectory: int, model: Model, env: ParallelEnv, devi
                 print('-' * 70)
                 print(f"Bench: {final_state.bench_name}")
                 print(final_state.transformation_history)
+                print('reward:', reward)
                 print('cummulative_reward:', final_state.cummulative_reward)
                 print('Speedup:', speedup_metric)
                 print('Old Exec time:', final_state.root_exec_time * 10**-9, 's')
