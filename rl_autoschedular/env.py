@@ -368,6 +368,8 @@ class Env:
                     print('Speedup:', speedup_metric)
                     print('Old Exec time:', next_state.root_exec_time * 10**-9, 's')
                     print('New Exec time:', next_state.exec_time * 10**-9, 's')
+                    print(f"reward: {reward}")
+                    print(f"cummulative reward: {next_state.cummulative_reward + reward}")
 
                     # Re-extract operations data from the new code
                     new_bench_data = extract_bench_features_from_code(bench_name, next_state.transformed_code, next_state.exec_time)
@@ -396,9 +398,6 @@ class Env:
                     )
 
         next_state.cummulative_reward += reward
-        print(f"reward: {reward}")
-        print(f"cummulative reward: {next_state.cummulative_reward}")
-        print('-' * 30)
 
         next_obs = self.get_obs(next_state)
         next_obs = torch.tensor(next_obs, dtype=torch.float32)
