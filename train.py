@@ -13,7 +13,7 @@ from utils.neptune_utils import init_neptune
 from rl_autoschedular.ppo import (
     collect_trajectory,
     ppo_update,
-    evaluate_benchamrk
+    evaluate_benchmark
 )
 
 # Set target device
@@ -90,7 +90,7 @@ for step in tqdm_range:
     torch.save(model.state_dict(), 'models/ppo_model.pt')
 
     if step % 5 == 0:
-        evaluate_benchamrk(
+        evaluate_benchmark(
             model=model,
             env=eval_env,
             device=device,
