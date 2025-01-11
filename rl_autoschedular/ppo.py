@@ -349,7 +349,7 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
     return acc_loss / loss_i
 
 
-def evaluate_benchamrk(model: Model, env: ParallelEnv, device: torch.device = torch.device('cpu'), neptune_logs: Optional[neptune.Run] = None):
+def evaluate_benchmark(model: Model, env: ParallelEnv, device: torch.device = torch.device('cpu'), neptune_logs: Optional[neptune.Run] = None):
     """Evaluate the benchmark using the model.
 
     Args:

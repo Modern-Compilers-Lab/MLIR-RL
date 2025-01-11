@@ -6,7 +6,7 @@ from tqdm import tqdm
 import math
 import os
 import string
-from typing import Optional
+from typing import Optional, Literal
 from rl_autoschedular import config as cfg
 from rl_autoschedular.state import OperationState, BenchmarkFeatures
 from rl_autoschedular.observation import (
@@ -392,8 +392,6 @@ class Env:
                         exec_time=next_state.exec_time,
                         root_exec_time=next_state.exec_time,
                         transformation_history=[],
-                        # TODO: Find out why this was added
-                        # bench_transformation_history=next_state.bench_transformation_history.copy(),
                         cummulative_reward=next_state.cummulative_reward,
                         tmp_file=self.tmp_file
                     )
@@ -639,13 +637,13 @@ class Env:
             i *= 2
         return sorted(divisors)
 
-    def get_tiling_candidates(self, n: int, num_candidates: int):
+    def get_tiling_candidates(self, n: int, num_candidates: int, iterator_type: Literal['parallel', 'reduction'] = 'parallel'):
         """Get `num_candidates` candidate tiling size for upper bound `n`
 
         Args:
             n (int): The upper bound.
             num_candidates (int): The number of candidates to get.
-            iter (Literal['parallel', 'reduction']): The iterator type.
+            iterator_type (Literal['parallel', 'reduction']): The iterator type. Defaults to 'parallel'.
 
         Returns:
             list[int]: The tiling candidates.
@@ -654,6 +652,12 @@ class Env:
         # If upperbound equal 1, we only have candidates of 1
         if n == 1:
             return [1] * num_candidates
+
+        # If the data format is json and the iterator type is reduction, we don't do tiling
+        # TODO: the condition has to change because it's not related to the data format, it's related to a non thread safe tiling problem
+        # so we skip it to not let it happen for now
+        if cfg.data_format == 'json' and iterator_type == 'reduction':
+            return [0] * num_candidates
 
         # We take the divisors of the upperbound `n`
         div = self.sorted_divisors(n, num_candidates)
@@ -696,7 +700,7 @@ class Env:
         if action_name in ['tiling', 'parallelization']:
             # Get loop upper bounds
             candidates = [
-                [0] + self.get_tiling_candidates(loop.upper_bound, num_candidates=cfg.num_tile_sizes)
+                [0] + self.get_tiling_candidates(loop.upper_bound, num_candidates=cfg.num_tile_sizes, iterator_type=loop.iterator_type)
                 for loop in op_features.nested_loops
             ]
 
