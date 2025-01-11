@@ -46,6 +46,8 @@ class BenchmarkFeatures:
     """List of operations where each operation is represented by the OperationFeatures dataclass."""
     exec_time: int
     """Execution time of the benchmark in nanoseconds."""
+    root_exec_time: int
+    """Execution time of the benchmark in nanoseconds without any transformation."""
 
 
 @dataclass

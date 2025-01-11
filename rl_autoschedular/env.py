@@ -68,7 +68,7 @@ class Env:
             # Build benchmark features
             for bench_name, exec_time in benchmarks_json.items():
                 bench_file = os.path.join(cfg.benchmarks_folder_path, bench_name + ".mlir")
-                benchmark_data = extract_bench_features_from_file(bench_name, bench_file, exec_time * 10**9)
+                benchmark_data = extract_bench_features_from_file(bench_name, bench_file, exec_time * 10**9, exec_time * 10**9)
                 self.benchmarks_data.append((bench_name, benchmark_data))
         else:
             # Load operations data from json file
@@ -92,7 +92,7 @@ class Env:
                 exec_time = json_data[i][1]["execution_time"]
                 # Build benchmark features
                 bench_name = f"bench_{i}"
-                benchmark_data = extract_bench_features_from_code(bench_name, code, exec_time)
+                benchmark_data = extract_bench_features_from_code(bench_name, code, exec_time, exec_time)
                 self.benchmarks_data.append((bench_name, benchmark_data))
 
         self.reset_repeat = reset_repeat
@@ -120,12 +120,8 @@ class Env:
         if cfg.data_format == "mlir":
             # Get benchmark file
             bench_file = os.path.join(cfg.benchmarks_folder_path, bench_name + ".mlir")
-            # Get root execution time
-            with open(cfg.json_file, "r") as file:
-                benchmarks_json: dict[str, float] = json.load(file)
-            root_exec_time = benchmarks_json[bench_name] * 10**9
             # Reload original code and features
-            benchmark_data = extract_bench_features_from_file(bench_name, bench_file, root_exec_time)
+            benchmark_data = extract_bench_features_from_file(bench_name, bench_file, benchmark_data.root_exec_time, benchmark_data.root_exec_time)
             self.benchmarks_data[self.bench_index] = (bench_name, benchmark_data)
         # TODO: Add case where data_format is "json" and reload data from json file if needed (if optimization mode is "all")
 
@@ -208,6 +204,9 @@ class Env:
             state=state
         )
 
+        # Get benchmark data
+        bench_name, bench_data = self.benchmarks_data[self.bench_index]
+
         print_info("RAW:", raw_action)
         print_success("PROCESSED:", transformation, parameters)
 
@@ -216,6 +215,7 @@ class Env:
             # Apply the transformation and get the new code
             transformed_code = apply_transformation_with_timeout(
                 state=state,
+                bench_features=bench_data,
                 code=state.transformed_code,
                 transformation=transformation,
                 parameters=parameters,
@@ -269,6 +269,7 @@ class Env:
                     second_interchange_parameters[4] = 1
                 state.transformed_code = apply_transformation_with_timeout(
                     state=state,
+                    bench_features=bench_data,
                     code=state.transformed_code,
                     transformation='tiling',
                     parameters=second_interchange_parameters,
@@ -284,6 +285,7 @@ class Env:
                 transformation = 'vectorization'
                 transformed_code = apply_transformation_with_timeout(
                     state=state,
+                    bench_features=bench_data,
                     code=state.transformed_code,
                     transformation=transformation,
                     parameters=parameters,
@@ -355,7 +357,6 @@ class Env:
                     new_exec_time = next_state.exec_time
 
             if cfg.optimization_mode == "all":
-                bench_name, bench_data = self.benchmarks_data[self.bench_index]
                 op_index = bench_data.operation_tags.index(next_state.operation_tag)
                 if op_index > 0:
                     # Indicates that the trajectory isn't over yet, so don't reset
@@ -365,14 +366,14 @@ class Env:
                     print('-' * 30)
                     print(f"Operation: {next_state.bench_name} - {next_state.operation_tag}")
                     print(next_state.transformation_history)
-                    print('Speedup:', speedup_metric)
+                    print('Relative speedup:', speedup_metric)
                     print('Old Exec time:', next_state.root_exec_time * 10**-9, 's')
                     print('New Exec time:', next_state.exec_time * 10**-9, 's')
                     print(f"reward: {reward}")
                     print(f"cummulative reward: {next_state.cummulative_reward + reward}")
 
                     # Re-extract operations data from the new code
-                    new_bench_data = extract_bench_features_from_code(bench_name, next_state.transformed_code, next_state.exec_time)
+                    new_bench_data = extract_bench_features_from_code(bench_name, next_state.transformed_code, bench_data.root_exec_time, next_state.exec_time)
                     self.benchmarks_data[self.bench_index] = (bench_name, new_bench_data)
 
                     # Build a new state that points to the next operation
@@ -389,7 +390,7 @@ class Env:
                         actions_mask=actions_mask,
                         step_count=0,
                         exec_time=next_state.exec_time,
-                        root_exec_time=next_state.root_exec_time,
+                        root_exec_time=next_state.exec_time,
                         transformation_history=[],
                         # TODO: Find out why this was added
                         # bench_transformation_history=next_state.bench_transformation_history.copy(),
@@ -406,6 +407,7 @@ class Env:
         final_state = None
         if done and should_reset_if_done:
             final_state = next_state
+            final_state.root_exec_time = bench_data.root_exec_time
             next_state, next_obs = self.reset()
 
         return next_obs, reward, done, next_state, final_state

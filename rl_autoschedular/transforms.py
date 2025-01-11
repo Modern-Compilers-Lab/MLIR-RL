@@ -5,7 +5,7 @@ from typing import Optional
 from rl_autoschedular.observation import extract_bench_features_from_code
 from utils.log import print_alert
 from rl_autoschedular import config as cfg
-from rl_autoschedular.state import OperationState, NestedLoopFeatures
+from rl_autoschedular.state import OperationState, NestedLoopFeatures, BenchmarkFeatures
 
 
 # ====================================== Transform dialect functions ======================================
@@ -453,11 +453,12 @@ module attributes {{transform.with_named_sequence}} {{
     return result
 
 
-def apply_transformation(state: OperationState, code: str, transformation: str, parameters: list, use_vectorizer: bool = False):
+def apply_transformation(state: OperationState, bench_features: BenchmarkFeatures, code: str, transformation: str, parameters: list, use_vectorizer: bool = False):
     """Apply the specified transformation to the given code.
 
     Args:
         state (OperationState): The operation state.
+        bench_features (BenchmarkFeatures): The benchmark features.
         code (str): The code to apply the transformation to.
         transformation (str): The transformation to apply.
         parameters (list): The parameters of the transformation.
@@ -473,8 +474,8 @@ def apply_transformation(state: OperationState, code: str, transformation: str, 
 
     # Re-extract loop data if it's gonna be needed afterwards
     if transformation in ['parallelization', 'vectorization']:
-        benchmark_features = extract_bench_features_from_code(state.bench_name, code, state.exec_time)
-        operation_features = benchmark_features.operations[state.operation_tag]
+        new_benchmark_features = extract_bench_features_from_code(state.bench_name, code, bench_features.root_exec_time, state.exec_time)
+        operation_features = new_benchmark_features.operations[state.operation_tag]
 
     if transformation == 'tiling':
         if not parameters:
@@ -511,26 +512,28 @@ def apply_transformation(state: OperationState, code: str, transformation: str, 
     return new_code
 
 
-def apply_transformation_wrapper(state: OperationState, code: str, transformation: str, parameters: list, return_list, use_vectorizer: bool = False):
+def apply_transformation_wrapper(state: OperationState, bench_features: BenchmarkFeatures, code: str, transformation: str, parameters: list, return_list, use_vectorizer: bool = False):
     """Wrapper function to apply the transformation with multiprocessing.
 
     Args:
         state (OperationState): The operation state.
+        bench_features (BenchmarkFeatures): The benchmark features.
         code (str): The code to apply the transformation to.
         transformation (str): The transformation to apply.
         parameters (list): The parameters of the transformation.
         return_list (list): The list to store the result of the transformation.
         use_vectorizer (bool): Whether to use the vectorizer or not. Default is False.
     """
-    res = apply_transformation(state, code, transformation, parameters, use_vectorizer)
+    res = apply_transformation(state, bench_features, code, transformation, parameters, use_vectorizer)
     return_list.append(res)
 
 
-def apply_transformation_with_timeout(state: OperationState, code: str, transformation: str, parameters: list, timeout: Optional[float] = None, use_vectorizer: bool = False):
+def apply_transformation_with_timeout(state: OperationState, bench_features: BenchmarkFeatures, code: str, transformation: str, parameters: list, timeout: Optional[float] = None, use_vectorizer: bool = False):
     """Apply the specified transformation to the given code with a timeout.
 
     Args:
         state (OperationState): The operation state.
+        bench_features (BenchmarkFeatures): The benchmark features.
         code (str): The code to apply the transformation to.
         transformation (str): The transformation to apply.
         parameters (list): The parameters of the transformation.
@@ -556,7 +559,7 @@ def apply_transformation_with_timeout(state: OperationState, code: str, transfor
     #     # The function completed within the timeout
     #     return return_list[0]
 
-    return apply_transformation(state, code, transformation, parameters, use_vectorizer)
+    return apply_transformation(state, bench_features, code, transformation, parameters, use_vectorizer)
 
 
 # ========================================= Other functions =========================================
