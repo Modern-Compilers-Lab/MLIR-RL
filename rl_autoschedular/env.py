@@ -596,7 +596,7 @@ class Env:
 
         return actions
 
-    def get_interchange_actions(num_loops: int):
+    def get_interchange_actions(self, num_loops: int):
         """Get all the possible interchanges for `num_loops`
 
         Args:

@@ -359,6 +359,7 @@ def evaluate_benchmark(model: Model, env: ParallelEnv, device: torch.device = to
         neptune_logs (Optional[neptune.Run]): The neptune run to log to if any. Defaults to None.
     """
     # NOTE: Only using one environment
+    speedup_values: list[float] = []
     for i, (bench_name, benchmark_data) in enumerate(env.envs[0].benchmarks_data):
         if cfg.data_format == 'mlir':
             print(f'Benchmark ({i}):', bench_name)
@@ -390,6 +391,8 @@ def evaluate_benchmark(model: Model, env: ParallelEnv, device: torch.device = to
 
                 if neptune_logs is not None:
                     neptune_logs[f'eval/{final_state.operation_features.raw_operation}_speedup'].append(speedup_metric)
+                    neptune_logs['eval/final_speedup'].append(speedup_metric)
+                    speedup_values.append(speedup_metric)
 
                 break
 
@@ -397,3 +400,5 @@ def evaluate_benchmark(model: Model, env: ParallelEnv, device: torch.device = to
             obs = torch.cat(next_obs).to(device)
 
         print('\n\n\n')
+
+    neptune_logs['eval/average_speedup'].append(sum(speedup_values) / len(speedup_values))
