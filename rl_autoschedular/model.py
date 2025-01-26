@@ -8,32 +8,22 @@ from rl_autoschedular import config as cfg
 
 class HiearchyModel(nn.Module):
     """Hierarchical reinforcement learning model for MLIR code optimization."""
-    def __init__(
-            self,
-            input_dim,
-            num_loops=cfg.max_num_loops,
-            num_transformations=cfg.num_transformations,
-            num_tiles=cfg.num_tile_sizes
-    ):
-        """Initialize the model.
-
-        Args:
-            input_dim (int): The input dimension.
-            num_loops (int): The number of nested loops. Defaults to max number set in configuration.
-            num_transformations (int): The number of transformations. Defaults to number set in configuration.
-            num_tiles (int): The number of tiling sizes. Defaults to number set in configuration.
-        """
+    def __init__(self):
+        """Initialize the model."""
         super(HiearchyModel, self).__init__()
 
-        self.input_dim = input_dim
-        self.num_loops = num_loops
-        self.num_transformations = num_transformations
-        self.num_tiles = num_tiles
+        L = cfg.max_num_loops
+        D = cfg.max_num_load_store_dim
+        SD = cfg.max_num_stores_loads
+        self.input_dim = 1 + L + L * D * SD + L * D + 5 + L * 3 * cfg.truncate
+        self.num_loops = L
+        self.num_transformations = cfg.num_transformations
+        self.num_tiles = cfg.num_tile_sizes
 
-        self.action_mask_size = cfg.num_transformations + cfg.max_num_loops + cfg.max_num_loops + 3 * cfg.max_num_loops - 6
+        self.action_mask_size = self.num_transformations + self.num_loops + self.num_loops + 3 * self.num_loops - 6
 
         self.backbone = nn.Sequential(
-            nn.Linear(input_dim, 512),
+            nn.Linear(self.input_dim, 512),
             nn.ReLU(),
             nn.Linear(512, 512),
             nn.ReLU(),
@@ -42,7 +32,7 @@ class HiearchyModel(nn.Module):
         )
 
         self.value_network = nn.Sequential(
-            nn.Linear(input_dim, 512),
+            nn.Linear(self.input_dim, 512),
             nn.ReLU(),
             nn.Linear(512, 512),
             nn.ReLU(),
@@ -51,10 +41,10 @@ class HiearchyModel(nn.Module):
             nn.Linear(512, 1),
         )
 
-        self.transformation_selection = nn.Linear(512, num_transformations)  # +1 for the stop operation
-        self.interchange_fc = nn.Linear(512, (3 * cfg.max_num_loops - 6))
-        self.tiling_fc = nn.Linear(512, num_loops * (num_tiles + 1))  # +1 for the no tiling
-        self.parall_fc = nn.Linear(512, num_loops * (num_tiles + 1))  # +1 for the no parallelizattion
+        self.transformation_selection = nn.Linear(512, self.num_transformations)  # +1 for the stop operation
+        self.interchange_fc = nn.Linear(512, (3 * self.num_loops - 6))
+        self.tiling_fc = nn.Linear(512, self.num_loops * (self.num_tiles + 1))  # +1 for the no tiling
+        self.parall_fc = nn.Linear(512, self.num_loops * (self.num_tiles + 1))  # +1 for the no parallelizattion
 
     def sample(self, obs: torch.Tensor, actions: Optional[list[tuple[str, list[int]]]] = None):
         """Sample an action from the model.
@@ -79,16 +69,16 @@ class HiearchyModel(nn.Module):
         # print(action_mask)
 
         # decompose action mask:
-        L = cfg.max_num_loops
+        L = self.num_loops
 
-        TP_BEGIN = cfg.num_transformations
+        TP_BEGIN = self.num_transformations
         T_BEGIN = TP_BEGIN + L
         I_BEGIN_2C = T_BEGIN + L
         # I_BEGIN_3C = I_BEGIN_2C + (L - 1)
         # I_BEGIN_4C = I_BEGIN_3C + (L - 2)
 
         # Define the mask of each transformation
-        transform_mask = action_mask[..., :cfg.num_transformations]
+        transform_mask = action_mask[..., :self.num_transformations]
         TP_mask = action_mask[..., TP_BEGIN:T_BEGIN]
         T_mask = action_mask[..., T_BEGIN:I_BEGIN_2C]
         I_mask = action_mask[..., I_BEGIN_2C:]
@@ -132,7 +122,7 @@ class HiearchyModel(nn.Module):
 
             for i, action in enumerate(actions):
                 action_name, parameters = action
-                if action_name == 'no_transform':
+                if action_name == 'no_transformation':
                     transformation_index[i] = 0
                 elif action_name == 'parallelization':
                     transformation_index[i] = 1
@@ -143,8 +133,10 @@ class HiearchyModel(nn.Module):
                 elif action_name == 'interchange':
                     transformation_index[i] = 3
                     interchange_index[i] = parameters
-                elif action_name == 'img2col':
+                elif action_name == 'vectorization':
                     transformation_index[i] = 4
+                elif action_name == 'img2col':
+                    transformation_index[i] = 5
 
         # Get the action prob and log_prob
         transformation_log_p = F.log_softmax(transformation_logits, dim=-1).gather(-1, transformation_index.unsqueeze(-1)).reshape(*leading_dims, -1)
@@ -158,7 +150,7 @@ class HiearchyModel(nn.Module):
         actions = []
         for i in range(transformation_index.shape[0]):
             if transformation_index[i] == 0:
-                actions.append(['no_transform', None])
+                actions.append(['no_transformation', None])
 
             elif transformation_index[i] == 1:
                 params = []
@@ -178,6 +170,9 @@ class HiearchyModel(nn.Module):
                 actions.append(['interchange', interchange_index[i].item()])
 
             elif transformation_index[i] == 4:
+                actions.append(['vectorization', None])
+
+            elif transformation_index[i] == 5:
                 actions.append(['img2col', None])
 
         transformation_log_p, interchange_log_p, tiling_log_p, parall_log_p = transformation_log_p.reshape(-1), interchange_log_p.reshape(-1), tiling_log_p.reshape(-1), parall_log_p.reshape(-1)

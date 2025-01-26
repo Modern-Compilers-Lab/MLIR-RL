@@ -506,8 +506,10 @@ def apply_transformation(state: OperationState, bench_features: BenchmarkFeature
             new_code = transform_dialect_vectorise_img2col(code, state.operation_tag, tmp_file)
         else:
             new_code = transform_dialect_vectorise(code, state.operation_tag, tmp_file)
+    elif transformation == 'no_transformation':
+        new_code = code
     else:
-        raise ValueError
+        raise ValueError(f"Invalid transformation: {transformation}")
 
     return new_code
 
