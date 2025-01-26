@@ -279,10 +279,12 @@ class Env:
 
                 state.transformed_code = apply_conv2d_decomposition(state.transformed_code, state.operation_tag, self.tmp_file)
 
-            # Generic and pooling operations are better without vectorization
-            if state.operation_type != 'pooling':
-                # Apply the vectorization and get the new code
-                transformation = 'vectorization'
+            if state.operation_type == 'pooling':
+                # Force no transformation on pooling operations
+                transformation = 'no_transformation'
+                transformed_code = state.transformed_code
+            else:
+                # Otherwise apply the transformation and get the new code
                 transformed_code = apply_transformation_with_timeout(
                     state=state,
                     bench_features=bench_data,
@@ -292,9 +294,6 @@ class Env:
                     timeout=20,
                     use_vectorizer=cfg.use_vectorizer
                 )
-            else:
-                transformation = 'no_transformation'
-                transformed_code = state.transformed_code
 
         trans_failed = not transformed_code  # This indicatesthat that the transformation failed or timed out
         if trans_failed:
@@ -457,8 +456,8 @@ class Env:
         """Initialize the action mask for a specified number of loops and operation type.
 
         Notes:
-            Action mask (5 + L + L + (L-1) + (L-2) + (L-3) ):
-                Transformations: end, TP, T, Interchange
+            Action mask (NUM_TRANSFORMATIONS + L + L + (L-1) + (L-2) + (L-3) ):
+                Transformations: no_transform, TP, T, Interchange, vect, img2col
                 TP: L loops
                 T : L loops
                 Interchange: 2-consecutive interchanges: L - 1
@@ -466,7 +465,7 @@ class Env:
                         : 4-consecutive interchanges: L - 3
                 Interchange: 3L - 6
 
-            action_mask[:5] = [end, TP, T, I, Img2Col]
+            action_mask[:NUM_TRANSFORMATIONS] = [no_transform, TP, T, I, vect, img2col]
 
         Args:
             num_loops (int): The number of loops in the operation.
@@ -477,18 +476,18 @@ class Env:
         """
         L = cfg.max_num_loops
 
-        TP_BEGIN = 5
+        TP_BEGIN = cfg.num_transformations
         T_BEGIN = TP_BEGIN + L
         I_BEGIN_2C = T_BEGIN + L
         I_BEGIN_3C = I_BEGIN_2C + (L - 1)
         I_BEGIN_4C = I_BEGIN_3C + (L - 2)
 
-        action_mask = np.ones((5 + L + L + 3 * L - 6), dtype=np.bool_)
+        action_mask = np.ones((TP_BEGIN + L + L + 3 * L - 6), dtype=np.bool_)
         if operation_type == 'conv_2d':
-            action_mask[:5] = [False, False, False, False, True]
+            action_mask[:TP_BEGIN] = [False, False, False, False, False, True]
         else:
-            action_mask[:5] = [False, True, False, False, False]
-            # action_mask[:5] = [False, True, True, True, False]
+            action_mask[:TP_BEGIN] = [False, True, False, False, False, False]
+            # action_mask[:5] = [False, True, True, True, False, False]
         action_mask[TP_BEGIN + num_loops:T_BEGIN] = False
         action_mask[T_BEGIN + num_loops:I_BEGIN_2C] = False
         action_mask[I_BEGIN_2C + num_loops - 1:I_BEGIN_3C] = False
@@ -528,35 +527,35 @@ class Env:
         actions_mask = state.actions_mask
 
         if transformation == 'img2col':
-            actions_mask[:TP_BEGIN] = [False, True, False, False, False]
+            actions_mask[:TP_BEGIN] = [False, True, False, False, False, False]
 
         if state.operation_type == "pooling" or state.operation_type == "conv_2d":
             if transformation == 'parallelization':
-                actions_mask[:TP_BEGIN] = [True, False, False, False, False]
+                actions_mask[:TP_BEGIN] = [True, False, False, False, True, False]
             if transformation == 'tiling':
-                actions_mask[:TP_BEGIN] = [True, False, False, False, False]
+                actions_mask[:TP_BEGIN] = [True, False, False, False, True, False]
 
         elif state.operation_type == "conv_2d+img2col":
             if transformation == 'parallelization':
-                actions_mask[:TP_BEGIN] = [True, False, False, False, False]
+                actions_mask[:TP_BEGIN] = [True, False, False, False, True, False]
 
         elif state.operation_type == "matmul" or state.operation_type == "add":
             if transformation == 'parallelization':
-                actions_mask[:TP_BEGIN] = [True, False, False, False, False]
+                actions_mask[:TP_BEGIN] = [True, False, False, False, True, False]
             if transformation == 'tiling':
-                actions_mask[:TP_BEGIN] = [True, False, True, True, False]
+                actions_mask[:TP_BEGIN] = [True, False, True, True, True, False]
             if transformation == 'interchange':
-                actions_mask[:TP_BEGIN] = [True, False, False, True, False]
+                actions_mask[:TP_BEGIN] = [True, False, False, True, True, False]
 
         elif state.operation_type == "generic":
             if transformation == 'parallelization':
-                actions_mask[:TP_BEGIN] = [True, False, False, False, False]
+                actions_mask[:TP_BEGIN] = [True, False, False, False, True, False]
             if transformation == 'interchange':
-                # NOTE: actions_mask[:NUM_TRANSFORMATIONS] = [True, False, True, True, False]
-                actions_mask[:TP_BEGIN] = [True, True, True, True, False]
+                # NOTE: actions_mask[:NUM_TRANSFORMATIONS] = [True, False, True, True, True, False]
+                actions_mask[:TP_BEGIN] = [True, True, True, True, True, False]
             if transformation == 'tiling':
-                # NOTE: actions_mask[:NUM_TRANSFORMATIONS] = [True, False, False, False, False]
-                actions_mask[:TP_BEGIN] = [True, True, True, True, False]
+                # NOTE: actions_mask[:NUM_TRANSFORMATIONS] = [True, False, False, False, True, False]
+                actions_mask[:TP_BEGIN] = [True, True, True, True, True, False]
 
         else:
             raise ValueError("operation_type must be in [pooling, conv_2d, conv_2d+img2col, matmul, add, generic]")
@@ -743,6 +742,9 @@ class Env:
                     parall_parameters.append(0)
 
             return ['parallelization', parall_parameters]
+
+        elif action_name == 'vectorization':
+            return ['vectorization', [0]]
 
         return ['no_transformation', [0]]
 

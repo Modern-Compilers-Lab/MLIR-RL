@@ -4,7 +4,7 @@ load_dotenv(override=True)
 
 # Import modules
 from rl_autoschedular.env import ParallelEnv
-from rl_autoschedular.model import HiearchyModel as MyModel
+from rl_autoschedular.model import HiearchyModel as Model
 import torch
 from tqdm import tqdm
 from rl_autoschedular import config as cfg
@@ -42,18 +42,8 @@ print_info('Configuration:')
 print_info(cfg)
 
 # Set model
-L = cfg.max_num_loops
-D = cfg.max_num_load_store_dim
-SD = cfg.max_num_stores_loads
-input_dim = 1 + L + L * D * SD + L * D + 5 + L * 3 * cfg.truncate
-print_info('input_dim:', input_dim)
-
-model = MyModel(
-    input_dim=input_dim,
-    num_loops=cfg.max_num_loops,
-    num_tiles=cfg.num_tile_sizes,
-    num_transformations=cfg.num_transformations,
-)
+model = Model()
+print_info('input_dim:', model.input_dim)
 
 optimizer = torch.optim.Adam(
     model.parameters(),
