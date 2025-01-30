@@ -530,7 +530,7 @@ def apply_transformation_wrapper(state: OperationState, bench_features: Benchmar
     return_list.append(res)
 
 
-def apply_transformation_with_timeout(state: OperationState, bench_features: BenchmarkFeatures, code: str, transformation: str, parameters: list, timeout: Optional[float] = None, use_vectorizer: bool = False):
+def apply_transformation_with_timeout(state: OperationState, bench_features: BenchmarkFeatures, code: str, transformation: str, parameters: list, timeout: Optional[float] = None, use_vectorizer: bool = cfg.use_vectorizer):
     """Apply the specified transformation to the given code with a timeout.
 
     Args:

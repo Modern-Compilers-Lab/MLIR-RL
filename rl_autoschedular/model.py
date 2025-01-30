@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Categorical
-from typing import Optional
+from typing import Optional, Union
 from rl_autoschedular import config as cfg
 
 
@@ -15,12 +15,12 @@ class HiearchyModel(nn.Module):
         L = cfg.max_num_loops
         D = cfg.max_num_load_store_dim
         SD = cfg.max_num_stores_loads
-        self.input_dim = 1 + L + L * D * SD + L * D + 5 + L * 3 * cfg.truncate
+        self.input_dim = 1 + L + L * D * SD + L * D + 5 + 1 + L * 3 * cfg.truncate
         self.num_loops = L
         self.num_transformations = cfg.num_transformations
         self.num_tiles = cfg.num_tile_sizes
 
-        self.action_mask_size = self.num_transformations + self.num_loops + self.num_loops + 3 * self.num_loops - 6
+        self.action_mask_size = self.num_transformations + 3 * self.num_loops
 
         self.backbone = nn.Sequential(
             nn.Linear(self.input_dim, 512),
@@ -42,19 +42,19 @@ class HiearchyModel(nn.Module):
         )
 
         self.transformation_selection = nn.Linear(512, self.num_transformations)  # +1 for the stop operation
-        self.interchange_fc = nn.Linear(512, (3 * self.num_loops - 6))
+        self.interchange_fc = nn.Linear(512, self.num_loops)
         self.tiling_fc = nn.Linear(512, self.num_loops * (self.num_tiles + 1))  # +1 for the no tiling
         self.parall_fc = nn.Linear(512, self.num_loops * (self.num_tiles + 1))  # +1 for the no parallelizattion
 
-    def sample(self, obs: torch.Tensor, actions: Optional[list[tuple[str, list[int]]]] = None):
+    def sample(self, obs: torch.Tensor, actions: Optional[list[tuple[str, Optional[Union[list[int], int]]]]] = None) -> tuple[list[tuple[str, Optional[Union[list[int], int]]]], torch.Tensor, torch.Tensor, torch.Tensor]:
         """Sample an action from the model.
 
         Args:
             obs (torch.Tensor): The input tensor.
-            actions (Optional[list[tuple[str, list[int]]]]): list of actions forced for the model to return. Defaults to None.
+            actions (Optional[list[tuple[str, Optional[Union[list[int], int]]]]]): list of actions forced for the model to return. Defaults to None.
 
         Returns:
-            list[tuple[str, list[int]]]: list of actions.
+            Optional[list[tuple[str, Optional[Union[list[int], int]]]]]: list of actions.
             torch.Tensor: action log probabilities.
             torch.Tensor: action values.
             torch.Tensor: resulting entropy.
@@ -73,15 +73,13 @@ class HiearchyModel(nn.Module):
 
         TP_BEGIN = self.num_transformations
         T_BEGIN = TP_BEGIN + L
-        I_BEGIN_2C = T_BEGIN + L
-        # I_BEGIN_3C = I_BEGIN_2C + (L - 1)
-        # I_BEGIN_4C = I_BEGIN_3C + (L - 2)
+        I_BEGIN = T_BEGIN + L
 
         # Define the mask of each transformation
         transform_mask = action_mask[..., :self.num_transformations]
         TP_mask = action_mask[..., TP_BEGIN:T_BEGIN]
-        T_mask = action_mask[..., T_BEGIN:I_BEGIN_2C]
-        I_mask = action_mask[..., I_BEGIN_2C:]
+        T_mask = action_mask[..., T_BEGIN:I_BEGIN]
+        I_mask = action_mask[..., I_BEGIN:]
 
         # Model inference:
         x1 = self.backbone(x)
@@ -144,8 +142,8 @@ class HiearchyModel(nn.Module):
         tiling_log_p = F.log_softmax(tiling_logits, dim=-1).gather(-1, tiling_index.unsqueeze(-1)).reshape(*leading_dims, -1)
         parall_log_p = F.log_softmax(parall_logits, dim=-1).gather(-1, parall_index.unsqueeze(-1)).reshape(*leading_dims, -1)
 
-        tiling_log_p = torch.where(T_mask, tiling_log_p, 0).sum(-1, keepdim=True)
         parall_log_p = torch.where(TP_mask, parall_log_p, 0).sum(-1, keepdim=True)
+        tiling_log_p = torch.where(T_mask, tiling_log_p, 0).sum(-1, keepdim=True)
 
         actions = []
         for i in range(transformation_index.shape[0]):
