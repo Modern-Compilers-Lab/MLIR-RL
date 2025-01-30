@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 
 # Import modules
-from rl_autoschedular.env import ParallelEnv
+from rl_autoschedular.env import Env
 from rl_autoschedular.model import HiearchyModel as Model
 import torch
 from tqdm import tqdm
@@ -24,19 +24,17 @@ torch.set_grad_enabled(False)
 print_info('Finish imports')
 
 # Set environments
-env = ParallelEnv(
-    num_env=1,
+env = Env(
     reset_repeat=1,
     step_repeat=1
 )
-eval_env = ParallelEnv(
-    num_env=1,
+eval_env = Env(
     reset_repeat=1,
     step_repeat=1
 )
 print_info('Env build ...')
 # NOTE: using only one environment
-print_info(f'tmp_file = {env.envs[0].tmp_file}')
+print_info(f'tmp_file = {env.tmp_file}')
 
 # Print configuration
 print_info('Configuration:')
@@ -60,7 +58,7 @@ tqdm_range = tqdm(range(cfg.nb_iterations), desc='Main loop')
 for step in tqdm_range:
 
     trajectory = collect_trajectory(
-        cfg.len_trajectory,
+        10,
         model,
         env,
         device=device,

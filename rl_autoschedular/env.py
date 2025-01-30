@@ -6,7 +6,7 @@ from tqdm import tqdm
 import math
 import os
 import string
-from typing import Optional, Literal
+from typing import Optional, Literal, Union
 from rl_autoschedular import config as cfg
 from rl_autoschedular.state import OperationState, BenchmarkFeatures
 from rl_autoschedular.observation import (
@@ -170,7 +170,8 @@ class Env:
             root_exec_time=benchmark_data.exec_time,
             transformation_history=[],
             cummulative_reward=0,
-            tmp_file=self.tmp_file
+            tmp_file=self.tmp_file,
+            interchange_permutation=[],
         )
 
         obs = self.get_obs(state)
@@ -179,19 +180,19 @@ class Env:
 
         return state, obs
 
-    def step(self, state: OperationState, raw_action: tuple[str, list[int]]) -> tuple[np.ndarray, float, bool, OperationState, Optional[OperationState]]:
+    def step(self, state: OperationState, raw_action: tuple[str, Optional[Union[list[int], int]]]) -> tuple[torch.Tensor, float, bool, OperationState, Optional[OperationState]]:
         """Take a step in the environment.
 
         Args:
             state (OperationState): The current state of the environment.
-            raw_action (tuple[str, list[int]]): The raw action taken by the agent. The first element is the transformation name and the second element is the parameters.
+            raw_action (tuple[str, Optional[Union[list[int], int]]]): The raw action taken by the agent. The first element is the transformation name and the second element is the parameters.
 
         Returns:
-            np.ndarray: The observation vector of the next state.
+            torch.Tensor: The observation vector of the next state.
             float: The reward of the action.
             bool: Whether the episode is done.
             OperationState: The next state of the environment.
-            Optional[OperationState]: The final state of the environment if the episode is done.
+            Optional[OperationState]: The final state of the environment if the benchmark is done.
         """
 
         # The number of loops in the Linalg operations
@@ -211,80 +212,9 @@ class Env:
         print_success("PROCESSED:", transformation, parameters)
 
         reward = 0
-        if transformation not in ['no_transformation', 'vectorization']:
-            # Apply the transformation and get the new code
-            transformed_code = apply_transformation_with_timeout(
-                state=state,
-                bench_features=bench_data,
-                code=state.transformed_code,
-                transformation=transformation,
-                parameters=parameters,
-                timeout=20,
-                use_vectorizer=cfg.use_vectorizer
-            )
-
-            # SPECIAL CASE:
-            # If we are optimizing a convlution operation, then we can apply the Im2col transformation to turn the convolution
-            # into a matrix multiplicatoin.
-            if transformed_code and (transformation == 'img2col') and (state.operation_type == 'conv_2d'):
-
-                # Get the matmul operation that now represents the convlution and wrap it in a funciton wrapper
-                # to prepare it for the optimization in the next iterations
-
-                prints = get_ops_by_tags(transformed_code, [state.operation_tag], self.tmp_file)
-                raw_operation = list(prints.values())[0]
-
-                operation_features = extract_op_features_from_affine_code(raw_operation, self.tmp_file)
-
-                state = OperationState(
-                    bench_name=state.bench_name,
-                    operation_tag=state.operation_tag,
-                    operation_type='conv_2d+img2col',  # The operation type changes
-                    operation_features=operation_features,  # The loops changed because now we are optimization a mamtul instead of a convolution
-                    transformed_code=state.transformed_code,
-                    actions=state.actions,
-                    actions_mask=state.actions_mask,
-                    step_count=state.step_count + 1,
-                    exec_time=state.exec_time,
-                    root_exec_time=state.root_exec_time,
-                    transformation_history=state.transformation_history + [(transformation, parameters)],
-                    cummulative_reward=state.cummulative_reward,
-                    tmp_file=self.tmp_file
-                )
-
-        else:  # transformation == 'no_transformation' or 'vectorization'
-            # For convolution, before vectorization, we need to first apply another tiling in order to decompose it to 1d convolution
-            if (state.operation_type == 'conv_2d'):
-                if ('conv_2d_nhwc_hwcf' in state.operation_features.raw_operation):
-                    second_interchange_parameters = parameters.copy()
-                    second_interchange_parameters[1] = 1
-                    second_interchange_parameters[4] = 1
-                elif ('conv_2d_nchw_fchw' in state.operation_features.raw_operation):
-                    second_interchange_parameters = parameters.copy()
-                    second_interchange_parameters[2] = 1
-                    second_interchange_parameters[5] = 1
-                elif ('pooling' in state.operation_features.raw_operation):
-                    second_interchange_parameters = [0] * 6
-                    second_interchange_parameters[2] = 1
-                    second_interchange_parameters[4] = 1
-                state.transformed_code = apply_transformation_with_timeout(
-                    state=state,
-                    bench_features=bench_data,
-                    code=state.transformed_code,
-                    transformation='tiling',
-                    parameters=second_interchange_parameters,
-                    timeout=20,
-                    use_vectorizer=cfg.use_vectorizer
-                )
-
-                state.transformed_code = apply_conv2d_decomposition(state.transformed_code, state.operation_tag, self.tmp_file)
-
-            if state.operation_type == 'pooling':
-                # Force no transformation on pooling operations
-                transformation = 'no_transformation'
-                transformed_code = state.transformed_code
-            else:
-                # Otherwise apply the transformation and get the new code
+        match transformation:
+            case 'parallelization' | 'tiling' | 'img2col':
+                # Apply the transformation and get the new code
                 transformed_code = apply_transformation_with_timeout(
                     state=state,
                     bench_features=bench_data,
@@ -292,8 +222,100 @@ class Env:
                     transformation=transformation,
                     parameters=parameters,
                     timeout=20,
-                    use_vectorizer=cfg.use_vectorizer
                 )
+
+                # SPECIAL CASE:
+                # If we are optimizing a convlution operation, then we can apply the Im2col transformation to turn the convolution
+                # into a matrix multiplicatoin.
+                if transformed_code and (transformation == 'img2col') and (state.operation_type == 'conv_2d'):
+
+                    # Get the matmul operation that now represents the convlution and wrap it in a funciton wrapper
+                    # to prepare it for the optimization in the next iterations
+
+                    prints = get_ops_by_tags(transformed_code, [state.operation_tag], self.tmp_file)
+                    raw_operation = list(prints.values())[0]
+
+                    operation_features = extract_op_features_from_affine_code(raw_operation, self.tmp_file)
+
+                    state = OperationState(
+                        bench_name=state.bench_name,
+                        operation_tag=state.operation_tag,
+                        operation_type='conv_2d+img2col',  # The operation type changes
+                        operation_features=operation_features,  # The loops changed because now we are optimzing a mamtul instead of a convolution
+                        transformed_code=state.transformed_code,
+                        actions=state.actions,
+                        actions_mask=state.actions_mask,
+                        step_count=state.step_count + 1,  # Incremented step count
+                        exec_time=state.exec_time,
+                        root_exec_time=state.root_exec_time,
+                        transformation_history=state.transformation_history + [(transformation, parameters)],  # Updated transformation history
+                        cummulative_reward=state.cummulative_reward,
+                        tmp_file=self.tmp_file,
+                        interchange_permutation=state.interchange_permutation,
+                    )
+
+            case 'interchange':
+                if len(parameters) == num_loops:
+                    # We apply interchange only when the permutation is complete
+                    transformed_code = apply_transformation_with_timeout(
+                        state=state,
+                        bench_features=bench_data,
+                        code=state.transformed_code,
+                        transformation=transformation,
+                        parameters=parameters,
+                        timeout=20,
+                    )
+                    next_interchange_permutation = []
+                    should_step_up = True
+                else:
+                    # We keep the same code as previously if the permutation is not complete
+                    transformed_code = state.transformed_code
+                    next_interchange_permutation = parameters
+                    should_step_up = False
+
+            case 'no_transformation' | 'vectorization':
+                # For convolution, before vectorization, we need to first apply another tiling in order to decompose it to 1d convolution
+                if (state.operation_type == 'conv_2d'):
+                    if ('conv_2d_nhwc_hwcf' in state.operation_features.raw_operation):
+                        second_interchange_parameters = parameters.copy()
+                        second_interchange_parameters[1] = 1
+                        second_interchange_parameters[4] = 1
+                    elif ('conv_2d_nchw_fchw' in state.operation_features.raw_operation):
+                        second_interchange_parameters = parameters.copy()
+                        second_interchange_parameters[2] = 1
+                        second_interchange_parameters[5] = 1
+                    elif ('pooling' in state.operation_features.raw_operation):
+                        second_interchange_parameters = [0] * 6
+                        second_interchange_parameters[2] = 1
+                        second_interchange_parameters[4] = 1
+                    state.transformed_code = apply_transformation_with_timeout(
+                        state=state,
+                        bench_features=bench_data,
+                        code=state.transformed_code,
+                        transformation='tiling',
+                        parameters=second_interchange_parameters,
+                        timeout=20,
+                    )
+
+                    state.transformed_code = apply_conv2d_decomposition(state.transformed_code, state.operation_tag, self.tmp_file)
+
+                if state.operation_type == 'pooling':
+                    # Force no transformation on pooling operations
+                    transformation = 'no_transformation'
+                    transformed_code = state.transformed_code
+                else:
+                    # Otherwise apply the transformation and get the new code
+                    transformed_code = apply_transformation_with_timeout(
+                        state=state,
+                        bench_features=bench_data,
+                        code=state.transformed_code,
+                        transformation=transformation,
+                        parameters=parameters,
+                        timeout=20,
+                    )
+
+            case _:
+                raise ValueError(f"Invalid transformation: {transformation}")
 
         trans_failed = not transformed_code  # This indicatesthat that the transformation failed or timed out
         if trans_failed:
@@ -307,7 +329,7 @@ class Env:
         next_state_actions = self.update_action_history(state, transformation, parameters)
 
         # Update action mask:
-        new_actions_mask = self.update_action_mask(state, transformation, num_loops)
+        new_actions_mask = self.update_action_mask(state, transformation, num_loops, parameters)
 
         next_state = OperationState(
             bench_name=state.bench_name,
@@ -315,23 +337,27 @@ class Env:
             operation_type=state.operation_type,
             operation_features=state.operation_features,
             transformed_code=transformed_code,  # New transformed code
-            actions=next_state_actions,  # New actions
+            actions=next_state_actions,  # New actions history
             actions_mask=new_actions_mask,  # New action mask
-            step_count=state.step_count + 1,
-            exec_time=state.exec_time,  # New execution time
+            step_count=state.step_count if transformation == 'interchange' and not should_step_up else state.step_count + 1,  # New step count
+            exec_time=state.exec_time,
             root_exec_time=state.root_exec_time,
-            transformation_history=state.transformation_history + [(transformation, parameters)],
+            transformation_history=state.transformation_history if transformation == 'interchange' and not should_step_up else state.transformation_history + [(transformation, parameters)],  # New transformation history
             cummulative_reward=state.cummulative_reward,
-            tmp_file=self.tmp_file
+            tmp_file=self.tmp_file,
+            interchange_permutation=next_interchange_permutation if transformation == 'interchange' else state.interchange_permutation,  # New interchange permutation
         )
 
         # Done == True if:
         #   We surpass the maximum number of steps (size of the schedule)
-        #   Vectorization indicating the end of the schedule
+        #   Vectorization or No transformation is applied
         #   Error occured in the transformation
         done = (next_state.step_count >= cfg.truncate) or \
             (transformation in ['vectorization', 'no_transformation']) or \
             (trans_failed)
+
+        # A flag to indicate if we should reset the environment
+        # useful when an operation is done, but the benchmark is not
         should_reset_if_done = True
 
         if done:
@@ -358,7 +384,7 @@ class Env:
             if cfg.optimization_mode == "all":
                 op_index = bench_data.operation_tags.index(next_state.operation_tag)
                 if op_index > 0:
-                    # Indicates that the trajectory isn't over yet, so don't reset
+                    # Benchmark is not done yet
                     should_reset_if_done = False
 
                     speedup_metric = next_state.root_exec_time / next_state.exec_time
@@ -392,7 +418,8 @@ class Env:
                         root_exec_time=next_state.exec_time,
                         transformation_history=[],
                         cummulative_reward=next_state.cummulative_reward,
-                        tmp_file=self.tmp_file
+                        tmp_file=self.tmp_file,
+                        interchange_permutation=[],
                     )
 
         next_state.cummulative_reward += reward
@@ -436,11 +463,13 @@ class Env:
             operation_type_int = 4
 
         operation_type_int_arr = np.array([operation_type_int])
+        interchange_loop_level_arr = np.array([len(state.interchange_permutation)])
 
         obs = np.concatenate((
             # The input of the policy network:
             operation_type_int_arr,  # 1
             op_features_vector,      # MAX_NUM_LOOPS + MAX_NUM_LOOPS*MAX_NUM_LOAD_STORE_DIM*MAX_NUM_STORES_LOADS + MAX_NUM_LOOPS*MAX_NUM_LOAD_STORE_DIM + 5
+            interchange_loop_level_arr,  # 1
             action_history,  # MAX_NUM_LOOPS*3*CONFIG["truncate"]
 
             # The action mask:
@@ -456,14 +485,11 @@ class Env:
         """Initialize the action mask for a specified number of loops and operation type.
 
         Notes:
-            Action mask (NUM_TRANSFORMATIONS + L + L + (L-1) + (L-2) + (L-3) ):
+            Action mask (NUM_TRANSFORMATIONS + L + L + L ):
                 Transformations: no_transform, TP, T, Interchange, vect, img2col
                 TP: L loops
                 T : L loops
-                Interchange: 2-consecutive interchanges: L - 1
-                        : 3-consecutive interchanges: L - 2
-                        : 4-consecutive interchanges: L - 3
-                Interchange: 3L - 6
+                I: L loops
 
             action_mask[:NUM_TRANSFORMATIONS] = [no_transform, TP, T, I, vect, img2col]
 
@@ -478,34 +504,32 @@ class Env:
 
         TP_BEGIN = cfg.num_transformations
         T_BEGIN = TP_BEGIN + L
-        I_BEGIN_2C = T_BEGIN + L
-        I_BEGIN_3C = I_BEGIN_2C + (L - 1)
-        I_BEGIN_4C = I_BEGIN_3C + (L - 2)
+        I_BEGIN = T_BEGIN + L
 
-        action_mask = np.ones((TP_BEGIN + L + L + 3 * L - 6), dtype=np.bool_)
+        action_mask = np.ones((TP_BEGIN + 3 * L), dtype=np.bool_)
         if operation_type == 'conv_2d':
             action_mask[:TP_BEGIN] = [False, False, False, False, False, True]
         else:
-            action_mask[:TP_BEGIN] = [False, True, False, False, False, False]
-            # action_mask[:5] = [False, True, True, True, False, False]
+            # action_mask[:TP_BEGIN] = [False, True, False, False, False, False]
+            action_mask[:TP_BEGIN] = [False, True, True, True, False, False]
         action_mask[TP_BEGIN + num_loops:T_BEGIN] = False
-        action_mask[T_BEGIN + num_loops:I_BEGIN_2C] = False
-        action_mask[I_BEGIN_2C + num_loops - 1:I_BEGIN_3C] = False
-        action_mask[I_BEGIN_3C + num_loops - 2:I_BEGIN_4C] = False
-        action_mask[I_BEGIN_4C + num_loops - 3:] = False
+        action_mask[T_BEGIN + num_loops:I_BEGIN] = False
 
         if num_loops == 1:
+            # If we have only one loop -> Cancel the interchange
             action_mask[3] = False
-            action_mask[I_BEGIN_2C] = True
+            action_mask[I_BEGIN:] = False
+        else:
+            action_mask[I_BEGIN + num_loops:] = False
 
         return action_mask
 
-    def update_action_mask(self, state: OperationState, transformation: str, num_loops: int):
+    def update_action_mask(self, state: OperationState, transformation: str, num_loops: int, parameters: list[int]):
         """Update the action mask based on the transformation applied.
 
         Notes:
             actions_mask: (NUM_TRANSFORMATIONS + L + L + (L-1) + (L-2) + (L-3) )
-            action_mask[:NUM_TRANSFORMATIONS] = [end, TP, T, I, Img2Col]
+            action_mask[:NUM_TRANSFORMATIONS] = [no_transform, TP, T, I, vect, img2col]
 
         Args:
             state (OperationState): The current state of the environment.
@@ -520,49 +544,54 @@ class Env:
 
         TP_BEGIN = cfg.num_transformations
         T_BEGIN = TP_BEGIN + L
-        I_BEGIN_2C = T_BEGIN + L
+        I_BEGIN = T_BEGIN + L
         # I_BEGIN_3C = I_BEGIN_2C + (L-1)
         # I_BEGIN_4C = I_BEGIN_3C + (L-2)
 
         actions_mask = state.actions_mask
 
-        if transformation == 'img2col':
-            actions_mask[:TP_BEGIN] = [False, True, False, False, False, False]
-
-        if state.operation_type == "pooling" or state.operation_type == "conv_2d":
-            if transformation == 'parallelization':
-                actions_mask[:TP_BEGIN] = [True, False, False, False, True, False]
-            if transformation == 'tiling':
-                actions_mask[:TP_BEGIN] = [True, False, False, False, True, False]
-
-        elif state.operation_type == "conv_2d+img2col":
-            if transformation == 'parallelization':
-                actions_mask[:TP_BEGIN] = [True, False, False, False, True, False]
-
-        elif state.operation_type == "matmul" or state.operation_type == "add":
-            if transformation == 'parallelization':
-                actions_mask[:TP_BEGIN] = [True, False, False, False, True, False]
-            if transformation == 'tiling':
-                actions_mask[:TP_BEGIN] = [True, False, True, True, True, False]
-            if transformation == 'interchange':
-                actions_mask[:TP_BEGIN] = [True, False, False, True, True, False]
-
-        elif state.operation_type == "generic":
-            if transformation == 'parallelization':
-                actions_mask[:TP_BEGIN] = [True, False, False, False, True, False]
-            if transformation == 'interchange':
-                # NOTE: actions_mask[:NUM_TRANSFORMATIONS] = [True, False, True, True, True, False]
-                actions_mask[:TP_BEGIN] = [True, True, True, True, True, False]
-            if transformation == 'tiling':
-                # NOTE: actions_mask[:NUM_TRANSFORMATIONS] = [True, False, False, False, True, False]
-                actions_mask[:TP_BEGIN] = [True, True, True, True, True, False]
-
+        if transformation == 'interchange' and len(parameters) > 0 and len(parameters) < num_loops:
+            # We're still in the middle of the interchange
+            #  -> mask all other transformations and mask the already selected loops
+            actions_mask[:TP_BEGIN] = [False, False, False, True, False, False]
+            for param in parameters:
+                actions_mask[I_BEGIN + param] = False
         else:
-            raise ValueError("operation_type must be in [pooling, conv_2d, conv_2d+img2col, matmul, add, generic]")
+            actions_mask[I_BEGIN:I_BEGIN + num_loops] = True  # Unmask all loops for interchange
 
-        if num_loops == 1:
-            actions_mask[3] = False
-            actions_mask[I_BEGIN_2C] = True
+            if transformation == 'img2col':
+                actions_mask[:TP_BEGIN] = [False, True, False, False, False, False]
+
+            if state.operation_type == "pooling" or state.operation_type == "conv_2d":
+                if transformation == 'parallelization':
+                    actions_mask[:TP_BEGIN] = [True, False, False, False, True, False]
+                if transformation == 'tiling':
+                    actions_mask[:TP_BEGIN] = [True, False, False, False, True, False]
+
+            elif state.operation_type == "conv_2d+img2col":
+                if transformation == 'parallelization':
+                    actions_mask[:TP_BEGIN] = [True, False, False, False, True, False]
+
+            elif state.operation_type == "matmul" or state.operation_type == "add":
+                if transformation == 'parallelization':
+                    actions_mask[:TP_BEGIN] = [True, False, False, False, True, False]
+                if transformation == 'tiling':
+                    actions_mask[:TP_BEGIN] = [True, False, True, True, True, False]
+                if transformation == 'interchange':
+                    actions_mask[:TP_BEGIN] = [True, False, False, True, True, False]
+
+            elif state.operation_type == "generic":
+                if transformation == 'parallelization':
+                    actions_mask[:TP_BEGIN] = [True, False, False, False, True, False]
+                if transformation == 'interchange':
+                    # NOTE: actions_mask[:NUM_TRANSFORMATIONS] = [True, False, True, True, True, False]
+                    actions_mask[:TP_BEGIN] = [True, True, True, True, True, False]
+                if transformation == 'tiling':
+                    # NOTE: actions_mask[:NUM_TRANSFORMATIONS] = [True, False, False, False, True, False]
+                    actions_mask[:TP_BEGIN] = [True, True, True, True, True, False]
+
+            else:
+                raise ValueError("operation_type must be in [pooling, conv_2d, conv_2d+img2col, matmul, add, generic]")
 
         return actions_mask
 
@@ -581,17 +610,20 @@ class Env:
         # parallelization, tiling, interchange
 
         num_loops = len(state.operation_features.nested_loops)
+        if len(parameters) < num_loops or transformation in ['no_transformation', 'vectorization', 'img2col']:
+            return state.actions
         actions = state.actions
         assert state.step_count < state.actions.shape[2]
 
         # actions[l, t, s] = the parameters of transformation `t` for loop `l` at step `s`
+        transformation_indices = {
+            'parallelization': 0,
+            'tiling': 1,
+            'interchange': 2
+        }
+        transformation_index = transformation_indices[transformation]
         for loop_index in range(num_loops):
-            if transformation == 'parallelization':
-                actions[loop_index, 0, state.step_count] = parameters[loop_index]
-            elif transformation == 'tiling':
-                actions[loop_index, 1, state.step_count] = parameters[loop_index]
-            elif transformation == 'interchange':
-                actions[loop_index, 2, state.step_count] = parameters[loop_index]
+            actions[loop_index, transformation_index, state.step_count] = parameters[loop_index]
 
         return actions
 
@@ -681,7 +713,7 @@ class Env:
                 return parameters
         return None
 
-    def process_action(self, raw_action: tuple[str, list[int]], state: OperationState):
+    def process_action(self, raw_action: tuple[str, Optional[Union[list[int], int]]], state: OperationState) -> tuple[str, list[int]]:
         """Get the (transformation, parameters) from the `raw_action`.
 
         Args:
@@ -704,10 +736,10 @@ class Env:
             ]
 
         if action_name == 'interchange':
-            candidates = self.get_interchange_actions(num_loops)
-            parameters = candidates[parameter]
-            assert len(parameters) == num_loops
-            return ['interchange', list(parameters)]
+            assert parameter not in state.interchange_permutation
+            assert len(state.interchange_permutation) < num_loops
+
+            return ['interchange', state.interchange_permutation + [parameter]]
 
         elif action_name == 'img2col':
             return ['img2col', [0]]
@@ -771,73 +803,73 @@ class Env:
         return reward
 
 
-class ParallelEnv:
-    """Parallel environment for training the reinforcement learning agent."""
+# class ParallelEnv:
+#     """Parallel environment for training the reinforcement learning agent."""
 
-    num_env: int
-    """number of environments."""
-    envs: list[Env]
-    """list of environments."""
+#     num_env: int
+#     """number of environments."""
+#     envs: list[Env]
+#     """list of environments."""
 
-    def __init__(self, num_env: int = 1, reset_repeat: int = 1, step_repeat: int = 1):
-        """Initialize parallel environments.
+#     def __init__(self, num_env: int = 1, reset_repeat: int = 1, step_repeat: int = 1):
+#         """Initialize parallel environments.
 
-        Args:
-            num_env (int): number of environments. Defaults to 1.
-            reset_repeat (int): The number of times to repeat the reset function. Defaults to 1.
-            step_repeat (int): The number of times to repeat the step function. Defaults to 1.
-        """
-        self.num_env = num_env
-        self.envs = [
-            Env(
-                reset_repeat=reset_repeat,
-                step_repeat=step_repeat
-            ) for i in range(num_env)
-        ]
+#         Args:
+#             num_env (int): number of environments. Defaults to 1.
+#             reset_repeat (int): The number of times to repeat the reset function. Defaults to 1.
+#             step_repeat (int): The number of times to repeat the step function. Defaults to 1.
+#         """
+#         self.num_env = num_env
+#         self.envs = [
+#             Env(
+#                 reset_repeat=reset_repeat,
+#                 step_repeat=step_repeat
+#             ) for i in range(num_env)
+#         ]
 
-    def reset(self, idx: Optional[int] = None):
-        """Reset the environments.
+#     def reset(self, idx: Optional[int] = None):
+#         """Reset the environments.
 
-        Args:
-            idx (Optional[int]): The index of the benchmark to set the environement to. If None, a random benchmark is selected. Defaults to None.
+#         Args:
+#             idx (Optional[int]): The index of the benchmark to set the environement to. If None, a random benchmark is selected. Defaults to None.
 
-        Returns:
-            list[OperationState]: The initial states of the environments.
-        """
-        states: list[OperationState] = []
-        observations: list[torch.Tensor] = []
-        for i in range(self.num_env):
-            state, obs = self.envs[i].reset(idx=idx)
-            states.append(state)
-            observations.append(obs)
-        return states, observations
+#         Returns:
+#             list[OperationState]: The initial states of the environments.
+#         """
+#         states: list[OperationState] = []
+#         observations: list[torch.Tensor] = []
+#         for i in range(self.num_env):
+#             state, obs = self.envs[i].reset(idx=idx)
+#             states.append(state)
+#             observations.append(obs)
+#         return states, observations
 
-    def step(self, states: list[OperationState], actions: list[tuple[str, list[int]]]) -> tuple[list[np.ndarray], list[float], list[bool], list[OperationState], list[Optional[OperationState]]]:
-        """Take a step in the environments.
+#     def step(self, states: list[OperationState], actions: list[tuple[str, Optional[Union[list[int], int]]]]) -> tuple[list[np.ndarray], list[float], list[bool], list[OperationState], list[Optional[OperationState]]]:
+#         """Take a step in the environments.
 
-        Args:
-            states (list[OperationState]): The current states of the environments.
-            actions (list[tuple[str, list[int]]]): The raw actions taken by the agents.
+#         Args:
+#             states (list[OperationState]): The current states of the environments.
+#             actions (list[tuple[str, Optional[Union[list[int], int]]]]): The raw actions taken by the agents.
 
-        Returns:
-            list[np.ndarray]: The observation vectors of the next states.
-            list[float]: The rewards of the actions.
-            list[bool]: Whether the episodes are done.
-            list[OperationState]: The next states of the environments.
-            list[Optional[OperationState]]: The final states of the environments if the episodes are done.
-        """
-        batch_next_obs: list[torch.Tensor] = []
-        batch_reward: list[float] = []
-        batch_done: list[bool] = []
-        batch_next_state: list[OperationState] = []
-        batch_final_state: list[Optional[OperationState]] = []
+#         Returns:
+#             list[np.ndarray]: The observation vectors of the next states.
+#             list[float]: The rewards of the actions.
+#             list[bool]: Whether the episodes are done.
+#             list[OperationState]: The next states of the environments.
+#             list[Optional[OperationState]]: The final states of the environments if the episodes are done.
+#         """
+#         batch_next_obs: list[torch.Tensor] = []
+#         batch_reward: list[float] = []
+#         batch_done: list[bool] = []
+#         batch_next_state: list[OperationState] = []
+#         batch_final_state: list[Optional[OperationState]] = []
 
-        for i, (state, action) in enumerate(zip(states, actions)):
-            next_obs, reward, done, next_state, final_state = self.envs[i].step(state, action)
-            batch_next_obs.append(next_obs)
-            batch_reward.append(reward)
-            batch_done.append(done)
-            batch_next_state.append(next_state)
-            batch_final_state.append(final_state)
+#         for i, (state, action) in enumerate(zip(states, actions)):
+#             next_obs, reward, done, next_state, final_state = self.envs[i].step(state, action)
+#             batch_next_obs.append(next_obs)
+#             batch_reward.append(reward)
+#             batch_done.append(done)
+#             batch_next_state.append(next_state)
+#             batch_final_state.append(final_state)
 
-        return batch_next_obs, batch_reward, batch_done, batch_next_state, batch_final_state
+#         return batch_next_obs, batch_reward, batch_done, batch_next_state, batch_final_state

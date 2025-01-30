@@ -1,11 +1,12 @@
 import torch
 import neptune
-from typing import Optional
-from rl_autoschedular.env import ParallelEnv
+from typing import Optional, Union
+from rl_autoschedular.env import Env
 from rl_autoschedular.model import HiearchyModel as Model
 from rl_autoschedular.state import OperationState
 from rl_autoschedular import config as cfg
 from dataclasses import dataclass
+from utils.log import print_info
 
 
 @dataclass
@@ -29,13 +30,13 @@ class Trajectory:
     """Done flags in the trajectory."""
 
 
-def collect_trajectory(len_trajectory: int, model: Model, env: ParallelEnv, device: torch.device = torch.device('cpu'), neptune_logs: Optional[neptune.Run] = None):
+def collect_trajectory(batch_count: int, model: Model, env: Env, device: torch.device = torch.device('cpu'), neptune_logs: Optional[neptune.Run] = None):
     """Collect a trajectory using the model and the environment.
 
     Args:
-        len_trajectory (int): The length of the trajectory.
+        batch_count (int): The number of batches to collect.
         model (MyModel): The model to use.
-        env (ParallelEnv): The environment to use.
+        env (Env): The environment to use.
         device (torch.device): The device to use. Defaults to torch.device('cpu').
         neptune_logs (Optional[neptune.Run]): The neptune run to log to if any. Defaults to None.
 
@@ -44,10 +45,10 @@ def collect_trajectory(len_trajectory: int, model: Model, env: ParallelEnv, devi
     """
 
     batch_state, batch_obs = env.reset()
-    batch_obs = [obs.to(device) for obs in batch_obs]
+    batch_obs = batch_obs.to(device)
 
     stored_state: list[OperationState] = []
-    stored_action_index: list[tuple[str, list[int]]] = []
+    stored_action_index: list[tuple[str, Optional[Union[list[int], int]]]] = []
     stored_value: list[torch.Tensor] = []
     stored_action_log_p: list[torch.Tensor] = []
     stored_x: list[torch.Tensor] = []
@@ -55,59 +56,52 @@ def collect_trajectory(len_trajectory: int, model: Model, env: ParallelEnv, devi
     stored_done: list[torch.Tensor] = []
 
     # for i in tqdm(range(len_trajectory)):
-    for i in range(len_trajectory):
+    for i in range(batch_count):
+        print_info(f'Batch {i + 1}/{batch_count}')
+        batch_terminated = False
+        while not batch_terminated:
+            x = batch_obs
+            # with torch.no_grad():
+            action_index, action_log_p, values, entropy = model.sample(x)
+            new_action_index, new_action_log_p, new_values, new_entropy = model.sample(x, actions=action_index)
+            assert (action_index == new_action_index), 'check the get_p yerham babak'
+            assert (action_log_p == new_action_log_p).all(), 'check the get_p yerham babak'
+            assert (values == new_values).all(), 'check the get_p yerham babak'
+            assert (entropy == new_entropy).all(), 'check the get_p yerham babak'
 
-        x = torch.cat(batch_obs)
-        # with torch.no_grad():
-        action_index, action_log_p, values, entropy = model.sample(x)
-        new_action_index, new_action_log_p, new_values, new_entropy = model.sample(x, actions=action_index)
-        assert (action_index == new_action_index), 'check the get_p yerham babak'
-        assert (new_action_log_p == action_log_p).all(), 'check the get_p yerham babak'
-        assert (values == new_values).all(), 'check the get_p yerham babak'
-        assert (entropy == new_entropy).all(), 'check the get_p yerham babak'
+            assert len(action_index) == 1
+            batch_next_obs, batch_reward, batch_terminated, batch_next_state, batch_final_state = env.step(batch_state, action_index[0])
 
-        batch_next_obs, batch_reward, batch_terminated, batch_next_state, batch_final_state = env.step(batch_state, action_index)
+            stored_action_index += action_index
 
-        stored_action_index += action_index
+            stored_state.append(batch_state)
+            stored_value.append(values)
+            stored_action_log_p.append(action_log_p)
+            stored_x.append(x)
+            stored_reward.append(torch.tensor(batch_reward).unsqueeze(0))
+            stored_done.append(torch.tensor(batch_terminated).unsqueeze(0))
 
-        # NOTE: Only using one environment
-        stored_state.append(batch_state[0])
-        stored_value.append(values)
-        stored_action_log_p.append(action_log_p)
-        stored_x.append(x)
-        stored_reward.append(torch.tensor(batch_reward).unsqueeze(0))
-        stored_done.append(torch.tensor(batch_terminated).unsqueeze(0))
-
-        # print(batch_next_state[0].actions)
-
-        for i in range(env.num_env):
-            done = batch_terminated[i]
-            reward = batch_reward[i]
-            final_state = batch_final_state[i]
-            # print(done)
-            if done and final_state is not None:
-                speedup_metric = final_state.root_exec_time / final_state.exec_time
+            if batch_terminated and batch_final_state is not None:
+                speedup_metric = batch_final_state.root_exec_time / batch_final_state.exec_time
                 print('-' * 70)
-                print(f"Bench: {final_state.bench_name}")
-                print(final_state.transformation_history)
-                print('reward:', reward)
-                print('cummulative_reward:', final_state.cummulative_reward)
+                print(f"Bench: {batch_final_state.bench_name}")
+                print(batch_final_state.transformation_history)
+                print('reward:', batch_reward)
+                print('cummulative_reward:', batch_final_state.cummulative_reward)
                 print('Speedup:', speedup_metric)
-                print('Old Exec time:', final_state.root_exec_time * 10**-9, 's')
-                print('New Exec time:', final_state.exec_time * 10**-9, 's')
+                print('Old Exec time:', batch_final_state.root_exec_time * 10**-9, 's')
+                print('New Exec time:', batch_final_state.exec_time * 10**-9, 's')
                 print('-' * 70)
                 if neptune_logs is not None:
                     neptune_logs['train/final_speedup'].append(speedup_metric)
-                    neptune_logs['train/cummulative_reward'].append(final_state.cummulative_reward)
-                    neptune_logs[f'train/{final_state.bench_name}_speedup'].append(speedup_metric)
+                    neptune_logs['train/cummulative_reward'].append(batch_final_state.cummulative_reward)
+                    neptune_logs[f'train/{batch_final_state.bench_name}_speedup'].append(speedup_metric)
 
-                # running_return_stats.add(final_state.raw_operation, speedup_metric)
-
-        batch_state = batch_next_state
-        batch_obs = batch_next_obs
+            batch_state = batch_next_state
+            batch_obs = batch_next_obs
 
     # with torch.no_grad():
-    x = torch.cat(batch_obs)
+    x = batch_obs
     _, _, next_value, _ = model.sample(x)
 
     stored_value_tensor = torch.concatenate(stored_value)
@@ -384,18 +378,18 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
     return acc_loss / loss_i
 
 
-def evaluate_benchmark(model: Model, env: ParallelEnv, device: torch.device = torch.device('cpu'), neptune_logs: Optional[neptune.Run] = None):
+def evaluate_benchmark(model: Model, env: Env, device: torch.device = torch.device('cpu'), neptune_logs: Optional[neptune.Run] = None):
     """Evaluate the benchmark using the model.
 
     Args:
         model (Model): The model to use.
-        env (ParallelEnv): The environment to use.
+        env (Env): The environment to use.
         device (torch.device): The device to use. Defaults to torch.device('cpu').
         neptune_logs (Optional[neptune.Run]): The neptune run to log to if any. Defaults to None.
     """
     # NOTE: Only using one environment
     speedup_values: list[float] = []
-    for i, (bench_name, benchmark_data) in enumerate(env.envs[0].benchmarks_data):
+    for i, (bench_name, benchmark_data) in enumerate(env.benchmarks_data):
         if cfg.data_format == 'mlir':
             print(f'Benchmark ({i}):', bench_name)
         else:
@@ -404,7 +398,7 @@ def evaluate_benchmark(model: Model, env: ParallelEnv, device: torch.device = to
 
         # Reset the environement with the specific operation
         state, obs = env.reset(i)
-        obs = torch.cat(obs).to(device)
+        obs = obs.to(device)
 
         while True:
 
@@ -413,11 +407,10 @@ def evaluate_benchmark(model: Model, env: ParallelEnv, device: torch.device = to
             action, _, _, _ = model.sample(obs)
 
             # Apply the action and get the next state
-            next_obs, reward, terminated, next_state, final_state = env.step(state, action)
+            assert len(action) == 1
+            next_obs, _, terminated, next_state, final_state = env.step(state, action[0])
 
-            done = terminated[0]
-            final_state = final_state[0]
-            if done and final_state is not None:
+            if terminated and final_state is not None:
                 speedup_metric = final_state.root_exec_time / final_state.exec_time
                 print('Operation:', final_state.operation_features.raw_operation)
                 print('Base execution time:', final_state.root_exec_time, 's')
@@ -432,7 +425,7 @@ def evaluate_benchmark(model: Model, env: ParallelEnv, device: torch.device = to
                 break
 
             state = next_state
-            obs = torch.cat(next_obs).to(device)
+            obs = next_obs.to(device)
 
         print('\n\n\n')
 
