@@ -58,13 +58,13 @@ def collect_trajectory(len_trajectory: int, model: Model, env: ParallelEnv, devi
     for i in range(len_trajectory):
 
         x = torch.cat(batch_obs)
-        with torch.no_grad():
-            action_index, action_log_p, values, entropy = model.sample(x)
-            new_action_index, new_action_log_p, new_values, new_entropy = model.sample(x, actions=action_index)
-            assert (action_index == new_action_index), 'check the get_p yerham babak'
-            assert (new_action_log_p == action_log_p).all(), 'check the get_p yerham babak'
-            assert (values == new_values).all(), 'check the get_p yerham babak'
-            assert (entropy == new_entropy).all(), 'check the get_p yerham babak'
+        # with torch.no_grad():
+        action_index, action_log_p, values, entropy = model.sample(x)
+        new_action_index, new_action_log_p, new_values, new_entropy = model.sample(x, actions=action_index)
+        assert (action_index == new_action_index), 'check the get_p yerham babak'
+        assert (new_action_log_p == action_log_p).all(), 'check the get_p yerham babak'
+        assert (values == new_values).all(), 'check the get_p yerham babak'
+        assert (entropy == new_entropy).all(), 'check the get_p yerham babak'
 
         batch_next_obs, batch_reward, batch_terminated, batch_next_state, batch_final_state = env.step(batch_state, action_index)
 
@@ -106,9 +106,9 @@ def collect_trajectory(len_trajectory: int, model: Model, env: ParallelEnv, devi
         batch_state = batch_next_state
         batch_obs = batch_next_obs
 
-    with torch.no_grad():
-        x = torch.cat(batch_obs)
-        _, _, next_value, _ = model.sample(x)
+    # with torch.no_grad():
+    x = torch.cat(batch_obs)
+    _, _, next_value, _ = model.sample(x)
 
     stored_value_tensor = torch.concatenate(stored_value)
     stored_action_log_p_tensor = torch.concatenate(stored_action_log_p)
@@ -177,14 +177,14 @@ def shuffle_trajectory(trajectory: Trajectory):
     return trajectory
 
 
-def shuffle_ppo_data(stored_action_index: list[tuple[str, list[int]]], stored_action_log_p: torch.Tensor, stored_x: torch.Tensor, advantage: torch.Tensor, returns: torch.Tensor):
+def shuffle_ppo_data(stored_action_index: list[tuple[str, list[int]]], stored_action_log_p: torch.Tensor, stored_x: torch.Tensor, advantages: torch.Tensor, returns: torch.Tensor):
     """Shuffle the PPO data.
 
     Args:
         stored_action_index (list[tuple[str, list[int]]]): stored action index.
         stored_action_log_p (torch.Tensor): stored action log probabilities.
         stored_x (torch.Tensor): stored observation vectors.
-        advantage (torch.Tensor): stored advantages.
+        advantages (torch.Tensor): stored advantages.
         returns (torch.Tensor): stored returns.
 
     Returns:
@@ -200,10 +200,10 @@ def shuffle_ppo_data(stored_action_index: list[tuple[str, list[int]]], stored_ac
     stored_action_index = [stored_action_index[i] for i in permutation]
     stored_action_log_p = stored_action_log_p[permutation]
     stored_x = stored_x[permutation]
-    advantage = advantage[permutation]
+    advantages = advantages[permutation]
     returns = returns[permutation]
 
-    return stored_action_index, stored_action_log_p, stored_x, advantage, returns
+    return stored_action_index, stored_action_log_p, stored_x, advantages, returns
 
 
 def compute_gae(done: torch.Tensor, rewards: torch.Tensor, values: torch.Tensor, next_values: torch.Tensor, gamma: float = 0.99, lambda_: float = 0.95):
@@ -282,7 +282,7 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
         stored_reward = stored_reward.reshape(-1).detach()
         stored_done = stored_done.reshape(-1).detach()
 
-        advantage, returns = compute_gae(stored_done, stored_reward, stored_value, stored_next_value)
+        advantages, returns = compute_gae(stored_done, stored_reward, stored_value, stored_next_value)
 
         # if epoch == 0:
         #     for i in range(len(returns)):
@@ -293,7 +293,7 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
         #     if returns[i] != 0:
         #         returns[i] = returns[i] / running_return_stats.std(stored_state[i].raw_operation)
 
-        stored_action_index, stored_action_log_p, stored_x, stored_advantage, stored_returns = shuffle_ppo_data(stored_action_index, stored_action_log_p, stored_x, advantage, returns)
+        stored_action_index, stored_action_log_p, stored_x, stored_advantages, stored_returns = shuffle_ppo_data(stored_action_index, stored_action_log_p, stored_x, advantages, returns)
 
         acc_loss = 0
         for i in range(len_trajectory // ppo_batch_size):
@@ -302,30 +302,65 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
 
             action_index = stored_action_index[begin:end]
             action_log_p = stored_action_log_p[begin:end].to(device)
-            advantage = stored_advantage[begin:end].to(device)
+            advantages = stored_advantages[begin:end].to(device)
             returns = stored_returns[begin:end].to(device)
             x = stored_x[begin:end].to(device)
 
-            # New predicition:
-            new_action_index, new_action_log_p, new_values, entropy = model.sample(x, actions=action_index)
+            if len(action_index) == 1:
+                match action_index[0][0]:
+                    case 'no_transformation' | 'vectorization' | 'img2col':
+                        model.interchange_fc.weight.requires_grad = False
+                        model.interchange_fc.bias.requires_grad = False
+                        model.tiling_fc.weight.requires_grad = False
+                        model.tiling_fc.bias.requires_grad = False
+                        model.parall_fc.weight.requires_grad = False
+                        model.parall_fc.bias.requires_grad = False
+                    case 'parallelization':
+                        model.interchange_fc.weight.requires_grad = False
+                        model.interchange_fc.bias.requires_grad = False
+                        model.tiling_fc.weight.requires_grad = False
+                        model.tiling_fc.bias.requires_grad = False
+                        model.parall_fc.weight.requires_grad = True
+                        model.parall_fc.bias.requires_grad = True
+                    case 'tiling':
+                        model.interchange_fc.weight.requires_grad = False
+                        model.interchange_fc.bias.requires_grad = False
+                        model.tiling_fc.weight.requires_grad = True
+                        model.tiling_fc.bias.requires_grad = True
+                        model.parall_fc.weight.requires_grad = False
+                        model.parall_fc.bias.requires_grad = False
+                    case 'interchange':
+                        model.interchange_fc.weight.requires_grad = True
+                        model.interchange_fc.bias.requires_grad = True
+                        model.tiling_fc.weight.requires_grad = False
+                        model.tiling_fc.bias.requires_grad = False
+                        model.parall_fc.weight.requires_grad = False
+                        model.parall_fc.bias.requires_grad = False
+                    case _:
+                        raise ValueError(f"Unknown action: {action_index[0][0]}")
 
-            # print(advantage.round(decimals=2))
+            with torch.enable_grad():
+                # New predicition:
+                _, new_action_log_p, new_values, entropy = model.sample(x, actions=action_index)
 
-            advantage = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
+                # print(advantages.round(decimals=2))
 
-            new_action_log_p, action_log_p, advantage = new_action_log_p.reshape(-1), action_log_p.reshape(-1), advantage.reshape(-1)
+                if advantages.shape[0] > 1:
+                    advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
-            ratio = torch.exp(new_action_log_p - action_log_p.detach())
-            surr1 = ratio * advantage
-            surr2 = torch.clamp(ratio, 1 - 0.2, 1 + 0.2) * advantage
-            policy_loss = - torch.min(surr1, surr2).mean()
+                new_action_log_p, action_log_p, advantages = new_action_log_p.reshape(-1), action_log_p.reshape(-1), advantages.reshape(-1)
 
-            returns, new_values = returns.reshape(-1), new_values.reshape(-1)
+                ratio = torch.exp(new_action_log_p - action_log_p.detach())
+                surr1 = ratio * advantages
+                surr2 = torch.clamp(ratio, 1 - 0.2, 1 + 0.2) * advantages
+                policy_loss = - torch.min(surr1, surr2).mean()
 
-            value_loss = ((returns - new_values)**2).mean()
-            value_loss = ((returns - new_values).abs()).mean()
+                returns, new_values = returns.reshape(-1), new_values.reshape(-1)
 
-            loss = policy_loss - entropy_coef * entropy + 0.5 * value_loss
+                value_loss = ((returns - new_values)**2).mean()
+                value_loss = ((returns - new_values).abs()).mean()
+
+                loss = policy_loss - entropy_coef * entropy + 0.5 * value_loss
 
             optimizer.zero_grad()
             loss.backward()
@@ -373,9 +408,9 @@ def evaluate_benchmark(model: Model, env: ParallelEnv, device: torch.device = to
 
         while True:
 
-            with torch.no_grad():
-                # Select the action using the model
-                action, _, _, _ = model.sample(obs)
+            # with torch.no_grad():
+            # Select the action using the model
+            action, _, _, _ = model.sample(obs)
 
             # Apply the action and get the next state
             next_obs, reward, terminated, next_state, final_state = env.step(state, action)
@@ -401,4 +436,5 @@ def evaluate_benchmark(model: Model, env: ParallelEnv, device: torch.device = to
 
         print('\n\n\n')
 
-    neptune_logs['eval/average_speedup'].append(sum(speedup_values) / len(speedup_values))
+    if neptune_logs is not None:
+        neptune_logs['eval/average_speedup'].append(sum(speedup_values) / len(speedup_values))

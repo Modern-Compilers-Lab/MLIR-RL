@@ -19,6 +19,7 @@ from rl_autoschedular.ppo import (
 # Set target device
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 device = torch.device("cpu")
+torch.set_grad_enabled(False)
 
 print_info('Finish imports')
 
