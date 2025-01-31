@@ -27,11 +27,9 @@ class Config(metaclass=Singleton):
     optimization_mode: Literal["last", "all"]
     """The optimization mode to use, "last" will optimize only the last operation, "all" will optimize all operations in the code. Default is "last"."""
     benchmarks_folder_path: str
-    """Path to the benchmarks folder. Can be empty if data format is set to "json"."""
-    len_trajectory: int
-    """Length of the trajectory"""
-    ppo_batch_size: int
-    """Batch size for PPO"""
+    """Path to the benchmarks folder. Can be empty if optimization mode is set to "last"."""
+    batch_count: int
+    """Number of batches in a trajectory"""
     nb_iterations: int
     """Number of iterations"""
     ppo_epochs: int
@@ -65,8 +63,7 @@ class Config(metaclass=Singleton):
         self.data_format = "json"
         self.optimization_mode = "last"
         self.benchmarks_folder_path = ""
-        self.len_trajectory = 64
-        self.ppo_batch_size = 64
+        self.batch_count = 10
         self.nb_iterations = 10000
         self.ppo_epochs = 4
         self.entropy_coef = 0.01
@@ -94,8 +91,7 @@ class Config(metaclass=Singleton):
         self.data_format = config["data_format"]
         self.optimization_mode = config["optimization_mode"]
         self.benchmarks_folder_path = config["benchmarks_folder_path"]
-        self.len_trajectory = config["len_trajectory"]
-        self.ppo_batch_size = config["ppo_batch_size"]
+        self.batch_count = config["batch_count"]
         self.nb_iterations = config["nb_iterations"]
         self.ppo_epochs = config["ppo_epochs"]
         self.entropy_coef = config["entropy_coef"]
@@ -126,8 +122,7 @@ class Config(metaclass=Singleton):
             "data_format": self.data_format,
             "optimization_mode": self.optimization_mode,
             "benchmarks_folder_path": self.benchmarks_folder_path,
-            "len_trajectory": self.len_trajectory,
-            "ppo_batch_size": self.ppo_batch_size,
+            "batch_count": self.batch_count,
             "nb_iterations": self.nb_iterations,
             "ppo_epochs": self.ppo_epochs,
             "entropy_coef": self.entropy_coef,
