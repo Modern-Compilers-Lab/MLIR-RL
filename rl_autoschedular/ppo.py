@@ -55,7 +55,6 @@ def collect_trajectory(batch_count: int, model: Model, env: Env, device: torch.d
     stored_reward: list[torch.Tensor] = []
     stored_done: list[torch.Tensor] = []
 
-    # for i in tqdm(range(len_trajectory)):
     for i in range(batch_count):
         print_info(f'Batch {i + 1}/{batch_count}')
         batch_terminated = False
@@ -171,7 +170,7 @@ def shuffle_trajectory(trajectory: Trajectory):
     return trajectory
 
 
-def shuffle_ppo_data(stored_action_index: list[tuple[str, list[int]]], stored_action_log_p: torch.Tensor, stored_x: torch.Tensor, advantages: torch.Tensor, returns: torch.Tensor):
+def shuffle_ppo_data(stored_action_index: list[tuple[str, list[int]]], stored_state: list[OperationState], stored_action_log_p: torch.Tensor, stored_x: torch.Tensor, advantages: torch.Tensor, returns: torch.Tensor):
     """Shuffle the PPO data.
 
     Args:
@@ -192,12 +191,13 @@ def shuffle_ppo_data(stored_action_index: list[tuple[str, list[int]]], stored_ac
     permutation = torch.randperm(stored_action_log_p.size()[0])
 
     stored_action_index = [stored_action_index[i] for i in permutation]
+    stored_state = [stored_state[i] for i in permutation]
     stored_action_log_p = stored_action_log_p[permutation]
     stored_x = stored_x[permutation]
     advantages = advantages[permutation]
     returns = returns[permutation]
 
-    return stored_action_index, stored_action_log_p, stored_x, advantages, returns
+    return stored_action_index, stored_state, stored_action_log_p, stored_x, advantages, returns
 
 
 def compute_gae(done: torch.Tensor, rewards: torch.Tensor, values: torch.Tensor, next_values: torch.Tensor, gamma: float = 0.99, lambda_: float = 0.95):
@@ -238,7 +238,7 @@ def compute_gae(done: torch.Tensor, rewards: torch.Tensor, values: torch.Tensor,
     return advantages, returns
 
 
-def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Optimizer, ppo_epochs: int, ppo_batch_size: int, device: torch.device = torch.device('cpu'), entropy_coef: float = 0.01, neptune_logs: Optional[neptune.Run] = None):
+def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Optimizer, ppo_epochs: int, device: torch.device = torch.device('cpu'), entropy_coef: float = 0.01, neptune_logs: Optional[neptune.Run] = None):
     """Update the model using PPO.
 
     Args:
@@ -259,7 +259,7 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
 
     for epoch in range(ppo_epochs):
 
-        # stored_state = trajectory.states
+        stored_state = trajectory.states
         stored_action_index = trajectory.actions
         stored_value = trajectory.values
         stored_next_value = trajectory.next_values
@@ -267,9 +267,6 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
         stored_x = trajectory.x
         stored_reward = trajectory.rewards
         stored_done = trajectory.done
-
-        len_trajectory = stored_x.shape[0]
-        assert len_trajectory % ppo_batch_size == 0
 
         stored_value = stored_value.reshape(-1).detach()
         stored_next_value = stored_next_value.reshape(-1).detach()
@@ -287,72 +284,48 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
         #     if returns[i] != 0:
         #         returns[i] = returns[i] / running_return_stats.std(stored_state[i].raw_operation)
 
-        stored_action_index, stored_action_log_p, stored_x, stored_advantages, stored_returns = shuffle_ppo_data(stored_action_index, stored_action_log_p, stored_x, advantages, returns)
+        stored_action_index, stored_state, stored_action_log_p, stored_x, stored_advantages, stored_returns = shuffle_ppo_data(stored_action_index, stored_state, stored_action_log_p, stored_x, advantages, returns)
 
         acc_loss = 0
-        for i in range(len_trajectory // ppo_batch_size):
+        for i in range(len(stored_action_index)):
+            action = stored_action_index[i]
+            state = stored_state[i]
+            action_log_p = stored_action_log_p[i]
+            advantage = stored_advantages[i]
+            return_ = stored_returns[i]
+            x = stored_x[i].unsqueeze(0).to(device)
 
-            begin, end = i * ppo_batch_size, (i + 1) * ppo_batch_size
-
-            action_index = stored_action_index[begin:end]
-            action_log_p = stored_action_log_p[begin:end].to(device)
-            advantages = stored_advantages[begin:end].to(device)
-            returns = stored_returns[begin:end].to(device)
-            x = stored_x[begin:end].to(device)
-
-            if len(action_index) == 1:
-                match action_index[0][0]:
-                    case 'no_transformation' | 'vectorization' | 'img2col':
-                        model.interchange_fc.weight.requires_grad = False
-                        model.interchange_fc.bias.requires_grad = False
-                        model.tiling_fc.weight.requires_grad = False
-                        model.tiling_fc.bias.requires_grad = False
-                        model.parall_fc.weight.requires_grad = False
-                        model.parall_fc.bias.requires_grad = False
-                    case 'parallelization':
-                        model.interchange_fc.weight.requires_grad = False
-                        model.interchange_fc.bias.requires_grad = False
-                        model.tiling_fc.weight.requires_grad = False
-                        model.tiling_fc.bias.requires_grad = False
-                        model.parall_fc.weight.requires_grad = True
-                        model.parall_fc.bias.requires_grad = True
-                    case 'tiling':
-                        model.interchange_fc.weight.requires_grad = False
-                        model.interchange_fc.bias.requires_grad = False
-                        model.tiling_fc.weight.requires_grad = True
-                        model.tiling_fc.bias.requires_grad = True
-                        model.parall_fc.weight.requires_grad = False
-                        model.parall_fc.bias.requires_grad = False
-                    case 'interchange':
-                        model.interchange_fc.weight.requires_grad = True
-                        model.interchange_fc.bias.requires_grad = True
-                        model.tiling_fc.weight.requires_grad = False
-                        model.tiling_fc.bias.requires_grad = False
-                        model.parall_fc.weight.requires_grad = False
-                        model.parall_fc.bias.requires_grad = False
-                    case _:
-                        raise ValueError(f"Unknown action: {action_index[0][0]}")
+            model.transformation_selection.requires_grad_(True)
+            model.parall_fc.requires_grad_(False)
+            model.tiling_fc.requires_grad_(False)
+            model.interchange_fc.requires_grad_(False)
+            match action[0]:
+                case 'no_transformation' | 'vectorization' | 'img2col':
+                    pass
+                case 'parallelization':
+                    model.parall_fc.requires_grad_(True)
+                case 'tiling':
+                    model.tiling_fc.requires_grad_(True)
+                case 'interchange':
+                    model.interchange_fc.requires_grad_(True)
+                    if len(state.interchange_permutation) > 0:
+                        model.transformation_selection.requires_grad_(False)
+                case _:
+                    raise ValueError(f"Unknown action: {action[0]}")
 
             with torch.enable_grad():
                 # New predicition:
-                _, new_action_log_p, new_values, entropy = model.sample(x, actions=action_index)
+                _, new_action_log_p, new_value, entropy = model.sample(x, actions=[action])
 
-                # print(advantages.round(decimals=2))
+                new_action_log_p, new_value, entropy = new_action_log_p.squeeze(), new_value.squeeze(), entropy.squeeze()
 
-                if advantages.shape[0] > 1:
-                    advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+                ratio = torch.exp(new_action_log_p - action_log_p)
+                surr1 = ratio * advantage
+                surr2 = torch.clamp(ratio, 1 - 0.2, 1 + 0.2) * advantage
+                policy_loss = - torch.min(surr1, surr2)
 
-                new_action_log_p, action_log_p, advantages = new_action_log_p.reshape(-1), action_log_p.reshape(-1), advantages.reshape(-1)
-
-                ratio = torch.exp(new_action_log_p - action_log_p.detach())
-                surr1 = ratio * advantages
-                surr2 = torch.clamp(ratio, 1 - 0.2, 1 + 0.2) * advantages
-                policy_loss = - torch.min(surr1, surr2).mean()
-
-                returns, new_values = returns.reshape(-1), new_values.reshape(-1)
-
-                value_loss = ((returns - new_values)**2).mean()
-                value_loss = ((returns - new_values).abs()).mean()
+                value_loss = ((return_ - new_value)**2)
+                value_loss = ((return_ - new_value).abs())
 
                 loss = policy_loss - entropy_coef * entropy + 0.5 * value_loss
 

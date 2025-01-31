@@ -58,7 +58,7 @@ tqdm_range = tqdm(range(cfg.nb_iterations), desc='Main loop')
 for step in tqdm_range:
 
     trajectory = collect_trajectory(
-        10,
+        cfg.batch_count,
         model,
         env,
         device=device,
@@ -70,7 +70,6 @@ for step in tqdm_range:
         model,
         optimizer,
         ppo_epochs=cfg.ppo_epochs,
-        ppo_batch_size=cfg.ppo_batch_size,
         device=device,
         entropy_coef=cfg.entropy_coef,
         neptune_logs=neptune_logs
