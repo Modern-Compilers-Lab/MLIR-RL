@@ -27,7 +27,7 @@ class Config(metaclass=Singleton):
     optimization_mode: Literal["last", "all"]
     """The optimization mode to use, "last" will optimize only the last operation, "all" will optimize all operations in the code. Default is "last"."""
     benchmarks_folder_path: str
-    """Path to the benchmarks folder. Can be empty if optimization mode is set to "last"."""
+    """Path to the benchmarks folder. Can be empty if data format is set to "json"."""
     len_trajectory: int
     """Length of the trajectory"""
     ppo_batch_size: int

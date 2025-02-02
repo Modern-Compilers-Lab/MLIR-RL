@@ -21,5 +21,7 @@ eval "$(conda shell.bash hook)"
 # Activate any environments if required
 conda activate $CONDA_ENV_NAME
 
+# Set config file path
+export CONFIG_FILE_PATH=config/example.json
 # Execute the code
 python /scratch/$NYU_NET_ID/MLIR-RL/train.py
