@@ -1,0 +1,1278 @@
+{
+    "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x256x14x14xf32>, tensor<256x256x3x3xf32>) outs (%init: tensor<256x256x12x12xf32>) -> tensor<256x256x12x12xf32>": {
+        "program_annotation": {
+            "iterators": {
+                "%arg3": [
+                    {
+                        "lower_bound": "0",
+                        "upper_bound": "256",
+                        "parent_iterator": null,
+                        "child_iterators": [
+                            "%arg4"
+                        ],
+                        "computations_list": []
+                    }
+                ],
+                "%arg4": [
+                    {
+                        "lower_bound": "0",
+                        "upper_bound": "256",
+                        "parent_iterator": "%arg3",
+                        "child_iterators": [
+                            "%arg5"
+                        ],
+                        "computations_list": []
+                    }
+                ],
+                "%arg5": [
+                    {
+                        "lower_bound": "0",
+                        "upper_bound": "12",
+                        "parent_iterator": "%arg4",
+                        "child_iterators": [
+                            "%arg6"
+                        ],
+                        "computations_list": []
+                    }
+                ],
+                "%arg6": [
+                    {
+                        "lower_bound": "0",
+                        "upper_bound": "12",
+                        "parent_iterator": "%arg5",
+                        "child_iterators": [
+                            "%arg7"
+                        ],
+                        "computations_list": []
+                    }
+                ],
+                "%arg7": [
+                    {
+                        "lower_bound": "0",
+                        "upper_bound": "256",
+                        "parent_iterator": "%arg6",
+                        "child_iterators": [
+                            "%arg8"
+                        ],
+                        "computations_list": []
+                    }
+                ],
+                "%arg8": [
+                    {
+                        "lower_bound": "0",
+                        "upper_bound": "3",
+                        "parent_iterator": "%arg7",
+                        "child_iterators": [
+                            "%arg9"
+                        ],
+                        "computations_list": []
+                    }
+                ],
+                "%arg9": [
+                    {
+                        "lower_bound": "0",
+                        "upper_bound": "3",
+                        "parent_iterator": "%arg8",
+                        "child_iterators": [],
+                        "computations_list": [
+                            "comp00"
+                        ]
+                    }
+                ]
+            },
+            "computations": {
+                "comp00": {
+                    "absolute_order": 0,
+                    "iterators": [
+                        "%arg3",
+                        "%arg4",
+                        "%arg5",
+                        "%arg6",
+                        "%arg7",
+                        "%arg8",
+                        "%arg9"
+                    ],
+                    "comp_is_reduction": false,
+                    "number_of_additions": 1,
+                    "number_of_subtraction": 0,
+                    "number_of_multiplication": 1,
+                    "number_of_division": 0,
+                    "accesses": [
+                        {
+                            "access_is_reduction": false,
+                            "buffer_id": 0,
+                            "access_matrix": [
+                                [
+                                    1,
+                                    0,
+                                    0,
+                                    0,
+                                    0,
+                                    0,
+                                    0
+                                ],
+                                [
+                                    0,
+                                    0,
+                                    0,
+                                    0,
+                                    1,
+                                    0,
+                                    0
+                                ],
+                                [
+                                    0,
+                                    0,
+                                    1,
+                                    0,
+                                    0,
+                                    1,
+                                    0
+                                ],
+                                [
+                                    0,
+                                    0,
+                                    0,
+                                    1,
+                                    0,
+                                    0,
+                                    1
+                                ]
+                            ]
+                        },
+                        {
+                            "access_is_reduction": false,
+                            "buffer_id": 1,
+                            "access_matrix": [
+                                [
+                                    0,
+                                    1,
+                                    0,
+                                    0,
+                                    0,
+                                    0,
+                                    0
+                                ],
+                                [
+                                    0,
+                                    0,
+                                    0,
+                                    0,
+                                    1,
+                                    0,
+                                    0
+                                ],
+                                [
+                                    0,
+                                    0,
+                                    0,
+                                    0,
+                                    0,
+                                    1,
+                                    0
+                                ],
+                                [
+                                    0,
+                                    0,
+                                    0,
+                                    0,
+                                    0,
+                                    0,
+                                    1
+                                ]
+                            ]
+                        },
+                        {
+                            "access_is_reduction": false,
+                            "buffer_id": 2,
+                            "access_matrix": [
+                                [
+                                    1,
+                                    0,
+                                    0,
+                                    0,
+                                    0,
+                                    0,
+                                    0
+                                ],
+                                [
+                                    0,
+                                    1,
+                                    0,
+                                    0,
+                                    0,
+                                    0,
+                                    0
+                                ],
+                                [
+                                    0,
+                                    0,
+                                    1,
+                                    0,
+                                    0,
+                                    0,
+                                    0
+                                ],
+                                [
+                                    0,
+                                    0,
+                                    0,
+                                    1,
+                                    0,
+                                    0,
+                                    0
+                                ]
+                            ]
+                        }
+                    ],
+                    "expression_representation": {
+                        "expr_type": "add",
+                        "children": [
+                            {
+                                "expr_type": "mul",
+                                "children": [
+                                    {
+                                        "expr_type": "access",
+                                        "children": []
+                                    },
+                                    {
+                                        "expr_type": "access",
+                                        "children": []
+                                    }
+                                ]
+                            },
+                            {
+                                "expr_type": "access",
+                                "children": []
+                            }
+                        ]
+                    }
+                }
+            },
+            "initial_execution_time": null
+        },
+        "filename": "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x256x14x14xf32>, tensor<256x256x3x3xf32>) outs (%init: tensor<256x256x12x12xf32>) -> tensor<256x256x12x12xf32>",
+        "raw_operation": "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x256x14x14xf32>, tensor<256x256x3x3xf32>) outs (%init: tensor<256x256x12x12xf32>) -> tensor<256x256x12x12xf32>",
+        "node_name": "cn119",
+        "schedules_list": [
+            {
+                "comp00": {
+                    "parallelization+tiling": [
+                        2
+                    ],
+                    "tiling": null,
+                    "interchange": null,
+                    "vectorization": false
+                },
+                "execution_times": [
+                    0.6779242,
+                    0.0957134,
+                    0.5764458,
+                    0.0440372,
+                    0.4393559,
+                    0.3329248,
+                    0.4065362,
+                    0.4692914,
+                    0.9414705,
+                    0.370823
+                ],
+                "sched_str": "TP([2])"
+            },
+            {
+                "comp00": {
+                    "parallelization+tiling": null,
+                    "tiling": [
+                        2
+                    ],
+                    "interchange": null,
+                    "vectorization": false
+                },
+                "execution_times": [
+                    0.9551974,
+                    0.5859085,
+                    0.2802546,
+                    0.2143672,
+                    0.5819561,
+                    0.9236803,
+                    0.7393636,
+                    0.9015235,
+                    0.4887956,
+                    0.1084313
+                ],
+                "sched_str": "TP([2])T([2])"
+            },
+            {
+                "comp00": {
+                    "parallelization+tiling": [
+                        4
+                    ],
+                    "tiling": null,
+                    "interchange": null,
+                    "vectorization": false
+                },
+                "execution_times": [
+                    0.5366937,
+                    0.5399371,
+                    0.1009941,
+                    0.8331567,
+                    0.3757792,
+                    0.0221227,
+                    0.7273196,
+                    0.8293977,
+                    0.1648032,
+                    0.1685511
+                ],
+                "sched_str": "TP([4])"
+            },
+            {
+                "comp00": {
+                    "parallelization+tiling": null,
+                    "tiling": [
+                        4
+                    ],
+                    "interchange": null,
+                    "vectorization": false
+                },
+                "execution_times": [
+                    0.8777682,
+                    0.4966549,
+                    0.9260291,
+                    0.6516525,
+                    0.0166318,
+                    0.5734553,
+                    0.8651673,
+                    0.4872141,
+                    0.0952702,
+                    0.3955296
+                ],
+                "sched_str": "TP([4])T([4])"
+            },
+            {
+                "comp00": {
+                    "parallelization+tiling": [
+                        8
+                    ],
+                    "tiling": null,
+                    "interchange": null,
+                    "vectorization": false
+                },
+                "execution_times": [
+                    0.4041442,
+                    0.2126932,
+                    0.780882,
+                    0.0081718,
+                    0.0329605,
+                    0.1445936,
+                    0.1781461,
+                    0.2344648,
+                    0.9729423,
+                    0.0212198
+                ],
+                "sched_str": "TP([8])"
+            },
+            {
+                "comp00": {
+                    "parallelization+tiling": null,
+                    "tiling": [
+                        8
+                    ],
+                    "interchange": null,
+                    "vectorization": false
+                },
+                "execution_times": [
+                    0.1236171,
+                    0.9866719,
+                    0.2932537,
+                    0.3522781,
+                    0.1558199,
+                    0.7318694,
+                    0.5233856,
+                    0.72439,
+                    0.37957,
+                    0.7652835
+                ],
+                "sched_str": "TP([8])T([8])"
+            }
+        ]
+    },
+    "linalg.add ins(%arg0, %arg1: tensor<28x150x7x130xf32>, tensor<28x150x7x130xf32>) outs(%arg2: tensor<28x150x7x130xf32>) -> tensor<28x150x7x130xf32>": {
+        "program_annotation": {
+            "iterators": {
+                "%arg3": [
+                    {
+                        "lower_bound": "0",
+                        "upper_bound": "28",
+                        "parent_iterator": null,
+                        "child_iterators": [
+                            "%arg4"
+                        ],
+                        "computations_list": []
+                    }
+                ],
+                "%arg4": [
+                    {
+                        "lower_bound": "0",
+                        "upper_bound": "150",
+                        "parent_iterator": "%arg3",
+                        "child_iterators": [
+                            "%arg5"
+                        ],
+                        "computations_list": []
+                    }
+                ],
+                "%arg5": [
+                    {
+                        "lower_bound": "0",
+                        "upper_bound": "7",
+                        "parent_iterator": "%arg4",
+                        "child_iterators": [
+                            "%arg6"
+                        ],
+                        "computations_list": []
+                    }
+                ],
+                "%arg6": [
+                    {
+                        "lower_bound": "0",
+                        "upper_bound": "130",
+                        "parent_iterator": "%arg5",
+                        "child_iterators": [],
+                        "computations_list": [
+                            "comp00"
+                        ]
+                    }
+                ]
+            },
+            "computations": {
+                "comp00": {
+                    "absolute_order": 0,
+                    "iterators": [
+                        "%arg3",
+                        "%arg4",
+                        "%arg5",
+                        "%arg6"
+                    ],
+                    "comp_is_reduction": false,
+                    "number_of_additions": 1,
+                    "number_of_subtraction": 0,
+                    "number_of_multiplication": 0,
+                    "number_of_division": 0,
+                    "accesses": [
+                        {
+                            "access_is_reduction": false,
+                            "buffer_id": 0,
+                            "access_matrix": [
+                                [
+                                    1,
+                                    0,
+                                    0,
+                                    0
+                                ],
+                                [
+                                    0,
+                                    1,
+                                    0,
+                                    0
+                                ],
+                                [
+                                    0,
+                                    0,
+                                    1,
+                                    0
+                                ],
+                                [
+                                    0,
+                                    0,
+                                    0,
+                                    1
+                                ]
+                            ]
+                        },
+                        {
+                            "access_is_reduction": false,
+                            "buffer_id": 1,
+                            "access_matrix": [
+                                [
+                                    1,
+                                    0,
+                                    0,
+                                    0
+                                ],
+                                [
+                                    0,
+                                    1,
+                                    0,
+                                    0
+                                ],
+                                [
+                                    0,
+                                    0,
+                                    1,
+                                    0
+                                ],
+                                [
+                                    0,
+                                    0,
+                                    0,
+                                    1
+                                ]
+                            ]
+                        }
+                    ],
+                    "expression_representation": {
+                        "expr_type": "add",
+                        "children": [
+                            {
+                                "expr_type": "access",
+                                "children": []
+                            },
+                            {
+                                "expr_type": "access",
+                                "children": []
+                            }
+                        ]
+                    }
+                }
+            },
+            "initial_execution_time": null
+        },
+        "filename": "linalg.add ins(%arg0, %arg1: tensor<28x150x7x130xf32>, tensor<28x150x7x130xf32>) outs(%arg2: tensor<28x150x7x130xf32>) -> tensor<28x150x7x130xf32>",
+        "raw_operation": "linalg.add ins(%arg0, %arg1: tensor<28x150x7x130xf32>, tensor<28x150x7x130xf32>) outs(%arg2: tensor<28x150x7x130xf32>) -> tensor<28x150x7x130xf32>",
+        "node_name": "cn119",
+        "schedules_list": [
+            {
+                "comp00": {
+                    "parallelization+tiling": [
+                        2
+                    ],
+                    "tiling": null,
+                    "interchange": null,
+                    "vectorization": false
+                },
+                "execution_times": [
+                    0.4082265,
+                    0.8865532,
+                    0.342025,
+                    0.9601198,
+                    0.6940873,
+                    0.7286465,
+                    0.7925459,
+                    0.7674058,
+                    0.7430357,
+                    0.3442241
+                ],
+                "sched_str": "TP([2])"
+            },
+            {
+                "comp00": {
+                    "parallelization+tiling": null,
+                    "tiling": [
+                        2
+                    ],
+                    "interchange": null,
+                    "vectorization": false
+                },
+                "execution_times": [
+                    0.9747995,
+                    0.1853207,
+                    0.2116849,
+                    0.7810019,
+                    0.0005867,
+                    0.4996067,
+                    0.5499883,
+                    0.20541,
+                    0.8159146,
+                    0.7614613
+                ],
+                "sched_str": "TP([2])T([2])"
+            },
+            {
+                "comp00": {
+                    "parallelization+tiling": [
+                        4
+                    ],
+                    "tiling": null,
+                    "interchange": null,
+                    "vectorization": false
+                },
+                "execution_times": [
+                    0.6272697,
+                    0.637726,
+                    0.6795628,
+                    0.157238,
+                    0.1285394,
+                    0.596675,
+                    0.554702,
+                    0.2988705,
+                    0.8951356,
+                    0.6101163
+                ],
+                "sched_str": "TP([4])"
+            },
+            {
+                "comp00": {
+                    "parallelization+tiling": null,
+                    "tiling": [
+                        4
+                    ],
+                    "interchange": null,
+                    "vectorization": false
+                },
+                "execution_times": [
+                    0.878772,
+                    0.9040686,
+                    0.798184,
+                    0.5591894,
+                    0.6997836,
+                    0.5590868,
+                    0.321974,
+                    0.8538076,
+                    0.2412707,
+                    0.8184978
+                ],
+                "sched_str": "TP([4])T([4])"
+            },
+            {
+                "comp00": {
+                    "parallelization+tiling": [
+                        8
+                    ],
+                    "tiling": null,
+                    "interchange": null,
+                    "vectorization": false
+                },
+                "execution_times": [
+                    0.9501584,
+                    0.3730759,
+                    0.3472813,
+                    0.0352142,
+                    0.0178613,
+                    0.4528624,
+                    0.6603857,
+                    0.3358767,
+                    0.0680065,
+                    0.0848965
+                ],
+                "sched_str": "TP([8])"
+            },
+            {
+                "comp00": {
+                    "parallelization+tiling": null,
+                    "tiling": [
+                        8
+                    ],
+                    "interchange": null,
+                    "vectorization": false
+                },
+                "execution_times": [
+                    0.8976415,
+                    0.6982398,
+                    0.0144514,
+                    0.821489,
+                    0.9954376,
+                    0.6745539,
+                    0.1380819,
+                    0.7669169,
+                    0.2822172,
+                    0.3967915
+                ],
+                "sched_str": "TP([8])T([8])"
+            }
+        ]
+    },
+    "linalg.matmul ins(%arg0, %arg1 : tensor<256x128xf32>, tensor<128x256xf32>) outs(%arg2 : tensor<256x256xf32>) -> tensor<256x256xf32>": {
+        "program_annotation": {
+            "iterators": {
+                "%arg3": [
+                    {
+                        "lower_bound": "0",
+                        "upper_bound": "256",
+                        "parent_iterator": null,
+                        "child_iterators": [
+                            "%arg4"
+                        ],
+                        "computations_list": []
+                    }
+                ],
+                "%arg4": [
+                    {
+                        "lower_bound": "0",
+                        "upper_bound": "256",
+                        "parent_iterator": "%arg3",
+                        "child_iterators": [
+                            "%arg5"
+                        ],
+                        "computations_list": []
+                    }
+                ],
+                "%arg5": [
+                    {
+                        "lower_bound": "0",
+                        "upper_bound": "128",
+                        "parent_iterator": "%arg4",
+                        "child_iterators": [],
+                        "computations_list": [
+                            "comp00"
+                        ]
+                    }
+                ]
+            },
+            "computations": {
+                "comp00": {
+                    "absolute_order": 0,
+                    "iterators": [
+                        "%arg3",
+                        "%arg4",
+                        "%arg5"
+                    ],
+                    "comp_is_reduction": false,
+                    "number_of_additions": 1,
+                    "number_of_subtraction": 0,
+                    "number_of_multiplication": 1,
+                    "number_of_division": 0,
+                    "accesses": [
+                        {
+                            "access_is_reduction": false,
+                            "buffer_id": 0,
+                            "access_matrix": [
+                                [
+                                    1,
+                                    0,
+                                    0
+                                ],
+                                [
+                                    0,
+                                    0,
+                                    1
+                                ]
+                            ]
+                        },
+                        {
+                            "access_is_reduction": false,
+                            "buffer_id": 1,
+                            "access_matrix": [
+                                [
+                                    0,
+                                    0,
+                                    1
+                                ],
+                                [
+                                    0,
+                                    1,
+                                    0
+                                ]
+                            ]
+                        },
+                        {
+                            "access_is_reduction": false,
+                            "buffer_id": 2,
+                            "access_matrix": [
+                                [
+                                    1,
+                                    0,
+                                    0
+                                ],
+                                [
+                                    0,
+                                    1,
+                                    0
+                                ]
+                            ]
+                        }
+                    ],
+                    "expression_representation": {
+                        "expr_type": "add",
+                        "children": [
+                            {
+                                "expr_type": "mul",
+                                "children": [
+                                    {
+                                        "expr_type": "access",
+                                        "children": []
+                                    },
+                                    {
+                                        "expr_type": "access",
+                                        "children": []
+                                    }
+                                ]
+                            },
+                            {
+                                "expr_type": "access",
+                                "children": []
+                            }
+                        ]
+                    }
+                }
+            },
+            "initial_execution_time": null
+        },
+        "filename": "linalg.matmul ins(%arg0, %arg1 : tensor<256x128xf32>, tensor<128x256xf32>) outs(%arg2 : tensor<256x256xf32>) -> tensor<256x256xf32>",
+        "raw_operation": "linalg.matmul ins(%arg0, %arg1 : tensor<256x128xf32>, tensor<128x256xf32>) outs(%arg2 : tensor<256x256xf32>) -> tensor<256x256xf32>",
+        "node_name": "cn119",
+        "schedules_list": [
+            {
+                "comp00": {
+                    "parallelization+tiling": [
+                        2
+                    ],
+                    "tiling": null,
+                    "interchange": null,
+                    "vectorization": false
+                },
+                "execution_times": [
+                    0.5171555,
+                    0.6453278,
+                    0.6003821,
+                    0.6492706,
+                    0.2472568,
+                    0.6049413,
+                    0.4576717,
+                    0.5085714,
+                    0.9039141,
+                    0.5387754
+                ],
+                "sched_str": "TP([2])"
+            },
+            {
+                "comp00": {
+                    "parallelization+tiling": null,
+                    "tiling": [
+                        2
+                    ],
+                    "interchange": null,
+                    "vectorization": false
+                },
+                "execution_times": [
+                    0.9247946,
+                    0.1410438,
+                    0.0238608,
+                    0.9812209,
+                    0.3446786,
+                    0.360406,
+                    0.9930752,
+                    0.0304946,
+                    0.0643187,
+                    0.2881238
+                ],
+                "sched_str": "TP([2])T([2])"
+            },
+            {
+                "comp00": {
+                    "parallelization+tiling": [
+                        4
+                    ],
+                    "tiling": null,
+                    "interchange": null,
+                    "vectorization": false
+                },
+                "execution_times": [
+                    0.1133364,
+                    0.691476,
+                    0.0982825,
+                    0.5303517,
+                    0.8330831,
+                    0.6315723,
+                    0.0959417,
+                    0.325339,
+                    0.0556496,
+                    0.062649
+                ],
+                "sched_str": "TP([4])"
+            },
+            {
+                "comp00": {
+                    "parallelization+tiling": null,
+                    "tiling": [
+                        4
+                    ],
+                    "interchange": null,
+                    "vectorization": false
+                },
+                "execution_times": [
+                    0.3841757,
+                    0.2357499,
+                    0.7807052,
+                    0.6970101,
+                    0.8500411,
+                    0.2310876,
+                    0.206921,
+                    0.6549868,
+                    0.4412071,
+                    0.1206384
+                ],
+                "sched_str": "TP([4])T([4])"
+            },
+            {
+                "comp00": {
+                    "parallelization+tiling": [
+                        8
+                    ],
+                    "tiling": null,
+                    "interchange": null,
+                    "vectorization": false
+                },
+                "execution_times": [
+                    0.873701,
+                    0.3516095,
+                    0.9134659,
+                    0.1199483,
+                    0.5917265,
+                    0.1366112,
+                    0.7923077,
+                    0.3444934,
+                    0.4850615,
+                    0.7279829
+                ],
+                "sched_str": "TP([8])"
+            },
+            {
+                "comp00": {
+                    "parallelization+tiling": null,
+                    "tiling": [
+                        8
+                    ],
+                    "interchange": null,
+                    "vectorization": false
+                },
+                "execution_times": [
+                    0.0763812,
+                    0.8026249,
+                    0.3286052,
+                    0.8151155,
+                    0.4809916,
+                    0.7518055,
+                    0.7061532,
+                    0.8834121,
+                    0.5617767,
+                    0.0479548
+                ],
+                "sched_str": "TP([8])T([8])"
+            }
+        ]
+    },
+    "linalg.pooling_nchw_max {dilations = dense<1> : tensor<2xi64>, strides = dense<2> : tensor<2xi64>} ins (%input, %filter: tensor<128x288x224x150xf32>, tensor<3x3xf32>) outs (%init: tensor<128x288x111x74xf32>) -> tensor<128x288x111x74xf32>": {
+        "program_annotation": {
+            "iterators": {
+                "%arg3": [
+                    {
+                        "lower_bound": "0",
+                        "upper_bound": "128",
+                        "parent_iterator": null,
+                        "child_iterators": [
+                            "%arg4"
+                        ],
+                        "computations_list": []
+                    }
+                ],
+                "%arg4": [
+                    {
+                        "lower_bound": "0",
+                        "upper_bound": "288",
+                        "parent_iterator": "%arg3",
+                        "child_iterators": [
+                            "%arg5"
+                        ],
+                        "computations_list": []
+                    }
+                ],
+                "%arg5": [
+                    {
+                        "lower_bound": "0",
+                        "upper_bound": "111",
+                        "parent_iterator": "%arg4",
+                        "child_iterators": [
+                            "%arg6"
+                        ],
+                        "computations_list": []
+                    }
+                ],
+                "%arg6": [
+                    {
+                        "lower_bound": "0",
+                        "upper_bound": "74",
+                        "parent_iterator": "%arg5",
+                        "child_iterators": [
+                            "%arg7"
+                        ],
+                        "computations_list": []
+                    }
+                ],
+                "%arg7": [
+                    {
+                        "lower_bound": "0",
+                        "upper_bound": "3",
+                        "parent_iterator": "%arg6",
+                        "child_iterators": [
+                            "%arg8"
+                        ],
+                        "computations_list": []
+                    }
+                ],
+                "%arg8": [
+                    {
+                        "lower_bound": "0",
+                        "upper_bound": "3",
+                        "parent_iterator": "%arg7",
+                        "child_iterators": [],
+                        "computations_list": [
+                            "comp00"
+                        ]
+                    }
+                ]
+            },
+            "computations": {
+                "comp00": {
+                    "absolute_order": 0,
+                    "iterators": [
+                        "%arg3",
+                        "%arg4",
+                        "%arg5",
+                        "%arg6",
+                        "%arg7",
+                        "%arg8"
+                    ],
+                    "comp_is_reduction": false,
+                    "number_of_additions": 0,
+                    "number_of_subtraction": 0,
+                    "number_of_multiplication": 0,
+                    "number_of_division": 0,
+                    "accesses": [
+                        {
+                            "access_is_reduction": false,
+                            "buffer_id": 0,
+                            "access_matrix": [
+                                [
+                                    1,
+                                    0,
+                                    0,
+                                    0,
+                                    0,
+                                    0
+                                ],
+                                [
+                                    0,
+                                    1,
+                                    0,
+                                    0,
+                                    0,
+                                    0
+                                ],
+                                [
+                                    0,
+                                    0,
+                                    2,
+                                    0,
+                                    1,
+                                    0
+                                ],
+                                [
+                                    0,
+                                    0,
+                                    0,
+                                    2,
+                                    0,
+                                    1
+                                ]
+                            ]
+                        },
+                        {
+                            "access_is_reduction": false,
+                            "buffer_id": 1,
+                            "access_matrix": [
+                                [
+                                    1,
+                                    0,
+                                    0,
+                                    0,
+                                    0,
+                                    0
+                                ],
+                                [
+                                    0,
+                                    1,
+                                    0,
+                                    0,
+                                    0,
+                                    0
+                                ],
+                                [
+                                    0,
+                                    0,
+                                    1,
+                                    0,
+                                    0,
+                                    0
+                                ],
+                                [
+                                    0,
+                                    0,
+                                    0,
+                                    1,
+                                    0,
+                                    0
+                                ]
+                            ]
+                        }
+                    ],
+                    "expression_representation": {
+                        "expr_type": "max",
+                        "children": [
+                            {
+                                "expr_type": "access",
+                                "children": []
+                            },
+                            {
+                                "expr_type": "access",
+                                "children": []
+                            }
+                        ]
+                    }
+                }
+            },
+            "initial_execution_time": null
+        },
+        "filename": "linalg.pooling_nchw_max {dilations = dense<1> : tensor<2xi64>, strides = dense<2> : tensor<2xi64>} ins (%input, %filter: tensor<128x288x224x150xf32>, tensor<3x3xf32>) outs (%init: tensor<128x288x111x74xf32>) -> tensor<128x288x111x74xf32>",
+        "raw_operation": "linalg.pooling_nchw_max {dilations = dense<1> : tensor<2xi64>, strides = dense<2> : tensor<2xi64>} ins (%input, %filter: tensor<128x288x224x150xf32>, tensor<3x3xf32>) outs (%init: tensor<128x288x111x74xf32>) -> tensor<128x288x111x74xf32>",
+        "node_name": "cn119",
+        "schedules_list": [
+            {
+                "comp00": {
+                    "parallelization+tiling": [
+                        2
+                    ],
+                    "tiling": null,
+                    "interchange": null,
+                    "vectorization": false
+                },
+                "execution_times": [
+                    0.663064,
+                    0.2777961,
+                    0.2049986,
+                    0.774705,
+                    0.9201585,
+                    0.6820805,
+                    0.91324,
+                    0.8670298,
+                    0.4848335,
+                    0.7451547
+                ],
+                "sched_str": "TP([2])"
+            },
+            {
+                "comp00": {
+                    "parallelization+tiling": null,
+                    "tiling": [
+                        2
+                    ],
+                    "interchange": null,
+                    "vectorization": false
+                },
+                "execution_times": [
+                    0.7209358,
+                    0.8242694,
+                    0.454279,
+                    0.7613291,
+                    0.0388555,
+                    0.2651509,
+                    0.3800722,
+                    0.839087,
+                    0.2942487,
+                    0.2224696
+                ],
+                "sched_str": "TP([2])T([2])"
+            },
+            {
+                "comp00": {
+                    "parallelization+tiling": [
+                        4
+                    ],
+                    "tiling": null,
+                    "interchange": null,
+                    "vectorization": false
+                },
+                "execution_times": [
+                    0.601346,
+                    0.7244644,
+                    0.9184782,
+                    0.2625927,
+                    0.1331704,
+                    0.1045677,
+                    0.8288679,
+                    0.178549,
+                    0.8900614,
+                    0.8208728
+                ],
+                "sched_str": "TP([4])"
+            },
+            {
+                "comp00": {
+                    "parallelization+tiling": null,
+                    "tiling": [
+                        4
+                    ],
+                    "interchange": null,
+                    "vectorization": false
+                },
+                "execution_times": [
+                    0.4330946,
+                    0.5781917,
+                    0.9717749,
+                    0.7841275,
+                    0.2653525,
+                    0.5804691,
+                    0.5039986,
+                    0.6574092,
+                    0.1397006,
+                    0.1841569
+                ],
+                "sched_str": "TP([4])T([4])"
+            },
+            {
+                "comp00": {
+                    "parallelization+tiling": [
+                        8
+                    ],
+                    "tiling": null,
+                    "interchange": null,
+                    "vectorization": false
+                },
+                "execution_times": [
+                    0.8438495,
+                    0.5520902,
+                    0.6403383,
+                    0.6192245,
+                    0.0272788,
+                    0.5458921,
+                    0.1740499,
+                    0.8317691,
+                    0.8212998,
+                    0.740111
+                ],
+                "sched_str": "TP([8])"
+            },
+            {
+                "comp00": {
+                    "parallelization+tiling": null,
+                    "tiling": [
+                        8
+                    ],
+                    "interchange": null,
+                    "vectorization": false
+                },
+                "execution_times": [
+                    0.2762372,
+                    0.8676302,
+                    0.680621,
+                    0.3202124,
+                    0.110255,
+                    0.6850613,
+                    0.283549,
+                    0.6491712,
+                    0.8450692,
+                    0.8483143
+                ],
+                "sched_str": "TP([8])T([8])"
+            }
+        ]
+    }
+}

@@ -1,0 +1,646 @@
+{
+  "linalg.generic {indexing_maps = [#map2, #map2], iterator_types = [\"parallel\", \"parallel\"]} ins(%38 : tensor<256x2048xf32>) outs(%35 : tensor<256x2048xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %46 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %47 = arith.select %46, %in, %cst_1 : f32\n                    linalg.yield %47 : f32\n                } -> tensor<256x2048xf32>": {
+    "operation": "linalg.generic {indexing_maps = [#map2, #map2], iterator_types = [\"parallel\", \"parallel\"]} ins(%38 : tensor<256x2048xf32>) outs(%35 : tensor<256x2048xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %46 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %47 = arith.select %46, %in, %cst_1 : f32\n                    linalg.yield %47 : f32\n                } -> tensor<256x2048xf32>",
+    "wrapped_operation": "#map2 = affine_map<(d0, d1) -> (d0, d1)>\nfunc.func @func_call(%38: tensor<256x2048xf32>, %35: tensor<256x2048xf32>) -> tensor<256x2048xf32> {\n  %ret = linalg.generic {indexing_maps = [#map2, #map2], iterator_types = [\"parallel\", \"parallel\"]} ins(%38 : tensor<256x2048xf32>) outs(%35 : tensor<256x2048xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %46 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %47 = arith.select %46, %in, %cst_1 : f32\n                    linalg.yield %47 : f32\n                } -> tensor<256x2048xf32>\n  return %ret : tensor<256x2048xf32>\n}",
+    "lowered_operation": "module {\n  func.func @func_call(%arg0: tensor<256x2048xf32>, %arg1: tensor<256x2048xf32>) -> tensor<256x2048xf32> {\n    %cst = arith.constant 0.000000e+00 : f32\n    %0 = bufferization.to_memref %arg0 : memref<256x2048xf32>\n    %alloc = memref.alloc() {alignment = 64 : i64} : memref<256x2048xf32>\n    affine.for %arg2 = 0 to 256 {\n      affine.for %arg3 = 0 to 2048 {\n        %2 = affine.load %0[%arg2, %arg3] : memref<256x2048xf32>\n        %3 = arith.cmpf ugt, %2, %cst : f32\n        %4 = arith.select %3, %2, %cst : f32\n        affine.store %4, %alloc[%arg2, %arg3] : memref<256x2048xf32>\n      }\n    }\n    %1 = bufferization.to_tensor %alloc : memref<256x2048xf32>\n    return %1 : tensor<256x2048xf32>\n  }\n}\n\n",
+    "transform_wrapped_operation": "#map2 = affine_map<(d0, d1) -> (d0, d1)>\nmodule attributes {torch.debug_module_name = \"Net\"} {\nfunc.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\nfunc.func private @printFlops(f64)\nfunc.func private @printI64(i64)\nfunc.func private @printNewline()\nfunc.func private @printMemrefF32(tensor<*xf32>)\n\n\nfunc.func @matmul() -> tensor<256x2048xf32>{\n\n%val = arith.constant 2.00000e+00 : f32\n%zero = arith.constant 0.00000e+00 : f32\n\n%tmp_38 = bufferization.alloc_tensor() : tensor<256x2048xf32>\n%38 = linalg.fill ins(%val : f32) outs(%tmp_38 : tensor<256x2048xf32>) -> tensor<256x2048xf32>\n%tmp_35 = bufferization.alloc_tensor() : tensor<256x2048xf32>\n%35 = linalg.fill ins(%val : f32) outs(%tmp_35 : tensor<256x2048xf32>) -> tensor<256x2048xf32>\n\n%t0 = func.call @nanoTime() : () -> (i64)\n\n%return_arg = linalg.generic {indexing_maps = [#map2, #map2], iterator_types = [\"parallel\", \"parallel\"]} ins(%38 : tensor<256x2048xf32>) outs(%35 : tensor<256x2048xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %46 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %47 = arith.select %46, %in, %cst_1 : f32\n                    linalg.yield %47 : f32\n                } -> tensor<256x2048xf32>\n%t = func.call @nanoTime() : () -> (i64)\n%delta = arith.subi %t, %t0 : i64\n%fp = arith.uitofp %delta : i64 to f64\n// func.call @printFlops(%fp) : (f64) -> ()\nfunc.call @printI64(%delta) : (i64) -> ()\nfunc.call @printNewline() : () -> ()\n\nreturn %return_arg : tensor<256x2048xf32> \n}\n\nfunc.func @main(){\n    %c1 = arith.constant 1: index\n    %c0 = arith.constant 0 : index\n    %n = arith.constant 2: index\n    scf.for %i = %c0 to %n step %c1 {\n    %outputmain = func.call @matmul() : () -> tensor<256x2048xf32>\n    }\n    return\n}\n}\n",
+    "loops_data": {
+      "nested_loops": [
+        [
+          "%arg2",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg3",
+          0,
+          2048,
+          1
+        ]
+      ],
+      "op_count": {
+        "+": 0,
+        "-": 0,
+        "*": 0,
+        "/": 0,
+        "exp": 0
+      },
+      "load_data": [
+        [
+          "%arg2",
+          "%arg3"
+        ]
+      ],
+      "store_data": []
+    },
+    "execution_time": 398779.5
+  },
+  "linalg.generic {indexing_maps = [#map2, #map2], iterator_types = [\"parallel\", \"parallel\"]} ins(%38 : tensor<256x512xf32>) outs(%35 : tensor<256x512xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %46 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %47 = arith.select %46, %in, %cst_1 : f32\n                    linalg.yield %47 : f32\n                } -> tensor<256x512xf32>": {
+    "operation": "linalg.generic {indexing_maps = [#map2, #map2], iterator_types = [\"parallel\", \"parallel\"]} ins(%38 : tensor<256x512xf32>) outs(%35 : tensor<256x512xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %46 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %47 = arith.select %46, %in, %cst_1 : f32\n                    linalg.yield %47 : f32\n                } -> tensor<256x512xf32>",
+    "wrapped_operation": "#map2 = affine_map<(d0, d1) -> (d0, d1)>\nfunc.func @func_call(%38: tensor<256x512xf32>, %35: tensor<256x512xf32>) -> tensor<256x512xf32> {\n  %ret = linalg.generic {indexing_maps = [#map2, #map2], iterator_types = [\"parallel\", \"parallel\"]} ins(%38 : tensor<256x512xf32>) outs(%35 : tensor<256x512xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %46 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %47 = arith.select %46, %in, %cst_1 : f32\n                    linalg.yield %47 : f32\n                } -> tensor<256x512xf32>\n  return %ret : tensor<256x512xf32>\n}",
+    "lowered_operation": "module {\n  func.func @func_call(%arg0: tensor<256x512xf32>, %arg1: tensor<256x512xf32>) -> tensor<256x512xf32> {\n    %cst = arith.constant 0.000000e+00 : f32\n    %0 = bufferization.to_memref %arg0 : memref<256x512xf32>\n    %alloc = memref.alloc() {alignment = 64 : i64} : memref<256x512xf32>\n    affine.for %arg2 = 0 to 256 {\n      affine.for %arg3 = 0 to 512 {\n        %2 = affine.load %0[%arg2, %arg3] : memref<256x512xf32>\n        %3 = arith.cmpf ugt, %2, %cst : f32\n        %4 = arith.select %3, %2, %cst : f32\n        affine.store %4, %alloc[%arg2, %arg3] : memref<256x512xf32>\n      }\n    }\n    %1 = bufferization.to_tensor %alloc : memref<256x512xf32>\n    return %1 : tensor<256x512xf32>\n  }\n}\n\n",
+    "transform_wrapped_operation": "#map2 = affine_map<(d0, d1) -> (d0, d1)>\nmodule attributes {torch.debug_module_name = \"Net\"} {\nfunc.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\nfunc.func private @printFlops(f64)\nfunc.func private @printI64(i64)\nfunc.func private @printNewline()\nfunc.func private @printMemrefF32(tensor<*xf32>)\n\n\nfunc.func @matmul() -> tensor<256x512xf32>{\n\n%val = arith.constant 2.00000e+00 : f32\n%zero = arith.constant 0.00000e+00 : f32\n\n%tmp_38 = bufferization.alloc_tensor() : tensor<256x512xf32>\n%38 = linalg.fill ins(%val : f32) outs(%tmp_38 : tensor<256x512xf32>) -> tensor<256x512xf32>\n%tmp_35 = bufferization.alloc_tensor() : tensor<256x512xf32>\n%35 = linalg.fill ins(%val : f32) outs(%tmp_35 : tensor<256x512xf32>) -> tensor<256x512xf32>\n\n%t0 = func.call @nanoTime() : () -> (i64)\n\n%return_arg = linalg.generic {indexing_maps = [#map2, #map2], iterator_types = [\"parallel\", \"parallel\"]} ins(%38 : tensor<256x512xf32>) outs(%35 : tensor<256x512xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %46 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %47 = arith.select %46, %in, %cst_1 : f32\n                    linalg.yield %47 : f32\n                } -> tensor<256x512xf32>\n%t = func.call @nanoTime() : () -> (i64)\n%delta = arith.subi %t, %t0 : i64\n%fp = arith.uitofp %delta : i64 to f64\n// func.call @printFlops(%fp) : (f64) -> ()\nfunc.call @printI64(%delta) : (i64) -> ()\nfunc.call @printNewline() : () -> ()\n\nreturn %return_arg : tensor<256x512xf32> \n}\n\nfunc.func @main(){\n    %c1 = arith.constant 1: index\n    %c0 = arith.constant 0 : index\n    %n = arith.constant 2: index\n    scf.for %i = %c0 to %n step %c1 {\n    %outputmain = func.call @matmul() : () -> tensor<256x512xf32>\n    }\n    return\n}\n}\n",
+    "loops_data": {
+      "nested_loops": [
+        [
+          "%arg2",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg3",
+          0,
+          512,
+          1
+        ]
+      ],
+      "op_count": {
+        "+": 0,
+        "-": 0,
+        "*": 0,
+        "/": 0,
+        "exp": 0
+      },
+      "load_data": [
+        [
+          "%arg2",
+          "%arg3"
+        ]
+      ],
+      "store_data": []
+    },
+    "execution_time": 101208
+  },
+  "linalg.generic {indexing_maps = [#map2, #map2], iterator_types = [\"parallel\", \"parallel\"]} ins(%38 : tensor<256x1000xf32>) outs(%35 : tensor<256x1000xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %46 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %47 = arith.select %46, %in, %cst_1 : f32\n                    linalg.yield %47 : f32\n                } -> tensor<256x1000xf32>": {
+    "operation": "linalg.generic {indexing_maps = [#map2, #map2], iterator_types = [\"parallel\", \"parallel\"]} ins(%38 : tensor<256x1000xf32>) outs(%35 : tensor<256x1000xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %46 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %47 = arith.select %46, %in, %cst_1 : f32\n                    linalg.yield %47 : f32\n                } -> tensor<256x1000xf32>",
+    "wrapped_operation": "#map2 = affine_map<(d0, d1) -> (d0, d1)>\nfunc.func @func_call(%38: tensor<256x1000xf32>, %35: tensor<256x1000xf32>) -> tensor<256x1000xf32> {\n  %ret = linalg.generic {indexing_maps = [#map2, #map2], iterator_types = [\"parallel\", \"parallel\"]} ins(%38 : tensor<256x1000xf32>) outs(%35 : tensor<256x1000xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %46 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %47 = arith.select %46, %in, %cst_1 : f32\n                    linalg.yield %47 : f32\n                } -> tensor<256x1000xf32>\n  return %ret : tensor<256x1000xf32>\n}",
+    "lowered_operation": "module {\n  func.func @func_call(%arg0: tensor<256x1000xf32>, %arg1: tensor<256x1000xf32>) -> tensor<256x1000xf32> {\n    %cst = arith.constant 0.000000e+00 : f32\n    %0 = bufferization.to_memref %arg0 : memref<256x1000xf32>\n    %alloc = memref.alloc() {alignment = 64 : i64} : memref<256x1000xf32>\n    affine.for %arg2 = 0 to 256 {\n      affine.for %arg3 = 0 to 1000 {\n        %2 = affine.load %0[%arg2, %arg3] : memref<256x1000xf32>\n        %3 = arith.cmpf ugt, %2, %cst : f32\n        %4 = arith.select %3, %2, %cst : f32\n        affine.store %4, %alloc[%arg2, %arg3] : memref<256x1000xf32>\n      }\n    }\n    %1 = bufferization.to_tensor %alloc : memref<256x1000xf32>\n    return %1 : tensor<256x1000xf32>\n  }\n}\n\n",
+    "transform_wrapped_operation": "#map2 = affine_map<(d0, d1) -> (d0, d1)>\nmodule attributes {torch.debug_module_name = \"Net\"} {\nfunc.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\nfunc.func private @printFlops(f64)\nfunc.func private @printI64(i64)\nfunc.func private @printNewline()\nfunc.func private @printMemrefF32(tensor<*xf32>)\n\n\nfunc.func @matmul() -> tensor<256x1000xf32>{\n\n%val = arith.constant 2.00000e+00 : f32\n%zero = arith.constant 0.00000e+00 : f32\n\n%tmp_38 = bufferization.alloc_tensor() : tensor<256x1000xf32>\n%38 = linalg.fill ins(%val : f32) outs(%tmp_38 : tensor<256x1000xf32>) -> tensor<256x1000xf32>\n%tmp_35 = bufferization.alloc_tensor() : tensor<256x1000xf32>\n%35 = linalg.fill ins(%val : f32) outs(%tmp_35 : tensor<256x1000xf32>) -> tensor<256x1000xf32>\n\n%t0 = func.call @nanoTime() : () -> (i64)\n\n%return_arg = linalg.generic {indexing_maps = [#map2, #map2], iterator_types = [\"parallel\", \"parallel\"]} ins(%38 : tensor<256x1000xf32>) outs(%35 : tensor<256x1000xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %46 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %47 = arith.select %46, %in, %cst_1 : f32\n                    linalg.yield %47 : f32\n                } -> tensor<256x1000xf32>\n%t = func.call @nanoTime() : () -> (i64)\n%delta = arith.subi %t, %t0 : i64\n%fp = arith.uitofp %delta : i64 to f64\n// func.call @printFlops(%fp) : (f64) -> ()\nfunc.call @printI64(%delta) : (i64) -> ()\nfunc.call @printNewline() : () -> ()\n\nreturn %return_arg : tensor<256x1000xf32> \n}\n\nfunc.func @main(){\n    %c1 = arith.constant 1: index\n    %c0 = arith.constant 0 : index\n    %n = arith.constant 2: index\n    scf.for %i = %c0 to %n step %c1 {\n    %outputmain = func.call @matmul() : () -> tensor<256x1000xf32>\n    }\n    return\n}\n}\n",
+    "loops_data": {
+      "nested_loops": [
+        [
+          "%arg2",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg3",
+          0,
+          1000,
+          1
+        ]
+      ],
+      "op_count": {
+        "+": 0,
+        "-": 0,
+        "*": 0,
+        "/": 0,
+        "exp": 0
+      },
+      "load_data": [
+        [
+          "%arg2",
+          "%arg3"
+        ]
+      ],
+      "store_data": []
+    },
+    "execution_time": 195511.5
+  },
+  "linalg.generic {indexing_maps = [#map2, #map2], iterator_types = [\"parallel\", \"parallel\"]} ins(%38 : tensor<256x100xf32>) outs(%35 : tensor<256x100xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %46 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %47 = arith.select %46, %in, %cst_1 : f32\n                    linalg.yield %47 : f32\n                } -> tensor<256x100xf32>": {
+    "operation": "linalg.generic {indexing_maps = [#map2, #map2], iterator_types = [\"parallel\", \"parallel\"]} ins(%38 : tensor<256x100xf32>) outs(%35 : tensor<256x100xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %46 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %47 = arith.select %46, %in, %cst_1 : f32\n                    linalg.yield %47 : f32\n                } -> tensor<256x100xf32>",
+    "wrapped_operation": "#map2 = affine_map<(d0, d1) -> (d0, d1)>\nfunc.func @func_call(%38: tensor<256x100xf32>, %35: tensor<256x100xf32>) -> tensor<256x100xf32> {\n  %ret = linalg.generic {indexing_maps = [#map2, #map2], iterator_types = [\"parallel\", \"parallel\"]} ins(%38 : tensor<256x100xf32>) outs(%35 : tensor<256x100xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %46 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %47 = arith.select %46, %in, %cst_1 : f32\n                    linalg.yield %47 : f32\n                } -> tensor<256x100xf32>\n  return %ret : tensor<256x100xf32>\n}",
+    "lowered_operation": "module {\n  func.func @func_call(%arg0: tensor<256x100xf32>, %arg1: tensor<256x100xf32>) -> tensor<256x100xf32> {\n    %cst = arith.constant 0.000000e+00 : f32\n    %0 = bufferization.to_memref %arg0 : memref<256x100xf32>\n    %alloc = memref.alloc() {alignment = 64 : i64} : memref<256x100xf32>\n    affine.for %arg2 = 0 to 256 {\n      affine.for %arg3 = 0 to 100 {\n        %2 = affine.load %0[%arg2, %arg3] : memref<256x100xf32>\n        %3 = arith.cmpf ugt, %2, %cst : f32\n        %4 = arith.select %3, %2, %cst : f32\n        affine.store %4, %alloc[%arg2, %arg3] : memref<256x100xf32>\n      }\n    }\n    %1 = bufferization.to_tensor %alloc : memref<256x100xf32>\n    return %1 : tensor<256x100xf32>\n  }\n}\n\n",
+    "transform_wrapped_operation": "#map2 = affine_map<(d0, d1) -> (d0, d1)>\nmodule attributes {torch.debug_module_name = \"Net\"} {\nfunc.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\nfunc.func private @printFlops(f64)\nfunc.func private @printI64(i64)\nfunc.func private @printNewline()\nfunc.func private @printMemrefF32(tensor<*xf32>)\n\n\nfunc.func @matmul() -> tensor<256x100xf32>{\n\n%val = arith.constant 2.00000e+00 : f32\n%zero = arith.constant 0.00000e+00 : f32\n\n%tmp_38 = bufferization.alloc_tensor() : tensor<256x100xf32>\n%38 = linalg.fill ins(%val : f32) outs(%tmp_38 : tensor<256x100xf32>) -> tensor<256x100xf32>\n%tmp_35 = bufferization.alloc_tensor() : tensor<256x100xf32>\n%35 = linalg.fill ins(%val : f32) outs(%tmp_35 : tensor<256x100xf32>) -> tensor<256x100xf32>\n\n%t0 = func.call @nanoTime() : () -> (i64)\n\n%return_arg = linalg.generic {indexing_maps = [#map2, #map2], iterator_types = [\"parallel\", \"parallel\"]} ins(%38 : tensor<256x100xf32>) outs(%35 : tensor<256x100xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %46 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %47 = arith.select %46, %in, %cst_1 : f32\n                    linalg.yield %47 : f32\n                } -> tensor<256x100xf32>\n%t = func.call @nanoTime() : () -> (i64)\n%delta = arith.subi %t, %t0 : i64\n%fp = arith.uitofp %delta : i64 to f64\n// func.call @printFlops(%fp) : (f64) -> ()\nfunc.call @printI64(%delta) : (i64) -> ()\nfunc.call @printNewline() : () -> ()\n\nreturn %return_arg : tensor<256x100xf32> \n}\n\nfunc.func @main(){\n    %c1 = arith.constant 1: index\n    %c0 = arith.constant 0 : index\n    %n = arith.constant 2: index\n    scf.for %i = %c0 to %n step %c1 {\n    %outputmain = func.call @matmul() : () -> tensor<256x100xf32>\n    }\n    return\n}\n}\n",
+    "loops_data": {
+      "nested_loops": [
+        [
+          "%arg2",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg3",
+          0,
+          100,
+          1
+        ]
+      ],
+      "op_count": {
+        "+": 0,
+        "-": 0,
+        "*": 0,
+        "/": 0,
+        "exp": 0
+      },
+      "load_data": [
+        [
+          "%arg2",
+          "%arg3"
+        ]
+      ],
+      "store_data": []
+    },
+    "execution_time": 19827
+  },
+  "linalg.generic {indexing_maps = [#map2, #map2], iterator_types = [\"parallel\", \"parallel\"]} ins(%38 : tensor<256x10xf32>) outs(%35 : tensor<256x10xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %46 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %47 = arith.select %46, %in, %cst_1 : f32\n                    linalg.yield %47 : f32\n                } -> tensor<256x10xf32>": {
+    "operation": "linalg.generic {indexing_maps = [#map2, #map2], iterator_types = [\"parallel\", \"parallel\"]} ins(%38 : tensor<256x10xf32>) outs(%35 : tensor<256x10xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %46 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %47 = arith.select %46, %in, %cst_1 : f32\n                    linalg.yield %47 : f32\n                } -> tensor<256x10xf32>",
+    "wrapped_operation": "#map2 = affine_map<(d0, d1) -> (d0, d1)>\nfunc.func @func_call(%38: tensor<256x10xf32>, %35: tensor<256x10xf32>) -> tensor<256x10xf32> {\n  %ret = linalg.generic {indexing_maps = [#map2, #map2], iterator_types = [\"parallel\", \"parallel\"]} ins(%38 : tensor<256x10xf32>) outs(%35 : tensor<256x10xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %46 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %47 = arith.select %46, %in, %cst_1 : f32\n                    linalg.yield %47 : f32\n                } -> tensor<256x10xf32>\n  return %ret : tensor<256x10xf32>\n}",
+    "lowered_operation": "module {\n  func.func @func_call(%arg0: tensor<256x10xf32>, %arg1: tensor<256x10xf32>) -> tensor<256x10xf32> {\n    %cst = arith.constant 0.000000e+00 : f32\n    %0 = bufferization.to_memref %arg0 : memref<256x10xf32>\n    %alloc = memref.alloc() {alignment = 64 : i64} : memref<256x10xf32>\n    affine.for %arg2 = 0 to 256 {\n      affine.for %arg3 = 0 to 10 {\n        %2 = affine.load %0[%arg2, %arg3] : memref<256x10xf32>\n        %3 = arith.cmpf ugt, %2, %cst : f32\n        %4 = arith.select %3, %2, %cst : f32\n        affine.store %4, %alloc[%arg2, %arg3] : memref<256x10xf32>\n      }\n    }\n    %1 = bufferization.to_tensor %alloc : memref<256x10xf32>\n    return %1 : tensor<256x10xf32>\n  }\n}\n\n",
+    "transform_wrapped_operation": "#map2 = affine_map<(d0, d1) -> (d0, d1)>\nmodule attributes {torch.debug_module_name = \"Net\"} {\nfunc.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\nfunc.func private @printFlops(f64)\nfunc.func private @printI64(i64)\nfunc.func private @printNewline()\nfunc.func private @printMemrefF32(tensor<*xf32>)\n\n\nfunc.func @matmul() -> tensor<256x10xf32>{\n\n%val = arith.constant 2.00000e+00 : f32\n%zero = arith.constant 0.00000e+00 : f32\n\n%tmp_38 = bufferization.alloc_tensor() : tensor<256x10xf32>\n%38 = linalg.fill ins(%val : f32) outs(%tmp_38 : tensor<256x10xf32>) -> tensor<256x10xf32>\n%tmp_35 = bufferization.alloc_tensor() : tensor<256x10xf32>\n%35 = linalg.fill ins(%val : f32) outs(%tmp_35 : tensor<256x10xf32>) -> tensor<256x10xf32>\n\n%t0 = func.call @nanoTime() : () -> (i64)\n\n%return_arg = linalg.generic {indexing_maps = [#map2, #map2], iterator_types = [\"parallel\", \"parallel\"]} ins(%38 : tensor<256x10xf32>) outs(%35 : tensor<256x10xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %46 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %47 = arith.select %46, %in, %cst_1 : f32\n                    linalg.yield %47 : f32\n                } -> tensor<256x10xf32>\n%t = func.call @nanoTime() : () -> (i64)\n%delta = arith.subi %t, %t0 : i64\n%fp = arith.uitofp %delta : i64 to f64\n// func.call @printFlops(%fp) : (f64) -> ()\nfunc.call @printI64(%delta) : (i64) -> ()\nfunc.call @printNewline() : () -> ()\n\nreturn %return_arg : tensor<256x10xf32> \n}\n\nfunc.func @main(){\n    %c1 = arith.constant 1: index\n    %c0 = arith.constant 0 : index\n    %n = arith.constant 2: index\n    scf.for %i = %c0 to %n step %c1 {\n    %outputmain = func.call @matmul() : () -> tensor<256x10xf32>\n    }\n    return\n}\n}\n",
+    "loops_data": {
+      "nested_loops": [
+        [
+          "%arg2",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg3",
+          0,
+          10,
+          1
+        ]
+      ],
+      "op_count": {
+        "+": 0,
+        "-": 0,
+        "*": 0,
+        "/": 0,
+        "exp": 0
+      },
+      "load_data": [
+        [
+          "%arg2",
+          "%arg3"
+        ]
+      ],
+      "store_data": []
+    },
+    "execution_time": 2579.5
+  },
+  "linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x57x57x64xf32>) outs(%25 : tensor<256x57x57x64xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x57x57x64xf32>": {
+    "operation": "linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x57x57x64xf32>) outs(%25 : tensor<256x57x57x64xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x57x57x64xf32>",
+    "wrapped_operation": "#map = affine_map<(d0, d1, d2, d3) -> (d0, d1, d2, d3)>\n                #map2 = affine_map<(d0, d1, d2, d3) -> (0, d1, d2, d3)>\nfunc.func @func_call(%28: tensor<256x57x57x64xf32>, %25: tensor<256x57x57x64xf32>) -> tensor<256x57x57x64xf32> {\n  %ret = linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x57x57x64xf32>) outs(%25 : tensor<256x57x57x64xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x57x57x64xf32>\n  return %ret : tensor<256x57x57x64xf32>\n}",
+    "lowered_operation": "module {\n  func.func @func_call(%arg0: tensor<256x57x57x64xf32>, %arg1: tensor<256x57x57x64xf32>) -> tensor<256x57x57x64xf32> {\n    %c0 = arith.constant 0 : index\n    %cst = arith.constant 0.000000e+00 : f32\n    %0 = bufferization.to_memref %arg0 : memref<256x57x57x64xf32>\n    %alloc = memref.alloc() {alignment = 64 : i64} : memref<256x57x57x64xf32>\n    affine.for %arg2 = 0 to 256 {\n      affine.for %arg3 = 0 to 57 {\n        affine.for %arg4 = 0 to 57 {\n          affine.for %arg5 = 0 to 64 {\n            %2 = affine.load %0[%c0, %arg3, %arg4, %arg5] : memref<256x57x57x64xf32>\n            %3 = arith.cmpf ugt, %2, %cst : f32\n            %4 = arith.select %3, %2, %cst : f32\n            affine.store %4, %alloc[%arg2, %arg3, %arg4, %arg5] : memref<256x57x57x64xf32>\n          }\n        }\n      }\n    }\n    %1 = bufferization.to_tensor %alloc : memref<256x57x57x64xf32>\n    return %1 : tensor<256x57x57x64xf32>\n  }\n}\n\n",
+    "transform_wrapped_operation": "#map = affine_map<(d0, d1, d2, d3) -> (d0, d1, d2, d3)>\n                #map2 = affine_map<(d0, d1, d2, d3) -> (0, d1, d2, d3)>\nmodule attributes {torch.debug_module_name = \"Net\"} {\nfunc.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\nfunc.func private @printFlops(f64)\nfunc.func private @printI64(i64)\nfunc.func private @printNewline()\nfunc.func private @printMemrefF32(tensor<*xf32>)\n\n\nfunc.func @matmul() -> tensor<256x57x57x64xf32>{\n\n%val = arith.constant 2.00000e+00 : f32\n%zero = arith.constant 0.00000e+00 : f32\n\n%tmp_28 = bufferization.alloc_tensor() : tensor<256x57x57x64xf32>\n%28 = linalg.fill ins(%val : f32) outs(%tmp_28 : tensor<256x57x57x64xf32>) -> tensor<256x57x57x64xf32>\n%tmp_25 = bufferization.alloc_tensor() : tensor<256x57x57x64xf32>\n%25 = linalg.fill ins(%val : f32) outs(%tmp_25 : tensor<256x57x57x64xf32>) -> tensor<256x57x57x64xf32>\n\n%t0 = func.call @nanoTime() : () -> (i64)\n\n%return_arg = linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x57x57x64xf32>) outs(%25 : tensor<256x57x57x64xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x57x57x64xf32>\n%t = func.call @nanoTime() : () -> (i64)\n%delta = arith.subi %t, %t0 : i64\n%fp = arith.uitofp %delta : i64 to f64\n// func.call @printFlops(%fp) : (f64) -> ()\nfunc.call @printI64(%delta) : (i64) -> ()\nfunc.call @printNewline() : () -> ()\n\nreturn %return_arg : tensor<256x57x57x64xf32> \n}\n\nfunc.func @main(){\n    %c1 = arith.constant 1: index\n    %c0 = arith.constant 0 : index\n    %n = arith.constant 2: index\n    scf.for %i = %c0 to %n step %c1 {\n    %outputmain = func.call @matmul() : () -> tensor<256x57x57x64xf32>\n    }\n    return\n}\n}\n",
+    "loops_data": {
+      "nested_loops": [
+        [
+          "%arg2",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg3",
+          0,
+          57,
+          1
+        ],
+        [
+          "%arg4",
+          0,
+          57,
+          1
+        ],
+        [
+          "%arg5",
+          0,
+          64,
+          1
+        ]
+      ],
+      "op_count": {
+        "+": 0,
+        "-": 0,
+        "*": 0,
+        "/": 0,
+        "exp": 0
+      },
+      "load_data": [
+        [
+          "%c0",
+          "%arg3",
+          "%arg4",
+          "%arg5"
+        ]
+      ],
+      "store_data": []
+    },
+    "execution_time": 45016676
+  },
+  "linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x74x74x64xf32>) outs(%25 : tensor<256x74x74x64xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x74x74x64xf32>": {
+    "operation": "linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x74x74x64xf32>) outs(%25 : tensor<256x74x74x64xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x74x74x64xf32>",
+    "wrapped_operation": "#map = affine_map<(d0, d1, d2, d3) -> (d0, d1, d2, d3)>\n                #map2 = affine_map<(d0, d1, d2, d3) -> (0, d1, d2, d3)>\nfunc.func @func_call(%28: tensor<256x74x74x64xf32>, %25: tensor<256x74x74x64xf32>) -> tensor<256x74x74x64xf32> {\n  %ret = linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x74x74x64xf32>) outs(%25 : tensor<256x74x74x64xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x74x74x64xf32>\n  return %ret : tensor<256x74x74x64xf32>\n}",
+    "lowered_operation": "module {\n  func.func @func_call(%arg0: tensor<256x74x74x64xf32>, %arg1: tensor<256x74x74x64xf32>) -> tensor<256x74x74x64xf32> {\n    %c0 = arith.constant 0 : index\n    %cst = arith.constant 0.000000e+00 : f32\n    %0 = bufferization.to_memref %arg0 : memref<256x74x74x64xf32>\n    %alloc = memref.alloc() {alignment = 64 : i64} : memref<256x74x74x64xf32>\n    affine.for %arg2 = 0 to 256 {\n      affine.for %arg3 = 0 to 74 {\n        affine.for %arg4 = 0 to 74 {\n          affine.for %arg5 = 0 to 64 {\n            %2 = affine.load %0[%c0, %arg3, %arg4, %arg5] : memref<256x74x74x64xf32>\n            %3 = arith.cmpf ugt, %2, %cst : f32\n            %4 = arith.select %3, %2, %cst : f32\n            affine.store %4, %alloc[%arg2, %arg3, %arg4, %arg5] : memref<256x74x74x64xf32>\n          }\n        }\n      }\n    }\n    %1 = bufferization.to_tensor %alloc : memref<256x74x74x64xf32>\n    return %1 : tensor<256x74x74x64xf32>\n  }\n}\n\n",
+    "transform_wrapped_operation": "#map = affine_map<(d0, d1, d2, d3) -> (d0, d1, d2, d3)>\n                #map2 = affine_map<(d0, d1, d2, d3) -> (0, d1, d2, d3)>\nmodule attributes {torch.debug_module_name = \"Net\"} {\nfunc.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\nfunc.func private @printFlops(f64)\nfunc.func private @printI64(i64)\nfunc.func private @printNewline()\nfunc.func private @printMemrefF32(tensor<*xf32>)\n\n\nfunc.func @matmul() -> tensor<256x74x74x64xf32>{\n\n%val = arith.constant 2.00000e+00 : f32\n%zero = arith.constant 0.00000e+00 : f32\n\n%tmp_28 = bufferization.alloc_tensor() : tensor<256x74x74x64xf32>\n%28 = linalg.fill ins(%val : f32) outs(%tmp_28 : tensor<256x74x74x64xf32>) -> tensor<256x74x74x64xf32>\n%tmp_25 = bufferization.alloc_tensor() : tensor<256x74x74x64xf32>\n%25 = linalg.fill ins(%val : f32) outs(%tmp_25 : tensor<256x74x74x64xf32>) -> tensor<256x74x74x64xf32>\n\n%t0 = func.call @nanoTime() : () -> (i64)\n\n%return_arg = linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x74x74x64xf32>) outs(%25 : tensor<256x74x74x64xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x74x74x64xf32>\n%t = func.call @nanoTime() : () -> (i64)\n%delta = arith.subi %t, %t0 : i64\n%fp = arith.uitofp %delta : i64 to f64\n// func.call @printFlops(%fp) : (f64) -> ()\nfunc.call @printI64(%delta) : (i64) -> ()\nfunc.call @printNewline() : () -> ()\n\nreturn %return_arg : tensor<256x74x74x64xf32> \n}\n\nfunc.func @main(){\n    %c1 = arith.constant 1: index\n    %c0 = arith.constant 0 : index\n    %n = arith.constant 2: index\n    scf.for %i = %c0 to %n step %c1 {\n    %outputmain = func.call @matmul() : () -> tensor<256x74x74x64xf32>\n    }\n    return\n}\n}\n",
+    "loops_data": {
+      "nested_loops": [
+        [
+          "%arg2",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg3",
+          0,
+          74,
+          1
+        ],
+        [
+          "%arg4",
+          0,
+          74,
+          1
+        ],
+        [
+          "%arg5",
+          0,
+          64,
+          1
+        ]
+      ],
+      "op_count": {
+        "+": 0,
+        "-": 0,
+        "*": 0,
+        "/": 0,
+        "exp": 0
+      },
+      "load_data": [
+        [
+          "%c0",
+          "%arg3",
+          "%arg4",
+          "%arg5"
+        ]
+      ],
+      "store_data": []
+    },
+    "execution_time": 75674570
+  },
+  "linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x36x36x192xf32>) outs(%25 : tensor<256x36x36x192xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x36x36x192xf32>": {
+    "operation": "linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x36x36x192xf32>) outs(%25 : tensor<256x36x36x192xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x36x36x192xf32>",
+    "wrapped_operation": "#map = affine_map<(d0, d1, d2, d3) -> (d0, d1, d2, d3)>\n                #map2 = affine_map<(d0, d1, d2, d3) -> (0, d1, d2, d3)>\nfunc.func @func_call(%28: tensor<256x36x36x192xf32>, %25: tensor<256x36x36x192xf32>) -> tensor<256x36x36x192xf32> {\n  %ret = linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x36x36x192xf32>) outs(%25 : tensor<256x36x36x192xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x36x36x192xf32>\n  return %ret : tensor<256x36x36x192xf32>\n}",
+    "lowered_operation": "module {\n  func.func @func_call(%arg0: tensor<256x36x36x192xf32>, %arg1: tensor<256x36x36x192xf32>) -> tensor<256x36x36x192xf32> {\n    %c0 = arith.constant 0 : index\n    %cst = arith.constant 0.000000e+00 : f32\n    %0 = bufferization.to_memref %arg0 : memref<256x36x36x192xf32>\n    %alloc = memref.alloc() {alignment = 64 : i64} : memref<256x36x36x192xf32>\n    affine.for %arg2 = 0 to 256 {\n      affine.for %arg3 = 0 to 36 {\n        affine.for %arg4 = 0 to 36 {\n          affine.for %arg5 = 0 to 192 {\n            %2 = affine.load %0[%c0, %arg3, %arg4, %arg5] : memref<256x36x36x192xf32>\n            %3 = arith.cmpf ugt, %2, %cst : f32\n            %4 = arith.select %3, %2, %cst : f32\n            affine.store %4, %alloc[%arg2, %arg3, %arg4, %arg5] : memref<256x36x36x192xf32>\n          }\n        }\n      }\n    }\n    %1 = bufferization.to_tensor %alloc : memref<256x36x36x192xf32>\n    return %1 : tensor<256x36x36x192xf32>\n  }\n}\n\n",
+    "transform_wrapped_operation": "#map = affine_map<(d0, d1, d2, d3) -> (d0, d1, d2, d3)>\n                #map2 = affine_map<(d0, d1, d2, d3) -> (0, d1, d2, d3)>\nmodule attributes {torch.debug_module_name = \"Net\"} {\nfunc.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\nfunc.func private @printFlops(f64)\nfunc.func private @printI64(i64)\nfunc.func private @printNewline()\nfunc.func private @printMemrefF32(tensor<*xf32>)\n\n\nfunc.func @matmul() -> tensor<256x36x36x192xf32>{\n\n%val = arith.constant 2.00000e+00 : f32\n%zero = arith.constant 0.00000e+00 : f32\n\n%tmp_28 = bufferization.alloc_tensor() : tensor<256x36x36x192xf32>\n%28 = linalg.fill ins(%val : f32) outs(%tmp_28 : tensor<256x36x36x192xf32>) -> tensor<256x36x36x192xf32>\n%tmp_25 = bufferization.alloc_tensor() : tensor<256x36x36x192xf32>\n%25 = linalg.fill ins(%val : f32) outs(%tmp_25 : tensor<256x36x36x192xf32>) -> tensor<256x36x36x192xf32>\n\n%t0 = func.call @nanoTime() : () -> (i64)\n\n%return_arg = linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x36x36x192xf32>) outs(%25 : tensor<256x36x36x192xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x36x36x192xf32>\n%t = func.call @nanoTime() : () -> (i64)\n%delta = arith.subi %t, %t0 : i64\n%fp = arith.uitofp %delta : i64 to f64\n// func.call @printFlops(%fp) : (f64) -> ()\nfunc.call @printI64(%delta) : (i64) -> ()\nfunc.call @printNewline() : () -> ()\n\nreturn %return_arg : tensor<256x36x36x192xf32> \n}\n\nfunc.func @main(){\n    %c1 = arith.constant 1: index\n    %c0 = arith.constant 0 : index\n    %n = arith.constant 2: index\n    scf.for %i = %c0 to %n step %c1 {\n    %outputmain = func.call @matmul() : () -> tensor<256x36x36x192xf32>\n    }\n    return\n}\n}\n",
+    "loops_data": {
+      "nested_loops": [
+        [
+          "%arg2",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg3",
+          0,
+          36,
+          1
+        ],
+        [
+          "%arg4",
+          0,
+          36,
+          1
+        ],
+        [
+          "%arg5",
+          0,
+          192,
+          1
+        ]
+      ],
+      "op_count": {
+        "+": 0,
+        "-": 0,
+        "*": 0,
+        "/": 0,
+        "exp": 0
+      },
+      "load_data": [
+        [
+          "%c0",
+          "%arg3",
+          "%arg4",
+          "%arg5"
+        ]
+      ],
+      "store_data": []
+    },
+    "execution_time": 51477762
+  },
+  "linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x85x85x42xf32>) outs(%25 : tensor<256x85x85x42xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x85x85x42xf32>": {
+    "operation": "linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x85x85x42xf32>) outs(%25 : tensor<256x85x85x42xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x85x85x42xf32>",
+    "wrapped_operation": "#map = affine_map<(d0, d1, d2, d3) -> (d0, d1, d2, d3)>\n                #map2 = affine_map<(d0, d1, d2, d3) -> (0, d1, d2, d3)>\nfunc.func @func_call(%28: tensor<256x85x85x42xf32>, %25: tensor<256x85x85x42xf32>) -> tensor<256x85x85x42xf32> {\n  %ret = linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x85x85x42xf32>) outs(%25 : tensor<256x85x85x42xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x85x85x42xf32>\n  return %ret : tensor<256x85x85x42xf32>\n}",
+    "lowered_operation": "module {\n  func.func @func_call(%arg0: tensor<256x85x85x42xf32>, %arg1: tensor<256x85x85x42xf32>) -> tensor<256x85x85x42xf32> {\n    %c0 = arith.constant 0 : index\n    %cst = arith.constant 0.000000e+00 : f32\n    %0 = bufferization.to_memref %arg0 : memref<256x85x85x42xf32>\n    %alloc = memref.alloc() {alignment = 64 : i64} : memref<256x85x85x42xf32>\n    affine.for %arg2 = 0 to 256 {\n      affine.for %arg3 = 0 to 85 {\n        affine.for %arg4 = 0 to 85 {\n          affine.for %arg5 = 0 to 42 {\n            %2 = affine.load %0[%c0, %arg3, %arg4, %arg5] : memref<256x85x85x42xf32>\n            %3 = arith.cmpf ugt, %2, %cst : f32\n            %4 = arith.select %3, %2, %cst : f32\n            affine.store %4, %alloc[%arg2, %arg3, %arg4, %arg5] : memref<256x85x85x42xf32>\n          }\n        }\n      }\n    }\n    %1 = bufferization.to_tensor %alloc : memref<256x85x85x42xf32>\n    return %1 : tensor<256x85x85x42xf32>\n  }\n}\n\n",
+    "transform_wrapped_operation": "#map = affine_map<(d0, d1, d2, d3) -> (d0, d1, d2, d3)>\n                #map2 = affine_map<(d0, d1, d2, d3) -> (0, d1, d2, d3)>\nmodule attributes {torch.debug_module_name = \"Net\"} {\nfunc.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\nfunc.func private @printFlops(f64)\nfunc.func private @printI64(i64)\nfunc.func private @printNewline()\nfunc.func private @printMemrefF32(tensor<*xf32>)\n\n\nfunc.func @matmul() -> tensor<256x85x85x42xf32>{\n\n%val = arith.constant 2.00000e+00 : f32\n%zero = arith.constant 0.00000e+00 : f32\n\n%tmp_28 = bufferization.alloc_tensor() : tensor<256x85x85x42xf32>\n%28 = linalg.fill ins(%val : f32) outs(%tmp_28 : tensor<256x85x85x42xf32>) -> tensor<256x85x85x42xf32>\n%tmp_25 = bufferization.alloc_tensor() : tensor<256x85x85x42xf32>\n%25 = linalg.fill ins(%val : f32) outs(%tmp_25 : tensor<256x85x85x42xf32>) -> tensor<256x85x85x42xf32>\n\n%t0 = func.call @nanoTime() : () -> (i64)\n\n%return_arg = linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x85x85x42xf32>) outs(%25 : tensor<256x85x85x42xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x85x85x42xf32>\n%t = func.call @nanoTime() : () -> (i64)\n%delta = arith.subi %t, %t0 : i64\n%fp = arith.uitofp %delta : i64 to f64\n// func.call @printFlops(%fp) : (f64) -> ()\nfunc.call @printI64(%delta) : (i64) -> ()\nfunc.call @printNewline() : () -> ()\n\nreturn %return_arg : tensor<256x85x85x42xf32> \n}\n\nfunc.func @main(){\n    %c1 = arith.constant 1: index\n    %c0 = arith.constant 0 : index\n    %n = arith.constant 2: index\n    scf.for %i = %c0 to %n step %c1 {\n    %outputmain = func.call @matmul() : () -> tensor<256x85x85x42xf32>\n    }\n    return\n}\n}\n",
+    "loops_data": {
+      "nested_loops": [
+        [
+          "%arg2",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg3",
+          0,
+          85,
+          1
+        ],
+        [
+          "%arg4",
+          0,
+          85,
+          1
+        ],
+        [
+          "%arg5",
+          0,
+          42,
+          1
+        ]
+      ],
+      "op_count": {
+        "+": 0,
+        "-": 0,
+        "*": 0,
+        "/": 0,
+        "exp": 0
+      },
+      "load_data": [
+        [
+          "%c0",
+          "%arg3",
+          "%arg4",
+          "%arg5"
+        ]
+      ],
+      "store_data": []
+    },
+    "execution_time": 68920689
+  },
+  "linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x43x43x84xf32>) outs(%25 : tensor<256x43x43x84xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x43x43x84xf32>": {
+    "operation": "linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x43x43x84xf32>) outs(%25 : tensor<256x43x43x84xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x43x43x84xf32>",
+    "wrapped_operation": "#map = affine_map<(d0, d1, d2, d3) -> (d0, d1, d2, d3)>\n                #map2 = affine_map<(d0, d1, d2, d3) -> (0, d1, d2, d3)>\nfunc.func @func_call(%28: tensor<256x43x43x84xf32>, %25: tensor<256x43x43x84xf32>) -> tensor<256x43x43x84xf32> {\n  %ret = linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x43x43x84xf32>) outs(%25 : tensor<256x43x43x84xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x43x43x84xf32>\n  return %ret : tensor<256x43x43x84xf32>\n}",
+    "lowered_operation": "module {\n  func.func @func_call(%arg0: tensor<256x43x43x84xf32>, %arg1: tensor<256x43x43x84xf32>) -> tensor<256x43x43x84xf32> {\n    %c0 = arith.constant 0 : index\n    %cst = arith.constant 0.000000e+00 : f32\n    %0 = bufferization.to_memref %arg0 : memref<256x43x43x84xf32>\n    %alloc = memref.alloc() {alignment = 64 : i64} : memref<256x43x43x84xf32>\n    affine.for %arg2 = 0 to 256 {\n      affine.for %arg3 = 0 to 43 {\n        affine.for %arg4 = 0 to 43 {\n          affine.for %arg5 = 0 to 84 {\n            %2 = affine.load %0[%c0, %arg3, %arg4, %arg5] : memref<256x43x43x84xf32>\n            %3 = arith.cmpf ugt, %2, %cst : f32\n            %4 = arith.select %3, %2, %cst : f32\n            affine.store %4, %alloc[%arg2, %arg3, %arg4, %arg5] : memref<256x43x43x84xf32>\n          }\n        }\n      }\n    }\n    %1 = bufferization.to_tensor %alloc : memref<256x43x43x84xf32>\n    return %1 : tensor<256x43x43x84xf32>\n  }\n}\n\n",
+    "transform_wrapped_operation": "#map = affine_map<(d0, d1, d2, d3) -> (d0, d1, d2, d3)>\n                #map2 = affine_map<(d0, d1, d2, d3) -> (0, d1, d2, d3)>\nmodule attributes {torch.debug_module_name = \"Net\"} {\nfunc.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\nfunc.func private @printFlops(f64)\nfunc.func private @printI64(i64)\nfunc.func private @printNewline()\nfunc.func private @printMemrefF32(tensor<*xf32>)\n\n\nfunc.func @matmul() -> tensor<256x43x43x84xf32>{\n\n%val = arith.constant 2.00000e+00 : f32\n%zero = arith.constant 0.00000e+00 : f32\n\n%tmp_28 = bufferization.alloc_tensor() : tensor<256x43x43x84xf32>\n%28 = linalg.fill ins(%val : f32) outs(%tmp_28 : tensor<256x43x43x84xf32>) -> tensor<256x43x43x84xf32>\n%tmp_25 = bufferization.alloc_tensor() : tensor<256x43x43x84xf32>\n%25 = linalg.fill ins(%val : f32) outs(%tmp_25 : tensor<256x43x43x84xf32>) -> tensor<256x43x43x84xf32>\n\n%t0 = func.call @nanoTime() : () -> (i64)\n\n%return_arg = linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x43x43x84xf32>) outs(%25 : tensor<256x43x43x84xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x43x43x84xf32>\n%t = func.call @nanoTime() : () -> (i64)\n%delta = arith.subi %t, %t0 : i64\n%fp = arith.uitofp %delta : i64 to f64\n// func.call @printFlops(%fp) : (f64) -> ()\nfunc.call @printI64(%delta) : (i64) -> ()\nfunc.call @printNewline() : () -> ()\n\nreturn %return_arg : tensor<256x43x43x84xf32> \n}\n\nfunc.func @main(){\n    %c1 = arith.constant 1: index\n    %c0 = arith.constant 0 : index\n    %n = arith.constant 2: index\n    scf.for %i = %c0 to %n step %c1 {\n    %outputmain = func.call @matmul() : () -> tensor<256x43x43x84xf32>\n    }\n    return\n}\n}\n",
+    "loops_data": {
+      "nested_loops": [
+        [
+          "%arg2",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg3",
+          0,
+          43,
+          1
+        ],
+        [
+          "%arg4",
+          0,
+          43,
+          1
+        ],
+        [
+          "%arg5",
+          0,
+          84,
+          1
+        ]
+      ],
+      "op_count": {
+        "+": 0,
+        "-": 0,
+        "*": 0,
+        "/": 0,
+        "exp": 0
+      },
+      "load_data": [
+        [
+          "%c0",
+          "%arg3",
+          "%arg4",
+          "%arg5"
+        ]
+      ],
+      "store_data": []
+    },
+    "execution_time": 33345071
+  },
+  "linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x23x23x336xf32>) outs(%25 : tensor<256x23x23x336xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x23x23x336xf32>": {
+    "operation": "linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x23x23x336xf32>) outs(%25 : tensor<256x23x23x336xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x23x23x336xf32>",
+    "wrapped_operation": "#map = affine_map<(d0, d1, d2, d3) -> (d0, d1, d2, d3)>\n                #map2 = affine_map<(d0, d1, d2, d3) -> (0, d1, d2, d3)>\nfunc.func @func_call(%28: tensor<256x23x23x336xf32>, %25: tensor<256x23x23x336xf32>) -> tensor<256x23x23x336xf32> {\n  %ret = linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x23x23x336xf32>) outs(%25 : tensor<256x23x23x336xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x23x23x336xf32>\n  return %ret : tensor<256x23x23x336xf32>\n}",
+    "lowered_operation": "module {\n  func.func @func_call(%arg0: tensor<256x23x23x336xf32>, %arg1: tensor<256x23x23x336xf32>) -> tensor<256x23x23x336xf32> {\n    %c0 = arith.constant 0 : index\n    %cst = arith.constant 0.000000e+00 : f32\n    %0 = bufferization.to_memref %arg0 : memref<256x23x23x336xf32>\n    %alloc = memref.alloc() {alignment = 64 : i64} : memref<256x23x23x336xf32>\n    affine.for %arg2 = 0 to 256 {\n      affine.for %arg3 = 0 to 23 {\n        affine.for %arg4 = 0 to 23 {\n          affine.for %arg5 = 0 to 336 {\n            %2 = affine.load %0[%c0, %arg3, %arg4, %arg5] : memref<256x23x23x336xf32>\n            %3 = arith.cmpf ugt, %2, %cst : f32\n            %4 = arith.select %3, %2, %cst : f32\n            affine.store %4, %alloc[%arg2, %arg3, %arg4, %arg5] : memref<256x23x23x336xf32>\n          }\n        }\n      }\n    }\n    %1 = bufferization.to_tensor %alloc : memref<256x23x23x336xf32>\n    return %1 : tensor<256x23x23x336xf32>\n  }\n}\n\n",
+    "transform_wrapped_operation": "#map = affine_map<(d0, d1, d2, d3) -> (d0, d1, d2, d3)>\n                #map2 = affine_map<(d0, d1, d2, d3) -> (0, d1, d2, d3)>\nmodule attributes {torch.debug_module_name = \"Net\"} {\nfunc.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\nfunc.func private @printFlops(f64)\nfunc.func private @printI64(i64)\nfunc.func private @printNewline()\nfunc.func private @printMemrefF32(tensor<*xf32>)\n\n\nfunc.func @matmul() -> tensor<256x23x23x336xf32>{\n\n%val = arith.constant 2.00000e+00 : f32\n%zero = arith.constant 0.00000e+00 : f32\n\n%tmp_28 = bufferization.alloc_tensor() : tensor<256x23x23x336xf32>\n%28 = linalg.fill ins(%val : f32) outs(%tmp_28 : tensor<256x23x23x336xf32>) -> tensor<256x23x23x336xf32>\n%tmp_25 = bufferization.alloc_tensor() : tensor<256x23x23x336xf32>\n%25 = linalg.fill ins(%val : f32) outs(%tmp_25 : tensor<256x23x23x336xf32>) -> tensor<256x23x23x336xf32>\n\n%t0 = func.call @nanoTime() : () -> (i64)\n\n%return_arg = linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x23x23x336xf32>) outs(%25 : tensor<256x23x23x336xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x23x23x336xf32>\n%t = func.call @nanoTime() : () -> (i64)\n%delta = arith.subi %t, %t0 : i64\n%fp = arith.uitofp %delta : i64 to f64\n// func.call @printFlops(%fp) : (f64) -> ()\nfunc.call @printI64(%delta) : (i64) -> ()\nfunc.call @printNewline() : () -> ()\n\nreturn %return_arg : tensor<256x23x23x336xf32> \n}\n\nfunc.func @main(){\n    %c1 = arith.constant 1: index\n    %c0 = arith.constant 0 : index\n    %n = arith.constant 2: index\n    scf.for %i = %c0 to %n step %c1 {\n    %outputmain = func.call @matmul() : () -> tensor<256x23x23x336xf32>\n    }\n    return\n}\n}\n",
+    "loops_data": {
+      "nested_loops": [
+        [
+          "%arg2",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg3",
+          0,
+          23,
+          1
+        ],
+        [
+          "%arg4",
+          0,
+          23,
+          1
+        ],
+        [
+          "%arg5",
+          0,
+          336,
+          1
+        ]
+      ],
+      "op_count": {
+        "+": 0,
+        "-": 0,
+        "*": 0,
+        "/": 0,
+        "exp": 0
+      },
+      "load_data": [
+        [
+          "%c0",
+          "%arg3",
+          "%arg4",
+          "%arg5"
+        ]
+      ],
+      "store_data": []
+    },
+    "execution_time": 35693757
+  },
+  "linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x14x14x672xf32>) outs(%25 : tensor<256x14x14x672xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x14x14x672xf32>": {
+    "operation": "linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x14x14x672xf32>) outs(%25 : tensor<256x14x14x672xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x14x14x672xf32>",
+    "wrapped_operation": "#map = affine_map<(d0, d1, d2, d3) -> (d0, d1, d2, d3)>\n                #map2 = affine_map<(d0, d1, d2, d3) -> (0, d1, d2, d3)>\nfunc.func @func_call(%28: tensor<256x14x14x672xf32>, %25: tensor<256x14x14x672xf32>) -> tensor<256x14x14x672xf32> {\n  %ret = linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x14x14x672xf32>) outs(%25 : tensor<256x14x14x672xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x14x14x672xf32>\n  return %ret : tensor<256x14x14x672xf32>\n}",
+    "lowered_operation": "module {\n  func.func @func_call(%arg0: tensor<256x14x14x672xf32>, %arg1: tensor<256x14x14x672xf32>) -> tensor<256x14x14x672xf32> {\n    %c0 = arith.constant 0 : index\n    %cst = arith.constant 0.000000e+00 : f32\n    %0 = bufferization.to_memref %arg0 : memref<256x14x14x672xf32>\n    %alloc = memref.alloc() {alignment = 64 : i64} : memref<256x14x14x672xf32>\n    affine.for %arg2 = 0 to 256 {\n      affine.for %arg3 = 0 to 14 {\n        affine.for %arg4 = 0 to 14 {\n          affine.for %arg5 = 0 to 672 {\n            %2 = affine.load %0[%c0, %arg3, %arg4, %arg5] : memref<256x14x14x672xf32>\n            %3 = arith.cmpf ugt, %2, %cst : f32\n            %4 = arith.select %3, %2, %cst : f32\n            affine.store %4, %alloc[%arg2, %arg3, %arg4, %arg5] : memref<256x14x14x672xf32>\n          }\n        }\n      }\n    }\n    %1 = bufferization.to_tensor %alloc : memref<256x14x14x672xf32>\n    return %1 : tensor<256x14x14x672xf32>\n  }\n}\n\n",
+    "transform_wrapped_operation": "#map = affine_map<(d0, d1, d2, d3) -> (d0, d1, d2, d3)>\n                #map2 = affine_map<(d0, d1, d2, d3) -> (0, d1, d2, d3)>\nmodule attributes {torch.debug_module_name = \"Net\"} {\nfunc.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\nfunc.func private @printFlops(f64)\nfunc.func private @printI64(i64)\nfunc.func private @printNewline()\nfunc.func private @printMemrefF32(tensor<*xf32>)\n\n\nfunc.func @matmul() -> tensor<256x14x14x672xf32>{\n\n%val = arith.constant 2.00000e+00 : f32\n%zero = arith.constant 0.00000e+00 : f32\n\n%tmp_28 = bufferization.alloc_tensor() : tensor<256x14x14x672xf32>\n%28 = linalg.fill ins(%val : f32) outs(%tmp_28 : tensor<256x14x14x672xf32>) -> tensor<256x14x14x672xf32>\n%tmp_25 = bufferization.alloc_tensor() : tensor<256x14x14x672xf32>\n%25 = linalg.fill ins(%val : f32) outs(%tmp_25 : tensor<256x14x14x672xf32>) -> tensor<256x14x14x672xf32>\n\n%t0 = func.call @nanoTime() : () -> (i64)\n\n%return_arg = linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x14x14x672xf32>) outs(%25 : tensor<256x14x14x672xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x14x14x672xf32>\n%t = func.call @nanoTime() : () -> (i64)\n%delta = arith.subi %t, %t0 : i64\n%fp = arith.uitofp %delta : i64 to f64\n// func.call @printFlops(%fp) : (f64) -> ()\nfunc.call @printI64(%delta) : (i64) -> ()\nfunc.call @printNewline() : () -> ()\n\nreturn %return_arg : tensor<256x14x14x672xf32> \n}\n\nfunc.func @main(){\n    %c1 = arith.constant 1: index\n    %c0 = arith.constant 0 : index\n    %n = arith.constant 2: index\n    scf.for %i = %c0 to %n step %c1 {\n    %outputmain = func.call @matmul() : () -> tensor<256x14x14x672xf32>\n    }\n    return\n}\n}\n",
+    "loops_data": {
+      "nested_loops": [
+        [
+          "%arg2",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg3",
+          0,
+          14,
+          1
+        ],
+        [
+          "%arg4",
+          0,
+          14,
+          1
+        ],
+        [
+          "%arg5",
+          0,
+          672,
+          1
+        ]
+      ],
+      "op_count": {
+        "+": 0,
+        "-": 0,
+        "*": 0,
+        "/": 0,
+        "exp": 0
+      },
+      "load_data": [
+        [
+          "%c0",
+          "%arg3",
+          "%arg4",
+          "%arg5"
+        ]
+      ],
+      "store_data": []
+    },
+    "execution_time": 25914905
+  },
+  "linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x29x29x22xf32>) outs(%25 : tensor<256x29x29x22xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x29x29x22xf32>": {
+    "operation": "linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x29x29x22xf32>) outs(%25 : tensor<256x29x29x22xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x29x29x22xf32>",
+    "wrapped_operation": "#map = affine_map<(d0, d1, d2, d3) -> (d0, d1, d2, d3)>\n                #map2 = affine_map<(d0, d1, d2, d3) -> (0, d1, d2, d3)>\nfunc.func @func_call(%28: tensor<256x29x29x22xf32>, %25: tensor<256x29x29x22xf32>) -> tensor<256x29x29x22xf32> {\n  %ret = linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x29x29x22xf32>) outs(%25 : tensor<256x29x29x22xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x29x29x22xf32>\n  return %ret : tensor<256x29x29x22xf32>\n}",
+    "lowered_operation": "module {\n  func.func @func_call(%arg0: tensor<256x29x29x22xf32>, %arg1: tensor<256x29x29x22xf32>) -> tensor<256x29x29x22xf32> {\n    %c0 = arith.constant 0 : index\n    %cst = arith.constant 0.000000e+00 : f32\n    %0 = bufferization.to_memref %arg0 : memref<256x29x29x22xf32>\n    %alloc = memref.alloc() {alignment = 64 : i64} : memref<256x29x29x22xf32>\n    affine.for %arg2 = 0 to 256 {\n      affine.for %arg3 = 0 to 29 {\n        affine.for %arg4 = 0 to 29 {\n          affine.for %arg5 = 0 to 22 {\n            %2 = affine.load %0[%c0, %arg3, %arg4, %arg5] : memref<256x29x29x22xf32>\n            %3 = arith.cmpf ugt, %2, %cst : f32\n            %4 = arith.select %3, %2, %cst : f32\n            affine.store %4, %alloc[%arg2, %arg3, %arg4, %arg5] : memref<256x29x29x22xf32>\n          }\n        }\n      }\n    }\n    %1 = bufferization.to_tensor %alloc : memref<256x29x29x22xf32>\n    return %1 : tensor<256x29x29x22xf32>\n  }\n}\n\n",
+    "transform_wrapped_operation": "#map = affine_map<(d0, d1, d2, d3) -> (d0, d1, d2, d3)>\n                #map2 = affine_map<(d0, d1, d2, d3) -> (0, d1, d2, d3)>\nmodule attributes {torch.debug_module_name = \"Net\"} {\nfunc.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\nfunc.func private @printFlops(f64)\nfunc.func private @printI64(i64)\nfunc.func private @printNewline()\nfunc.func private @printMemrefF32(tensor<*xf32>)\n\n\nfunc.func @matmul() -> tensor<256x29x29x22xf32>{\n\n%val = arith.constant 2.00000e+00 : f32\n%zero = arith.constant 0.00000e+00 : f32\n\n%tmp_28 = bufferization.alloc_tensor() : tensor<256x29x29x22xf32>\n%28 = linalg.fill ins(%val : f32) outs(%tmp_28 : tensor<256x29x29x22xf32>) -> tensor<256x29x29x22xf32>\n%tmp_25 = bufferization.alloc_tensor() : tensor<256x29x29x22xf32>\n%25 = linalg.fill ins(%val : f32) outs(%tmp_25 : tensor<256x29x29x22xf32>) -> tensor<256x29x29x22xf32>\n\n%t0 = func.call @nanoTime() : () -> (i64)\n\n%return_arg = linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x29x29x22xf32>) outs(%25 : tensor<256x29x29x22xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x29x29x22xf32>\n%t = func.call @nanoTime() : () -> (i64)\n%delta = arith.subi %t, %t0 : i64\n%fp = arith.uitofp %delta : i64 to f64\n// func.call @printFlops(%fp) : (f64) -> ()\nfunc.call @printI64(%delta) : (i64) -> ()\nfunc.call @printNewline() : () -> ()\n\nreturn %return_arg : tensor<256x29x29x22xf32> \n}\n\nfunc.func @main(){\n    %c1 = arith.constant 1: index\n    %c0 = arith.constant 0 : index\n    %n = arith.constant 2: index\n    scf.for %i = %c0 to %n step %c1 {\n    %outputmain = func.call @matmul() : () -> tensor<256x29x29x22xf32>\n    }\n    return\n}\n}\n",
+    "loops_data": {
+      "nested_loops": [
+        [
+          "%arg2",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg3",
+          0,
+          29,
+          1
+        ],
+        [
+          "%arg4",
+          0,
+          29,
+          1
+        ],
+        [
+          "%arg5",
+          0,
+          22,
+          1
+        ]
+      ],
+      "op_count": {
+        "+": 0,
+        "-": 0,
+        "*": 0,
+        "/": 0,
+        "exp": 0
+      },
+      "load_data": [
+        [
+          "%c0",
+          "%arg3",
+          "%arg4",
+          "%arg5"
+        ]
+      ],
+      "store_data": []
+    },
+    "execution_time": 3294533
+  },
+  "linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x14x14x88xf32>) outs(%25 : tensor<256x14x14x88xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x14x14x88xf32>": {
+    "operation": "linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x14x14x88xf32>) outs(%25 : tensor<256x14x14x88xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x14x14x88xf32>",
+    "wrapped_operation": "#map = affine_map<(d0, d1, d2, d3) -> (d0, d1, d2, d3)>\n                #map2 = affine_map<(d0, d1, d2, d3) -> (0, d1, d2, d3)>\nfunc.func @func_call(%28: tensor<256x14x14x88xf32>, %25: tensor<256x14x14x88xf32>) -> tensor<256x14x14x88xf32> {\n  %ret = linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x14x14x88xf32>) outs(%25 : tensor<256x14x14x88xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x14x14x88xf32>\n  return %ret : tensor<256x14x14x88xf32>\n}",
+    "lowered_operation": "module {\n  func.func @func_call(%arg0: tensor<256x14x14x88xf32>, %arg1: tensor<256x14x14x88xf32>) -> tensor<256x14x14x88xf32> {\n    %c0 = arith.constant 0 : index\n    %cst = arith.constant 0.000000e+00 : f32\n    %0 = bufferization.to_memref %arg0 : memref<256x14x14x88xf32>\n    %alloc = memref.alloc() {alignment = 64 : i64} : memref<256x14x14x88xf32>\n    affine.for %arg2 = 0 to 256 {\n      affine.for %arg3 = 0 to 14 {\n        affine.for %arg4 = 0 to 14 {\n          affine.for %arg5 = 0 to 88 {\n            %2 = affine.load %0[%c0, %arg3, %arg4, %arg5] : memref<256x14x14x88xf32>\n            %3 = arith.cmpf ugt, %2, %cst : f32\n            %4 = arith.select %3, %2, %cst : f32\n            affine.store %4, %alloc[%arg2, %arg3, %arg4, %arg5] : memref<256x14x14x88xf32>\n          }\n        }\n      }\n    }\n    %1 = bufferization.to_tensor %alloc : memref<256x14x14x88xf32>\n    return %1 : tensor<256x14x14x88xf32>\n  }\n}\n\n",
+    "transform_wrapped_operation": "#map = affine_map<(d0, d1, d2, d3) -> (d0, d1, d2, d3)>\n                #map2 = affine_map<(d0, d1, d2, d3) -> (0, d1, d2, d3)>\nmodule attributes {torch.debug_module_name = \"Net\"} {\nfunc.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\nfunc.func private @printFlops(f64)\nfunc.func private @printI64(i64)\nfunc.func private @printNewline()\nfunc.func private @printMemrefF32(tensor<*xf32>)\n\n\nfunc.func @matmul() -> tensor<256x14x14x88xf32>{\n\n%val = arith.constant 2.00000e+00 : f32\n%zero = arith.constant 0.00000e+00 : f32\n\n%tmp_28 = bufferization.alloc_tensor() : tensor<256x14x14x88xf32>\n%28 = linalg.fill ins(%val : f32) outs(%tmp_28 : tensor<256x14x14x88xf32>) -> tensor<256x14x14x88xf32>\n%tmp_25 = bufferization.alloc_tensor() : tensor<256x14x14x88xf32>\n%25 = linalg.fill ins(%val : f32) outs(%tmp_25 : tensor<256x14x14x88xf32>) -> tensor<256x14x14x88xf32>\n\n%t0 = func.call @nanoTime() : () -> (i64)\n\n%return_arg = linalg.generic {indexing_maps = [#map2, #map], iterator_types = [\"parallel\", \"parallel\", \"parallel\", \"parallel\"]} ins(%28 : tensor<256x14x14x88xf32>) outs(%25 : tensor<256x14x14x88xf32>) {\n                    ^bb0(%in: f32, %out: f32):\n                    %cst_1 = arith.constant 0.000000e+00 : f32\n                    %90 = arith.cmpf ugt, %in, %cst_1 : f32\n                    %91 = arith.select %90, %in, %cst_1 : f32\n                    linalg.yield %91 : f32\n                } -> tensor<256x14x14x88xf32>\n%t = func.call @nanoTime() : () -> (i64)\n%delta = arith.subi %t, %t0 : i64\n%fp = arith.uitofp %delta : i64 to f64\n// func.call @printFlops(%fp) : (f64) -> ()\nfunc.call @printI64(%delta) : (i64) -> ()\nfunc.call @printNewline() : () -> ()\n\nreturn %return_arg : tensor<256x14x14x88xf32> \n}\n\nfunc.func @main(){\n    %c1 = arith.constant 1: index\n    %c0 = arith.constant 0 : index\n    %n = arith.constant 2: index\n    scf.for %i = %c0 to %n step %c1 {\n    %outputmain = func.call @matmul() : () -> tensor<256x14x14x88xf32>\n    }\n    return\n}\n}\n",
+    "loops_data": {
+      "nested_loops": [
+        [
+          "%arg2",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg3",
+          0,
+          14,
+          1
+        ],
+        [
+          "%arg4",
+          0,
+          14,
+          1
+        ],
+        [
+          "%arg5",
+          0,
+          88,
+          1
+        ]
+      ],
+      "op_count": {
+        "+": 0,
+        "-": 0,
+        "*": 0,
+        "/": 0,
+        "exp": 0
+      },
+      "load_data": [
+        [
+          "%c0",
+          "%arg3",
+          "%arg4",
+          "%arg5"
+        ]
+      ],
+      "store_data": []
+    },
+    "execution_time": 3374615
+  }
+}
