@@ -510,8 +510,8 @@ class Env:
         if operation_type == 'conv_2d':
             action_mask[:TP_BEGIN] = [False, False, False, False, False, True]
         else:
-            # action_mask[:TP_BEGIN] = [False, True, False, False, False, False]
-            action_mask[:TP_BEGIN] = [False, True, True, True, False, False]
+            action_mask[:TP_BEGIN] = [False, True, False, False, False, False]
+            # action_mask[:TP_BEGIN] = [False, True, True, True, False, False]
         action_mask[TP_BEGIN + num_loops:T_BEGIN] = False
         action_mask[T_BEGIN + num_loops:I_BEGIN] = False
 

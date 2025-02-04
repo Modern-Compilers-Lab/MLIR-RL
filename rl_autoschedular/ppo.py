@@ -295,23 +295,24 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
             return_ = stored_returns[i]
             x = stored_x[i].unsqueeze(0).to(device)
 
-            model.transformation_selection.requires_grad_(True)
-            model.parall_fc.requires_grad_(False)
-            model.tiling_fc.requires_grad_(False)
-            model.interchange_fc.requires_grad_(False)
-            match action[0]:
-                case 'no_transformation' | 'vectorization' | 'img2col':
-                    pass
-                case 'parallelization':
-                    model.parall_fc.requires_grad_(True)
-                case 'tiling':
-                    model.tiling_fc.requires_grad_(True)
-                case 'interchange':
-                    model.interchange_fc.requires_grad_(True)
-                    if len(state.interchange_permutation) > 0:
-                        model.transformation_selection.requires_grad_(False)
-                case _:
-                    raise ValueError(f"Unknown action: {action[0]}")
+            if cfg.mask_weights:
+                model.transformation_selection.requires_grad_(True)
+                model.parall_fc.requires_grad_(False)
+                model.tiling_fc.requires_grad_(False)
+                model.interchange_fc.requires_grad_(False)
+                match action[0]:
+                    case 'no_transformation' | 'vectorization' | 'img2col':
+                        pass
+                    case 'parallelization':
+                        model.parall_fc.requires_grad_(True)
+                    case 'tiling':
+                        model.tiling_fc.requires_grad_(True)
+                    case 'interchange':
+                        model.interchange_fc.requires_grad_(True)
+                        if len(state.interchange_permutation) > 0:
+                            model.transformation_selection.requires_grad_(False)
+                    case _:
+                        raise ValueError(f"Unknown action: {action[0]}")
 
             with torch.enable_grad():
                 # New predicition:
