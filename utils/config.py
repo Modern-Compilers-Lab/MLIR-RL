@@ -22,6 +22,8 @@ class Config(metaclass=Singleton):
     """Flag to enable using python bindings for execution, if False, the execution will be done using the command line. Default is False."""
     use_vectorizer: bool
     """Flag to enable using the vectorizer C++ program for vectorization, if False, vectorization is done using transform dialect directly. Default is False."""
+    mask_weights: bool
+    """Flag to enable masking weights in ppo learning, if False, the weights are not masked. Default is False."""
     data_format: Literal["json", "mlir"]
     """The format of the data, can be either "json" or "mlir". "json" mode reads json files containing benchmark features, "mlir" mode reads mlir code files directly and extract features from it using AST dumper. Default is "json"."""
     optimization_mode: Literal["last", "all"]
@@ -60,6 +62,7 @@ class Config(metaclass=Singleton):
         self.vect_size_limit = 512
         self.use_bindings = False
         self.use_vectorizer = False
+        self.mask_weights = False
         self.data_format = "json"
         self.optimization_mode = "last"
         self.benchmarks_folder_path = ""
@@ -88,6 +91,7 @@ class Config(metaclass=Singleton):
         self.vect_size_limit = config["vect_size_limit"]
         self.use_bindings = config["use_bindings"]
         self.use_vectorizer = config["use_vectorizer"]
+        self.mask_weights = config["mask_weights"]
         self.data_format = config["data_format"]
         self.optimization_mode = config["optimization_mode"]
         self.benchmarks_folder_path = config["benchmarks_folder_path"]
@@ -119,6 +123,7 @@ class Config(metaclass=Singleton):
             "vect_size_limit": self.vect_size_limit,
             "use_bindings": self.use_bindings,
             "use_vectorizer": self.use_vectorizer,
+            "mask_weights": self.mask_weights,
             "data_format": self.data_format,
             "optimization_mode": self.optimization_mode,
             "benchmarks_folder_path": self.benchmarks_folder_path,
