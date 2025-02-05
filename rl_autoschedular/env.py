@@ -171,7 +171,6 @@ class Env:
             transformation_history=[],
             cummulative_reward=0,
             tmp_file=self.tmp_file,
-            interchange_permutation=[],
         )
 
         obs = self.get_obs(state)
@@ -213,7 +212,7 @@ class Env:
 
         reward = 0
         match transformation:
-            case 'parallelization' | 'tiling' | 'img2col':
+            case 'parallelization' | 'tiling' | 'img2col' | 'interchange':
                 # Apply the transformation and get the new code
                 transformed_code = apply_transformation_with_timeout(
                     state=state,
@@ -251,27 +250,7 @@ class Env:
                         transformation_history=state.transformation_history + [(transformation, parameters)],  # Updated transformation history
                         cummulative_reward=state.cummulative_reward,
                         tmp_file=self.tmp_file,
-                        interchange_permutation=state.interchange_permutation,
                     )
-
-            case 'interchange':
-                if len(parameters) == num_loops:
-                    # We apply interchange only when the permutation is complete
-                    transformed_code = apply_transformation_with_timeout(
-                        state=state,
-                        bench_features=bench_data,
-                        code=state.transformed_code,
-                        transformation=transformation,
-                        parameters=parameters,
-                        timeout=20,
-                    )
-                    next_interchange_permutation = []
-                    should_step_up = True
-                else:
-                    # We keep the same code as previously if the permutation is not complete
-                    transformed_code = state.transformed_code
-                    next_interchange_permutation = parameters
-                    should_step_up = False
 
             case 'no_transformation' | 'vectorization':
                 # For convolution, before vectorization, we need to first apply another tiling in order to decompose it to 1d convolution
@@ -339,13 +318,12 @@ class Env:
             transformed_code=transformed_code,  # New transformed code
             actions=next_state_actions,  # New actions history
             actions_mask=new_actions_mask,  # New action mask
-            step_count=state.step_count if transformation == 'interchange' and not should_step_up else state.step_count + 1,  # New step count
+            step_count=state.step_count + 1,  # New step count
             exec_time=state.exec_time,
             root_exec_time=state.root_exec_time,
-            transformation_history=state.transformation_history if transformation == 'interchange' and not should_step_up else state.transformation_history + [(transformation, parameters)],  # New transformation history
+            transformation_history=state.transformation_history + [(transformation, parameters)],  # New transformation history
             cummulative_reward=state.cummulative_reward,
             tmp_file=self.tmp_file,
-            interchange_permutation=next_interchange_permutation if transformation == 'interchange' else state.interchange_permutation,  # New interchange permutation
         )
 
         # Done == True if:
@@ -419,7 +397,6 @@ class Env:
                         transformation_history=[],
                         cummulative_reward=next_state.cummulative_reward,
                         tmp_file=self.tmp_file,
-                        interchange_permutation=[],
                     )
 
         next_state.cummulative_reward += reward
@@ -463,13 +440,11 @@ class Env:
             operation_type_int = 4
 
         operation_type_int_arr = np.array([operation_type_int])
-        interchange_loop_level_arr = np.array([len(state.interchange_permutation)])
 
         obs = np.concatenate((
             # The input of the policy network:
             operation_type_int_arr,  # 1
             op_features_vector,      # MAX_NUM_LOOPS + MAX_NUM_LOOPS*MAX_NUM_LOAD_STORE_DIM*MAX_NUM_STORES_LOADS + MAX_NUM_LOOPS*MAX_NUM_LOAD_STORE_DIM + 5
-            interchange_loop_level_arr,  # 1
             action_history,  # MAX_NUM_LOOPS*3*CONFIG["truncate"]
 
             # The action mask:
@@ -504,23 +479,26 @@ class Env:
 
         TP_BEGIN = cfg.num_transformations
         T_BEGIN = TP_BEGIN + L
-        I_BEGIN = T_BEGIN + L
+        I_BEGIN_2C = T_BEGIN + L
+        I_BEGIN_3C = I_BEGIN_2C + (L - 1)
+        I_BEGIN_4C = I_BEGIN_3C + (L - 2)
 
-        action_mask = np.ones((TP_BEGIN + 3 * L), dtype=np.bool_)
+        action_mask = np.ones((TP_BEGIN + L + L + 3 * L - 6), dtype=np.bool_)
         if operation_type == 'conv_2d':
             action_mask[:TP_BEGIN] = [False, False, False, False, False, True]
         else:
             action_mask[:TP_BEGIN] = [False, True, False, False, False, False]
             # action_mask[:TP_BEGIN] = [False, True, True, True, False, False]
         action_mask[TP_BEGIN + num_loops:T_BEGIN] = False
-        action_mask[T_BEGIN + num_loops:I_BEGIN] = False
+        action_mask[T_BEGIN + num_loops:I_BEGIN_2C] = False
+        action_mask[I_BEGIN_2C + num_loops - 1:I_BEGIN_3C] = False
+        action_mask[I_BEGIN_3C + num_loops - 2:I_BEGIN_4C] = False
+        action_mask[I_BEGIN_4C + num_loops - 3:] = False
 
         if num_loops == 1:
             # If we have only one loop -> Cancel the interchange
             action_mask[3] = False
-            action_mask[I_BEGIN:] = False
-        else:
-            action_mask[I_BEGIN + num_loops:] = False
+            action_mask[I_BEGIN_2C] = True
 
         return action_mask
 
@@ -540,58 +518,49 @@ class Env:
             np.ndarray: The updated action mask.
         """
 
-        L = cfg.max_num_loops
+        # L = cfg.max_num_loops
 
         TP_BEGIN = cfg.num_transformations
-        T_BEGIN = TP_BEGIN + L
-        I_BEGIN = T_BEGIN + L
+        # T_BEGIN = TP_BEGIN + L
+        # I_BEGIN = T_BEGIN + L
         # I_BEGIN_3C = I_BEGIN_2C + (L-1)
         # I_BEGIN_4C = I_BEGIN_3C + (L-2)
 
         actions_mask = state.actions_mask
 
-        if transformation == 'interchange' and len(parameters) > 0 and len(parameters) < num_loops:
-            # We're still in the middle of the interchange
-            #  -> mask all other transformations and mask the already selected loops
-            actions_mask[:TP_BEGIN] = [False, False, False, True, False, False]
-            for param in parameters:
-                actions_mask[I_BEGIN + param] = False
+        if transformation == 'img2col':
+            actions_mask[:TP_BEGIN] = [False, True, False, False, False, False]
+
+        if state.operation_type == "pooling" or state.operation_type == "conv_2d":
+            if transformation == 'parallelization':
+                actions_mask[:TP_BEGIN] = [True, False, False, False, True, False]
+            if transformation == 'tiling':
+                actions_mask[:TP_BEGIN] = [True, False, False, False, True, False]
+
+        elif state.operation_type == "conv_2d+img2col":
+            if transformation == 'parallelization':
+                actions_mask[:TP_BEGIN] = [True, False, False, False, True, False]
+
+        elif state.operation_type == "matmul" or state.operation_type == "add":
+            if transformation == 'parallelization':
+                actions_mask[:TP_BEGIN] = [True, False, False, False, True, False]
+            if transformation == 'tiling':
+                actions_mask[:TP_BEGIN] = [True, False, True, True, True, False]
+            if transformation == 'interchange':
+                actions_mask[:TP_BEGIN] = [True, False, False, True, True, False]
+
+        elif state.operation_type == "generic":
+            if transformation == 'parallelization':
+                actions_mask[:TP_BEGIN] = [True, False, False, False, True, False]
+            if transformation == 'interchange':
+                # NOTE: actions_mask[:NUM_TRANSFORMATIONS] = [True, False, True, True, True, False]
+                actions_mask[:TP_BEGIN] = [True, True, True, True, True, False]
+            if transformation == 'tiling':
+                # NOTE: actions_mask[:NUM_TRANSFORMATIONS] = [True, False, False, False, True, False]
+                actions_mask[:TP_BEGIN] = [True, True, True, True, True, False]
+
         else:
-            actions_mask[I_BEGIN:I_BEGIN + num_loops] = True  # Unmask all loops for interchange
-
-            if transformation == 'img2col':
-                actions_mask[:TP_BEGIN] = [False, True, False, False, False, False]
-
-            if state.operation_type == "pooling" or state.operation_type == "conv_2d":
-                if transformation == 'parallelization':
-                    actions_mask[:TP_BEGIN] = [True, False, False, False, True, False]
-                if transformation == 'tiling':
-                    actions_mask[:TP_BEGIN] = [True, False, False, False, True, False]
-
-            elif state.operation_type == "conv_2d+img2col":
-                if transformation == 'parallelization':
-                    actions_mask[:TP_BEGIN] = [True, False, False, False, True, False]
-
-            elif state.operation_type == "matmul" or state.operation_type == "add":
-                if transformation == 'parallelization':
-                    actions_mask[:TP_BEGIN] = [True, False, False, False, True, False]
-                if transformation == 'tiling':
-                    actions_mask[:TP_BEGIN] = [True, False, True, True, True, False]
-                if transformation == 'interchange':
-                    actions_mask[:TP_BEGIN] = [True, False, False, True, True, False]
-
-            elif state.operation_type == "generic":
-                if transformation == 'parallelization':
-                    actions_mask[:TP_BEGIN] = [True, False, False, False, True, False]
-                if transformation == 'interchange':
-                    # NOTE: actions_mask[:NUM_TRANSFORMATIONS] = [True, False, True, True, True, False]
-                    actions_mask[:TP_BEGIN] = [True, True, True, True, True, False]
-                if transformation == 'tiling':
-                    # NOTE: actions_mask[:NUM_TRANSFORMATIONS] = [True, False, False, False, True, False]
-                    actions_mask[:TP_BEGIN] = [True, True, True, True, True, False]
-
-            else:
-                raise ValueError("operation_type must be in [pooling, conv_2d, conv_2d+img2col, matmul, add, generic]")
+            raise ValueError("operation_type must be in [pooling, conv_2d, conv_2d+img2col, matmul, add, generic]")
 
         return actions_mask
 
@@ -736,10 +705,10 @@ class Env:
             ]
 
         if action_name == 'interchange':
-            assert parameter not in state.interchange_permutation
-            assert len(state.interchange_permutation) < num_loops
-
-            return ['interchange', state.interchange_permutation + [parameter]]
+            candidates = self.get_interchange_actions(num_loops)
+            parameters = candidates[parameter]
+            assert len(parameters) == num_loops
+            return ['interchange', list(parameters)]
 
         elif action_name == 'img2col':
             return ['img2col', [0]]

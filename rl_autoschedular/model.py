@@ -15,12 +15,12 @@ class HiearchyModel(nn.Module):
         L = cfg.max_num_loops
         D = cfg.max_num_load_store_dim
         SD = cfg.max_num_stores_loads
-        self.input_dim = 1 + L + L * D * SD + L * D + 5 + 1 + L * 3 * cfg.truncate
+        self.input_dim = 1 + L + L * D * SD + L * D + 5 + L * 3 * cfg.truncate
         self.num_loops = L
         self.num_transformations = cfg.num_transformations
         self.num_tiles = cfg.num_tile_sizes
 
-        self.action_mask_size = self.num_transformations + 3 * self.num_loops
+        self.action_mask_size = self.num_transformations + self.num_loops + self.num_loops + 3 * self.num_loops - 6
 
         self.backbone = nn.Sequential(
             nn.Linear(self.input_dim, 512),
@@ -42,7 +42,7 @@ class HiearchyModel(nn.Module):
         )
 
         self.transformation_selection = nn.Linear(512, self.num_transformations)  # +1 for the stop operation
-        self.interchange_fc = nn.Linear(512, self.num_loops)
+        self.interchange_fc = nn.Linear(512, 3 * self.num_loops - 6)
         self.tiling_fc = nn.Linear(512, self.num_loops * (self.num_tiles + 1))  # +1 for the no tiling
         self.parall_fc = nn.Linear(512, self.num_loops * (self.num_tiles + 1))  # +1 for the no parallelizattion
 
