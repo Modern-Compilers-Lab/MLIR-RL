@@ -289,7 +289,7 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
         acc_loss = 0
         for i in range(len(stored_action_index)):
             action = stored_action_index[i]
-            state = stored_state[i]
+            # state = stored_state[i]
             action_log_p = stored_action_log_p[i]
             advantage = stored_advantages[i]
             return_ = stored_returns[i]
@@ -309,8 +309,6 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
                         model.tiling_fc.requires_grad_(True)
                     case 'interchange':
                         model.interchange_fc.requires_grad_(True)
-                        if len(state.interchange_permutation) > 0:
-                            model.transformation_selection.requires_grad_(False)
                     case _:
                         raise ValueError(f"Unknown action: {action[0]}")
 

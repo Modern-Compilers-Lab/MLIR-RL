@@ -78,5 +78,3 @@ class OperationState:
     """Cummulative reward of the operation."""
     tmp_file: str
     """Temporary file to store the MLIR code."""
-    interchange_permutation: list[int]
-    """The permutation list for the interchange transformation."""
