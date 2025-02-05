@@ -448,7 +448,7 @@ class Env:
             action_history,  # MAX_NUM_LOOPS*3*CONFIG["truncate"]
 
             # The action mask:
-            action_mask     # 5 + MAX_NUM_LOOPS + MAX_NUM_LOOPS + (MAX_NUM_LOOPS-1) + (MAX_NUM_LOOPS-2) + (MAX_NUM_LOOPS-3)
+            action_mask     # 5 + MAX_NUM_LOOPS + MAX_NUM_LOOPS
         ))
 
         # Normalize the upper bounds of the loops
@@ -460,11 +460,10 @@ class Env:
         """Initialize the action mask for a specified number of loops and operation type.
 
         Notes:
-            Action mask (NUM_TRANSFORMATIONS + L + L + L ):
+            Action mask (NUM_TRANSFORMATIONS + L + L ):
                 Transformations: no_transform, TP, T, Interchange, vect, img2col
                 TP: L loops
                 T : L loops
-                I: L loops
 
             action_mask[:NUM_TRANSFORMATIONS] = [no_transform, TP, T, I, vect, img2col]
 
@@ -479,26 +478,19 @@ class Env:
 
         TP_BEGIN = cfg.num_transformations
         T_BEGIN = TP_BEGIN + L
-        I_BEGIN_2C = T_BEGIN + L
-        I_BEGIN_3C = I_BEGIN_2C + (L - 1)
-        I_BEGIN_4C = I_BEGIN_3C + (L - 2)
 
-        action_mask = np.ones((TP_BEGIN + L + L + 3 * L - 6), dtype=np.bool_)
+        action_mask = np.ones((TP_BEGIN + L + L), dtype=np.bool_)
         if operation_type == 'conv_2d':
             action_mask[:TP_BEGIN] = [False, False, False, False, False, True]
         else:
             action_mask[:TP_BEGIN] = [False, True, False, False, False, False]
             # action_mask[:TP_BEGIN] = [False, True, True, True, False, False]
         action_mask[TP_BEGIN + num_loops:T_BEGIN] = False
-        action_mask[T_BEGIN + num_loops:I_BEGIN_2C] = False
-        action_mask[I_BEGIN_2C + num_loops - 1:I_BEGIN_3C] = False
-        action_mask[I_BEGIN_3C + num_loops - 2:I_BEGIN_4C] = False
-        action_mask[I_BEGIN_4C + num_loops - 3:] = False
+        action_mask[T_BEGIN + num_loops:] = False
 
         if num_loops == 1:
             # If we have only one loop -> Cancel the interchange
             action_mask[3] = False
-            action_mask[I_BEGIN_2C] = True
 
         return action_mask
 
@@ -506,7 +498,7 @@ class Env:
         """Update the action mask based on the transformation applied.
 
         Notes:
-            actions_mask: (NUM_TRANSFORMATIONS + L + L + (L-1) + (L-2) + (L-3) )
+            actions_mask: (NUM_TRANSFORMATIONS + L + L )
             action_mask[:NUM_TRANSFORMATIONS] = [no_transform, TP, T, I, vect, img2col]
 
         Args:
@@ -618,6 +610,41 @@ class Env:
             interchanges += level_interchanges
         return interchanges
 
+    def decode_interchange_parameter(self, parameter: int, num_loops: int):
+        """Decode the interchange parameter to get the loop permutation.
+
+        Args:
+            parameter (int): The interchange parameter.
+            num_loops (int): The number of loops in the operation.
+
+        Returns:
+            list: The loop permutation.
+        """
+        x = parameter
+        n = num_loops
+
+        # Convert x to factorial number
+        fact_x = '0'
+        q = x
+        d = 2
+        while q > 0:
+            r = q % d
+            q = q // d
+            fact_x = str(r) + fact_x
+            d += 1
+
+        # Ensure to get exactly n digits
+        fact_x = fact_x.zfill(n)[-n:]
+
+        # Decode factorial number following Lehmer code
+        nl = list(map(int, fact_x))
+        for i in range(len(nl) - 2, -1, -1):
+            for j in range(i + 1, len(nl)):
+                if nl[j] >= nl[i]:
+                    nl[j] += 1
+
+        return nl
+
     def sorted_divisors(self, n: int, num_candidates: int):
         """Get the divisors of `n` that are supperior or equal to 2
 
@@ -705,10 +732,9 @@ class Env:
             ]
 
         if action_name == 'interchange':
-            candidates = self.get_interchange_actions(num_loops)
-            parameters = candidates[parameter]
+            parameters = self.decode_interchange_parameter(parameter, num_loops)
             assert len(parameters) == num_loops
-            return ['interchange', list(parameters)]
+            return ['interchange', parameters]
 
         elif action_name == 'img2col':
             return ['img2col', [0]]

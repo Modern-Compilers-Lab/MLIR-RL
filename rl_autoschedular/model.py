@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.distributions import Categorical
+from torch.distributions import Categorical, Binomial
 from typing import Optional, Union
 from rl_autoschedular import config as cfg
 
@@ -12,15 +11,13 @@ class HiearchyModel(nn.Module):
         """Initialize the model."""
         super(HiearchyModel, self).__init__()
 
+        N = cfg.num_transformations
         L = cfg.max_num_loops
         D = cfg.max_num_load_store_dim
         SD = cfg.max_num_stores_loads
-        self.input_dim = 1 + L + L * D * SD + L * D + 5 + L * 3 * cfg.truncate
-        self.num_loops = L
-        self.num_transformations = cfg.num_transformations
-        self.num_tiles = cfg.num_tile_sizes
 
-        self.action_mask_size = self.num_transformations + self.num_loops + self.num_loops + 3 * self.num_loops - 6
+        self.input_dim = 1 + L + L * D * SD + L * D + 5 + L * 3 * cfg.truncate
+        self.action_mask_size = N + L + L
 
         self.backbone = nn.Sequential(
             nn.Linear(self.input_dim, 512),
@@ -41,16 +38,17 @@ class HiearchyModel(nn.Module):
             nn.Linear(512, 1),
         )
 
-        self.transformation_selection = nn.Linear(512, self.num_transformations)  # +1 for the stop operation
-        self.interchange_fc = nn.Linear(512, 3 * self.num_loops - 6)
-        self.tiling_fc = nn.Linear(512, self.num_loops * (self.num_tiles + 1))  # +1 for the no tiling
-        self.parall_fc = nn.Linear(512, self.num_loops * (self.num_tiles + 1))  # +1 for the no parallelizattion
+        self.transformation_selection = nn.Linear(512, cfg.num_transformations)  # +1 for the stop operation
+        self.interchange_fc = nn.Linear(512, 1)
+        self.tiling_fc = nn.Linear(512, cfg.max_num_loops * (cfg.num_tile_sizes + 1))  # +1 for the no tiling
+        self.parall_fc = nn.Linear(512, cfg.max_num_loops * (cfg.num_tile_sizes + 1))  # +1 for the no parallelizattion
 
-    def sample(self, obs: torch.Tensor, actions: Optional[list[tuple[str, Optional[Union[list[int], int]]]]] = None) -> tuple[list[tuple[str, Optional[Union[list[int], int]]]], torch.Tensor, torch.Tensor, torch.Tensor]:
+    def sample(self, obs: torch.Tensor, num_loops: list[int], actions: Optional[list[tuple[str, Optional[Union[list[int], int]]]]] = None) -> tuple[list[tuple[str, Optional[Union[list[int], int]]]], torch.Tensor, torch.Tensor, torch.Tensor]:
         """Sample an action from the model.
 
         Args:
             obs (torch.Tensor): The input tensor.
+            num_loops (list[int]): The number of loops for each element in the batch.
             actions (Optional[list[tuple[str, Optional[Union[list[int], int]]]]]): list of actions forced for the model to return. Defaults to None.
 
         Returns:
@@ -69,45 +67,47 @@ class HiearchyModel(nn.Module):
         # print(action_mask)
 
         # decompose action mask:
-        L = self.num_loops
+        L = cfg.max_num_loops
 
-        TP_BEGIN = self.num_transformations
+        TP_BEGIN = cfg.num_transformations
         T_BEGIN = TP_BEGIN + L
-        I_BEGIN = T_BEGIN + L
+
+        interchange_perm_count = (torch.tensor(num_loops) + 1).lgamma().exp().long() - 1
 
         # Define the mask of each transformation
-        transform_mask = action_mask[..., :self.num_transformations]
+        transform_mask = action_mask[..., :cfg.num_transformations]
         TP_mask = action_mask[..., TP_BEGIN:T_BEGIN]
-        T_mask = action_mask[..., T_BEGIN:I_BEGIN]
-        I_mask = action_mask[..., I_BEGIN:]
+        T_mask = action_mask[..., T_BEGIN:]
 
         # Model inference:
         x1 = self.backbone(x)
         transformation_logits = self.transformation_selection(x1)
-        interchange_logits = self.interchange_fc(x1)
+        interchange_logit = self.interchange_fc(x1)
         tiling_logits = self.tiling_fc(x1)
         parall_logits = self.parall_fc(x1)
 
         values = self.value_network(x)
 
-        tiling_logits = tiling_logits.reshape(*leading_dims, self.num_loops, self.num_tiles + 1)
-        parall_logits = parall_logits.reshape(*leading_dims, self.num_loops, self.num_tiles + 1)
+        tiling_logits = tiling_logits.reshape(*leading_dims, cfg.max_num_loops, cfg.num_tile_sizes + 1)
+        parall_logits = parall_logits.reshape(*leading_dims, cfg.max_num_loops, cfg.num_tile_sizes + 1)
 
         # print(parall_logits.shape, tiling_logits.shape, interchange_logits.shape)
 
         # Apply the mask on the transformations:
         transformation_logits = torch.where(transform_mask, transformation_logits, -float('inf'))
-        interchange_logits = torch.where(I_mask, interchange_logits, -float('inf'))
 
         # Get the actions indices:
         transformation_dist = Categorical(logits=transformation_logits)
-        interchange_dist = Categorical(logits=interchange_logits)
+        interchange_dist = Binomial(interchange_perm_count, logits=interchange_logit.squeeze(-1))  # B(n! - 1, p)
         tiling_dist = Categorical(logits=tiling_logits)
         parall_dist = Categorical(logits=parall_logits)
 
         if actions is None:
             transformation_index = transformation_dist.sample()
-            interchange_index = interchange_dist.sample()
+            if cfg.use_interchange_mean:
+                interchange_index = interchange_dist.mean.long()
+            else:
+                interchange_index = interchange_dist.sample().long()
             tiling_index = tiling_dist.sample()
             parall_index = parall_dist.sample()
 
@@ -137,13 +137,10 @@ class HiearchyModel(nn.Module):
                     transformation_index[i] = 5
 
         # Get the action prob and log_prob
-        transformation_log_p = F.log_softmax(transformation_logits, dim=-1).gather(-1, transformation_index.unsqueeze(-1)).reshape(*leading_dims, -1)
-        interchange_log_p = F.log_softmax(interchange_logits, dim=-1).gather(-1, interchange_index.unsqueeze(-1)).reshape(*leading_dims, -1)
-        tiling_log_p = F.log_softmax(tiling_logits, dim=-1).gather(-1, tiling_index.unsqueeze(-1)).reshape(*leading_dims, -1)
-        parall_log_p = F.log_softmax(parall_logits, dim=-1).gather(-1, parall_index.unsqueeze(-1)).reshape(*leading_dims, -1)
-
-        parall_log_p = torch.where(TP_mask, parall_log_p, 0).sum(-1, keepdim=True)
-        tiling_log_p = torch.where(T_mask, tiling_log_p, 0).sum(-1, keepdim=True)
+        transformation_log_p = transformation_dist.log_prob(transformation_index).reshape(-1)
+        interchange_log_p = interchange_dist.log_prob(interchange_index).reshape(-1)
+        parall_log_p = parall_dist.log_prob(parall_index).where(TP_mask, 0).sum(-1).reshape(-1)
+        tiling_log_p = tiling_dist.log_prob(tiling_index).where(T_mask, 0).sum(-1).reshape(-1)
 
         actions = []
         for i in range(transformation_index.shape[0]):
@@ -172,8 +169,6 @@ class HiearchyModel(nn.Module):
 
             elif transformation_index[i] == 5:
                 actions.append(['img2col', None])
-
-        transformation_log_p, interchange_log_p, tiling_log_p, parall_log_p = transformation_log_p.reshape(-1), interchange_log_p.reshape(-1), tiling_log_p.reshape(-1), parall_log_p.reshape(-1)
 
         is_no_action = (transformation_index == 0)
         is_parall = (transformation_index == 1)

@@ -18,6 +18,8 @@ class Config(metaclass=Singleton):
     """The number of transformations"""
     vect_size_limit: int
     """Vectorization size limit to prevent large sizes vectorization"""
+    use_interchange_mean: bool
+    """Flag to enable using the mean of the interchange distribution instead of the sampled value, if False, the sampled value is used. Default is True."""
     use_bindings: bool
     """Flag to enable using python bindings for execution, if False, the execution will be done using the command line. Default is False."""
     use_vectorizer: bool
@@ -60,6 +62,7 @@ class Config(metaclass=Singleton):
         self.num_tile_sizes = 7
         self.num_transformations = 5
         self.vect_size_limit = 512
+        self.use_interchange_mean = True
         self.use_bindings = False
         self.use_vectorizer = False
         self.mask_weights = False
@@ -89,6 +92,7 @@ class Config(metaclass=Singleton):
         self.num_tile_sizes = config["num_tile_sizes"]
         self.num_transformations = config["num_transformations"]
         self.vect_size_limit = config["vect_size_limit"]
+        self.use_interchange_mean = config["use_interchange_mean"]
         self.use_bindings = config["use_bindings"]
         self.use_vectorizer = config["use_vectorizer"]
         self.mask_weights = config["mask_weights"]
@@ -121,6 +125,7 @@ class Config(metaclass=Singleton):
             "num_tile_sizes": self.num_tile_sizes,
             "num_transformations": self.num_transformations,
             "vect_size_limit": self.vect_size_limit,
+            "use_interchange_mean": self.use_interchange_mean,
             "use_bindings": self.use_bindings,
             "use_vectorizer": self.use_vectorizer,
             "mask_weights": self.mask_weights,

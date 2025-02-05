@@ -61,8 +61,9 @@ def collect_trajectory(batch_count: int, model: Model, env: Env, device: torch.d
         while not batch_terminated:
             x = batch_obs
             # with torch.no_grad():
-            action_index, action_log_p, values, entropy = model.sample(x)
-            new_action_index, new_action_log_p, new_values, new_entropy = model.sample(x, actions=action_index)
+            num_loops = len(batch_state.operation_features.nested_loops)
+            action_index, action_log_p, values, entropy = model.sample(x, [num_loops])
+            new_action_index, new_action_log_p, new_values, new_entropy = model.sample(x, [num_loops], actions=action_index)
             assert (action_index == new_action_index), 'check the get_p yerham babak'
             assert (action_log_p == new_action_log_p).all(), 'check the get_p yerham babak'
             assert (values == new_values).all(), 'check the get_p yerham babak'
@@ -101,7 +102,7 @@ def collect_trajectory(batch_count: int, model: Model, env: Env, device: torch.d
 
     # with torch.no_grad():
     x = batch_obs
-    _, _, next_value, _ = model.sample(x)
+    _, _, next_value, _ = model.sample(x, [len(batch_state.operation_features.nested_loops)])
 
     stored_value_tensor = torch.concatenate(stored_value)
     stored_action_log_p_tensor = torch.concatenate(stored_action_log_p)
@@ -289,7 +290,7 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
         acc_loss = 0
         for i in range(len(stored_action_index)):
             action = stored_action_index[i]
-            # state = stored_state[i]
+            state = stored_state[i]
             action_log_p = stored_action_log_p[i]
             advantage = stored_advantages[i]
             return_ = stored_returns[i]
@@ -314,7 +315,7 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
 
             with torch.enable_grad():
                 # New predicition:
-                _, new_action_log_p, new_value, entropy = model.sample(x, actions=[action])
+                _, new_action_log_p, new_value, entropy = model.sample(x, [len(state.operation_features.nested_loops)], actions=[action])
 
                 new_action_log_p, new_value, entropy = new_action_log_p.squeeze(), new_value.squeeze(), entropy.squeeze()
 
@@ -376,7 +377,7 @@ def evaluate_benchmark(model: Model, env: Env, device: torch.device = torch.devi
 
             # with torch.no_grad():
             # Select the action using the model
-            action, _, _, _ = model.sample(obs)
+            action, _, _, _ = model.sample(obs, [len(state.operation_features.nested_loops)])
 
             # Apply the action and get the next state
             assert len(action) == 1
