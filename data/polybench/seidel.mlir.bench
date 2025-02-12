@@ -1,0 +1,53 @@
+func.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }
+func.func @main(%A: memref<N0xN0xf64>, %B: memref<N0xN0xf64>) -> i64 attributes { llvm.emit_c_interface } {
+  %t0 = func.call @nanoTime() : () -> i64
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c9.0_f64 = arith.constant 9.0 : f64
+  %cTSTEPS = arith.constant TSTEPS : index
+  %A_i_2 = memref.subview %A[0, 0][N2, N0][1, 1] : memref<N0xN0xf64> to memref<N2xN0xf64>
+  %A_j_2 = memref.subview %A[0, 0][N0, N2][1, 1] : memref<N0xN0xf64> to memref<N0xN2xf64, strided<[N0, 1]>>
+  %A_ij_2 = memref.subview %A[0, 0][N2, N2][1, 1] : memref<N0xN0xf64> to memref<N2xN2xf64, strided<[N0, 1]>>
+  %A_pad = memref.subview %A[1, 1][N2, N2][1, 1] : memref<N0xN0xf64> to memref<N2xN2xf64, strided<[N0, 1], offset: N1>>
+  %B_pad = memref.subview %B[1, 1][N2, N2][1, 1] : memref<N0xN0xf64> to memref<N2xN2xf64, strided<[N0, 1], offset: N1>>
+  scf.for %0 = %c0 to %cTSTEPS step %c1 {
+    linalg.generic {
+      indexing_maps = [
+        affine_map<(d0, d1)->(d0    , d1    )>,
+        affine_map<(d0, d1)->(d0    , d1 + 1)>,
+        affine_map<(d0, d1)->(d0    , d1 + 2)>,
+        affine_map<(d0, d1)->(d0 + 1, d1    )>,
+        affine_map<(d0, d1)->(d0 + 1, d1 + 1)>,
+        affine_map<(d0, d1)->(d0 + 1, d1 + 2)>,
+        affine_map<(d0, d1)->(d0 + 2, d1    )>,
+        affine_map<(d0, d1)->(d0 + 2, d1 + 1)>,
+        affine_map<(d0, d1)->(d0 + 2, d1 + 2)>,
+        affine_map<(d0, d1)->(d0 + 1, d1 + 1)>
+      ],
+      iterator_types = ["parallel", "parallel"]
+    } ins(%A_ij_2, %A_i_2, %A_i_2, %A_j_2, %A, %A, %A_j_2, %A, %A: memref<N2xN2xf64, strided<[N0, 1]>>, memref<N2xN0xf64>, memref<N2xN0xf64>, memref<N0xN2xf64, strided<[N0, 1]>>, memref<N0xN0xf64>, memref<N0xN0xf64>, memref<N0xN2xf64, strided<[N0, 1]>>, memref<N0xN0xf64>, memref<N0xN0xf64>)
+      outs(%B: memref<N0xN0xf64>) {
+      ^bb0(%arg0: f64, %arg1: f64, %arg2: f64, %arg3: f64, %arg4: f64, %arg5: f64, %arg6: f64, %arg7: f64, %arg8: f64, %arg9: f64):
+      %1 = arith.addf %arg0, %arg1 fastmath<nnan, ninf, nsz, reassoc, contract, afn> : f64
+      %2 = arith.addf %1, %arg2 fastmath<nnan, ninf, nsz, reassoc, contract, afn> : f64
+      %3 = arith.addf %2, %arg3 fastmath<nnan, ninf, nsz, reassoc, contract, afn> : f64
+      %4 = arith.addf %3, %arg4 fastmath<nnan, ninf, nsz, reassoc, contract, afn> : f64
+      %5 = arith.addf %4, %arg5 fastmath<nnan, ninf, nsz, reassoc, contract, afn> : f64
+      %6 = arith.addf %5, %arg6 fastmath<nnan, ninf, nsz, reassoc, contract, afn> : f64
+      %7 = arith.addf %6, %arg7 fastmath<nnan, ninf, nsz, reassoc, contract, afn> : f64
+      %8 = arith.addf %7, %arg8 fastmath<nnan, ninf, nsz, reassoc, contract, afn> : f64
+      %9 = arith.divf %8, %c9.0_f64 fastmath<nnan, ninf, nsz, reassoc, contract, afn> : f64
+      linalg.yield %9 : f64
+    }
+    linalg.generic {
+      indexing_maps = [affine_map<(d0, d1)->(d0, d1)>, affine_map<(d0, d1)->(d0, d1)>],
+      iterator_types = ["parallel", "parallel"]
+    } ins(%B_pad: memref<N2xN2xf64, strided<[N0, 1], offset: N1>>) outs(%A_pad: memref<N2xN2xf64, strided<[N0, 1], offset: N1>>) {
+      ^bb0(%arg0: f64, %arg1: f64):
+      linalg.yield %arg0 : f64
+    }
+  }
+  %t1 = func.call @nanoTime() : () -> i64
+  %t2 = arith.subi %t1, %t0 : i64
+  return %t2 : i64
+}

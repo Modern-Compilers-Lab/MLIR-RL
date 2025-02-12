@@ -1,0 +1,62 @@
+func.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }
+func.func @main(%EX: memref<NX0xNY0xf64>, %EY: memref<NX0xNY0xf64>, %HZ: memref<NX0xNY0xf64>) -> i64 attributes { llvm.emit_c_interface } {
+  %t0 = func.call @nanoTime() : () -> i64
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c0.5_f64 = arith.constant 0.5 : f64
+  %c0.7_f64 = arith.constant 0.7 : f64
+  %cTMAX = arith.constant TMAX : index
+  scf.for %0 = %c0 to %cTMAX step %c1 {
+    linalg.generic {
+      indexing_maps = [affine_map<(d0)->(0, d0)>],
+      iterator_types = ["parallel"]
+    } outs (%EY: memref<NX0xNY0xf64>) {
+      ^bb0(%arg0: f64):
+      %1 = arith.index_cast %0 : index to i64
+      %2 = arith.sitofp %1 : i64 to f64
+      linalg.yield %2 : f64
+    }
+    %HZ_i_1 = memref.subview %HZ[0, 0][NX1, NY0][1, 1] : memref<NX0xNY0xf64> to memref<NX1xNY0xf64>
+    linalg.generic {
+      indexing_maps = [affine_map<(d0, d1)->(d0, d1)>, affine_map<(d0, d1)->(d0 + 1, d1)>, affine_map<(d0, d1)->(d0 + 1, d1)>],
+      iterator_types = ["parallel", "parallel"]
+    } ins(%HZ_i_1, %HZ: memref<NX1xNY0xf64>, memref<NX0xNY0xf64>) outs(%EY: memref<NX0xNY0xf64>) {
+      ^bb0(%arg0: f64, %arg1: f64, %arg2: f64):
+      %1 = arith.subf %arg1, %arg0 fastmath<nnan, ninf, nsz, reassoc, contract, afn> : f64
+      %2 = arith.mulf %c0.5_f64, %1 fastmath<nnan, ninf, nsz, reassoc, contract, afn> : f64
+      %3 = arith.subf %arg2, %2 fastmath<nnan, ninf, nsz, reassoc, contract, afn> : f64
+      linalg.yield %3 : f64
+    }
+    %HZ_j_1 = memref.subview %HZ[0, 0][NX0, NY1][1, 1] : memref<NX0xNY0xf64> to memref<NX0xNY1xf64, strided<[NY0, 1]>>
+    linalg.generic {
+      indexing_maps = [affine_map<(d0, d1)->(d0, d1)>, affine_map<(d0, d1)->(d0, d1 + 1)>, affine_map<(d0, d1)->(d0, d1 + 1)>],
+      iterator_types = ["parallel", "parallel"]
+    } ins(%HZ_j_1, %HZ: memref<NX0xNY1xf64, strided<[NY0, 1]>>, memref<NX0xNY0xf64>) outs(%EX: memref<NX0xNY0xf64>) {
+      ^bb0(%arg0: f64, %arg1: f64, %arg2: f64):
+      %1 = arith.subf %arg1, %arg0 fastmath<nnan, ninf, nsz, reassoc, contract, afn> : f64
+      %2 = arith.mulf %c0.5_f64, %1 fastmath<nnan, ninf, nsz, reassoc, contract, afn> : f64
+      %3 = arith.subf %arg2, %2 fastmath<nnan, ninf, nsz, reassoc, contract, afn> : f64
+      linalg.yield %3 : f64
+    }
+    %HZ_ij_1 = memref.subview %HZ[0, 0][NX1, NY1][1, 1] : memref<NX0xNY0xf64> to memref<NX1xNY1xf64, strided<[NY0, 1]>>
+    %EX_ij_1 = memref.subview %EX[0, 0][NX1, NY1][1, 1] : memref<NX0xNY0xf64> to memref<NX1xNY1xf64, strided<[NY0, 1]>>
+    %EY_ij_1 = memref.subview %EY[0, 0][NX1, NY1][1, 1] : memref<NX0xNY0xf64> to memref<NX1xNY1xf64, strided<[NY0, 1]>>
+    %EX_i_1 = memref.subview %EX[0, 0][NX1, NY0][1, 1] : memref<NX0xNY0xf64> to memref<NX1xNY0xf64>
+    %EY_j_1 = memref.subview %EY[0, 0][NX0, NY1][1, 1] : memref<NX0xNY0xf64> to memref<NX0xNY1xf64, strided<[NY0, 1]>>
+    linalg.generic {
+      indexing_maps = [affine_map<(d0, d1)->(d0, d1)>, affine_map<(d0, d1)->(d0, d1)>, affine_map<(d0, d1)->(d0, d1 + 1)>, affine_map<(d0, d1)->(d0 + 1, d1)>, affine_map<(d0, d1)->(d0, d1)>],
+      iterator_types = ["parallel", "parallel"]
+    } ins(%EX_ij_1, %EY_ij_1, %EX_i_1, %EY_j_1: memref<NX1xNY1xf64, strided<[NY0, 1]>>, memref<NX1xNY1xf64, strided<[NY0, 1]>>, memref<NX1xNY0xf64>, memref<NX0xNY1xf64, strided<[NY0, 1]>>) outs(%HZ_ij_1: memref<NX1xNY1xf64, strided<[NY0, 1]>>) {
+      ^bb0(%arg0: f64, %arg1: f64, %arg2: f64, %arg3: f64, %arg4: f64):
+      %1 = arith.subf %arg2, %arg0 fastmath<nnan, ninf, nsz, reassoc, contract, afn> : f64
+      %2 = arith.addf %1, %arg3 fastmath<nnan, ninf, nsz, reassoc, contract, afn> : f64
+      %3 = arith.subf %2, %arg1 fastmath<nnan, ninf, nsz, reassoc, contract, afn> : f64
+      %4 = arith.mulf %c0.7_f64, %3 fastmath<nnan, ninf, nsz, reassoc, contract, afn> : f64
+      %5 = arith.subf %arg4, %4 fastmath<nnan, ninf, nsz, reassoc, contract, afn> : f64
+      linalg.yield %5 : f64
+    }
+  }
+  %t1 = func.call @nanoTime() : () -> i64
+  %t2 = arith.subi %t1, %t0 : i64
+  return %t2 : i64
+}
