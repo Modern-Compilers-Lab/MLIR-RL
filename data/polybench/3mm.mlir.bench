@@ -1,0 +1,56 @@
+func.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }
+func.func @main(%A: memref<NIxNKxf64>, %B: memref<NKxNJxf64>, %C: memref<NJxNMxf64>, %D: memref<NMxNLxf64>, %E: memref<NIxNJxf64>, %F: memref<NJxNLxf64>, %output: memref<NIxNLxf64>) -> i64 attributes { llvm.emit_c_interface } {
+  %t0 = func.call @nanoTime() : () -> i64
+  %c0.0_f64 = arith.constant 0.0 : f64
+  linalg.generic {
+    indexing_maps = [affine_map<(d0, d1)->(d0, d1)>],
+    iterator_types = ["parallel", "parallel"]
+  } outs(%E: memref<NIxNJxf64>) {
+    ^bb0(%arg0: f64):
+    linalg.yield %c0.0_f64 : f64
+  }
+  linalg.generic {
+    indexing_maps = [affine_map<(d0, d1, d2)->(d0, d2)>, affine_map<(d0, d1, d2)->(d2, d1)>, affine_map<(d0, d1, d2)->(d0, d1)>],
+    iterator_types = ["parallel", "parallel", "reduction"]
+  } ins(%A, %B: memref<NIxNKxf64>, memref<NKxNJxf64>) outs(%E: memref<NIxNJxf64>) {
+    ^bb0(%arg0: f64, %arg1: f64, %arg2: f64):
+    %0 = arith.mulf %arg0, %arg1 fastmath<nnan, ninf, nsz, reassoc, contract, afn> : f64
+    %1 = arith.addf %arg2, %0 fastmath<nnan, ninf, nsz, reassoc, contract, afn> : f64
+    linalg.yield %1 : f64
+  }
+  linalg.generic {
+    indexing_maps = [affine_map<(d0, d1)->(d0, d1)>],
+    iterator_types = ["parallel", "parallel"]
+  } outs(%F: memref<NJxNLxf64>) {
+    ^bb0(%arg0: f64):
+    linalg.yield %c0.0_f64 : f64
+  }
+  linalg.generic {
+    indexing_maps = [affine_map<(d0, d1, d2)->(d0, d2)>, affine_map<(d0, d1, d2)->(d2, d1)>, affine_map<(d0, d1, d2)->(d0, d1)>],
+    iterator_types = ["parallel", "parallel", "reduction"]
+  } ins(%C, %D: memref<NJxNMxf64>, memref<NMxNLxf64>) outs(%F: memref<NJxNLxf64>) {
+    ^bb0(%arg0: f64, %arg1: f64, %arg2: f64):
+    %0 = arith.mulf %arg0, %arg1 fastmath<nnan, ninf, nsz, reassoc, contract, afn> : f64
+    %1 = arith.addf %arg2, %0 fastmath<nnan, ninf, nsz, reassoc, contract, afn> : f64
+    linalg.yield %1 : f64
+  }
+  linalg.generic {
+    indexing_maps = [affine_map<(d0, d1)->(d0, d1)>],
+    iterator_types = ["parallel", "parallel"]
+  } outs(%output: memref<NIxNLxf64>) {
+    ^bb0(%arg0: f64):
+    linalg.yield %c0.0_f64 : f64
+  }
+  linalg.generic {
+    indexing_maps = [affine_map<(d0, d1, d2)->(d0, d2)>, affine_map<(d0, d1, d2)->(d2, d1)>, affine_map<(d0, d1, d2)->(d0, d1)>],
+    iterator_types = ["parallel", "parallel", "reduction"]
+  } ins(%E, %F: memref<NIxNJxf64>, memref<NJxNLxf64>) outs(%output: memref<NIxNLxf64>) {
+    ^bb0(%arg0: f64, %arg1: f64, %arg2: f64):
+    %0 = arith.mulf %arg0, %arg1 fastmath<nnan, ninf, nsz, reassoc, contract, afn> : f64
+    %1 = arith.addf %arg2, %0 fastmath<nnan, ninf, nsz, reassoc, contract, afn> : f64
+    linalg.yield %1 : f64
+  }
+  %t1 = func.call @nanoTime() : () -> i64
+  %t2 = arith.subi %t1, %t0 : i64
+  return %t2 : i64
+}
