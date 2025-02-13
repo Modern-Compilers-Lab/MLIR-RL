@@ -288,44 +288,32 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
         stored_action_index, stored_state, stored_action_log_p, stored_x, stored_advantages, stored_returns = shuffle_ppo_data(stored_action_index, stored_state, stored_action_log_p, stored_x, advantages, returns)
 
         acc_loss = 0
-        for i in range(len(stored_action_index)):
-            action = stored_action_index[i]
-            state = stored_state[i]
-            action_log_p = stored_action_log_p[i]
-            advantage = stored_advantages[i]
-            return_ = stored_returns[i]
-            x = stored_x[i].unsqueeze(0).to(device)
-
-            if cfg.mask_weights:
-                model.transformation_selection.requires_grad_(True)
-                model.parall_fc.requires_grad_(False)
-                model.tiling_fc.requires_grad_(False)
-                model.interchange_fc.requires_grad_(False)
-                match action[0]:
-                    case 'no_transformation' | 'vectorization' | 'img2col':
-                        pass
-                    case 'parallelization':
-                        model.parall_fc.requires_grad_(True)
-                    case 'tiling':
-                        model.tiling_fc.requires_grad_(True)
-                    case 'interchange':
-                        model.interchange_fc.requires_grad_(True)
-                    case _:
-                        raise ValueError(f"Unknown action: {action[0]}")
+        len_trajectory = len(stored_action_index)
+        for i in range(0, len_trajectory, cfg.ppo_batch_size):
+            betch_end = min(i + cfg.ppo_batch_size, len_trajectory)
+            actions = stored_action_index[i:betch_end]
+            states = stored_state[i:betch_end]
+            actions_log_p = stored_action_log_p[i:betch_end].to(device)
+            advantages = stored_advantages[i:betch_end].to(device)
+            returns = stored_returns[i:betch_end].to(device)
+            x = stored_x[i:betch_end].to(device)
 
             with torch.enable_grad():
                 # New predicition:
-                _, new_action_log_p, new_value, entropy = model.sample(x, [len(state.operation_features.nested_loops)], actions=[action])
+                _, new_actions_log_p, new_values, entropy = model.sample(x, [len(state.operation_features.nested_loops) for state in states], actions)
 
-                new_action_log_p, new_value, entropy = new_action_log_p.squeeze(), new_value.squeeze(), entropy.squeeze()
+                if advantages.shape[0] > 1:
+                    advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
-                ratio = torch.exp(new_action_log_p - action_log_p)
-                surr1 = ratio * advantage
-                surr2 = torch.clamp(ratio, 1 - 0.2, 1 + 0.2) * advantage
-                policy_loss = - torch.min(surr1, surr2)
+                new_actions_log_p, new_values, entropy = new_actions_log_p.reshape(-1), new_values.reshape(-1), entropy.reshape(-1)
 
-                value_loss = ((return_ - new_value)**2)
-                value_loss = ((return_ - new_value).abs())
+                ratios = torch.exp(new_actions_log_p - actions_log_p.detach())
+                surr1 = ratios * advantages
+                surr2 = torch.clamp(ratios, 1 - 0.2, 1 + 0.2) * advantages
+                policy_loss = - torch.min(surr1, surr2).mean()
+
+                value_loss = ((returns.detach() - new_values)**2).mean()
+                # value_loss = ((returns.detach() - new_values).abs()).mean()
 
                 loss = policy_loss - entropy_coef * entropy + 0.5 * value_loss
 

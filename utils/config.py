@@ -24,8 +24,6 @@ class Config(metaclass=Singleton):
     """Flag to enable using python bindings for execution, if False, the execution will be done using the command line. Default is False."""
     use_vectorizer: bool
     """Flag to enable using the vectorizer C++ program for vectorization, if False, vectorization is done using transform dialect directly. Default is False."""
-    mask_weights: bool
-    """Flag to enable masking weights in ppo learning, if False, the weights are not masked. Default is False."""
     data_format: Literal["json", "mlir"]
     """The format of the data, can be either "json" or "mlir". "json" mode reads json files containing benchmark features, "mlir" mode reads mlir code files directly and extract features from it using AST dumper. Default is "json"."""
     optimization_mode: Literal["last", "all"]
@@ -38,6 +36,8 @@ class Config(metaclass=Singleton):
     """Number of iterations"""
     ppo_epochs: int
     """Number of epochs for PPO"""
+    ppo_batch_size: int
+    """Batch size for PPO"""
     entropy_coef: float
     """Entropy coefficient"""
     lr: float
@@ -65,13 +65,13 @@ class Config(metaclass=Singleton):
         self.use_interchange_mean = True
         self.use_bindings = False
         self.use_vectorizer = False
-        self.mask_weights = False
         self.data_format = "json"
         self.optimization_mode = "last"
         self.benchmarks_folder_path = ""
-        self.batch_count = 10
+        self.batch_count = 20
         self.nb_iterations = 10000
         self.ppo_epochs = 4
+        self.ppo_batch_size = 32
         self.entropy_coef = 0.01
         self.lr = 0.001
         self.truncate = 5
@@ -95,13 +95,13 @@ class Config(metaclass=Singleton):
         self.use_interchange_mean = config["use_interchange_mean"]
         self.use_bindings = config["use_bindings"]
         self.use_vectorizer = config["use_vectorizer"]
-        self.mask_weights = config["mask_weights"]
         self.data_format = config["data_format"]
         self.optimization_mode = config["optimization_mode"]
         self.benchmarks_folder_path = config["benchmarks_folder_path"]
         self.batch_count = config["batch_count"]
         self.nb_iterations = config["nb_iterations"]
         self.ppo_epochs = config["ppo_epochs"]
+        self.ppo_batch_size = config["ppo_batch_size"]
         self.entropy_coef = config["entropy_coef"]
         self.lr = config["lr"]
         self.truncate = config["truncate"]
@@ -128,13 +128,13 @@ class Config(metaclass=Singleton):
             "use_interchange_mean": self.use_interchange_mean,
             "use_bindings": self.use_bindings,
             "use_vectorizer": self.use_vectorizer,
-            "mask_weights": self.mask_weights,
             "data_format": self.data_format,
             "optimization_mode": self.optimization_mode,
             "benchmarks_folder_path": self.benchmarks_folder_path,
             "batch_count": self.batch_count,
             "nb_iterations": self.nb_iterations,
             "ppo_epochs": self.ppo_epochs,
+            "ppo_batch_size": self.ppo_batch_size,
             "entropy_coef": self.entropy_coef,
             "lr": self.lr,
             "truncate": self.truncate,
