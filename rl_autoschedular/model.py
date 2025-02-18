@@ -15,14 +15,13 @@ class HiearchyModel(nn.Module):
         L = cfg.max_num_loops
         D = cfg.max_num_load_store_dim
         SD = cfg.max_num_stores_loads
+        T = cfg.num_tile_sizes
 
-        self.input_dim = 1 + L + L * D * SD + L * D + 5 + L * 3 * cfg.truncate
+        self.input_dim = 6 + L + L * D * SD + L * D + 5 + cfg.truncate * 3 * L
         self.action_mask_size = N + L + L
 
         self.backbone = nn.Sequential(
             nn.Linear(self.input_dim, 512),
-            nn.ReLU(),
-            nn.Linear(512, 512),
             nn.ReLU(),
             nn.Linear(512, 512),
             nn.ReLU(),
@@ -33,17 +32,34 @@ class HiearchyModel(nn.Module):
             nn.ReLU(),
             nn.Linear(512, 512),
             nn.ReLU(),
+            nn.Linear(512, 1),
+        )
+
+        self.transformation_selection = nn.Sequential(
+            nn.Linear(512, 512),
+            nn.ReLU(),
+            nn.Linear(512, N),
+        )
+
+        self.interchange_fc = nn.Sequential(
             nn.Linear(512, 512),
             nn.ReLU(),
             nn.Linear(512, 1),
         )
 
-        self.transformation_selection = nn.Linear(512, cfg.num_transformations)  # +1 for the stop operation
-        self.interchange_fc = nn.Linear(512, 1)
-        self.tiling_fc = nn.Linear(512, cfg.max_num_loops * (cfg.num_tile_sizes + 1))  # +1 for the no tiling
-        self.parall_fc = nn.Linear(512, cfg.max_num_loops * (cfg.num_tile_sizes + 1))  # +1 for the no parallelizattion
+        self.tiling_fc = nn.Sequential(
+            nn.Linear(512, 512),
+            nn.ReLU(),
+            nn.Linear(512, L * (T + 1)),
+        )
 
-    def sample(self, obs: torch.Tensor, num_loops: list[int], actions: Optional[list[tuple[str, Optional[Union[list[int], int]]]]] = None) -> tuple[list[tuple[str, Optional[Union[list[int], int]]]], torch.Tensor, torch.Tensor, torch.Tensor]:
+        self.parallelization_fc = nn.Sequential(
+            nn.Linear(512, 512),
+            nn.ReLU(),
+            nn.Linear(512, L * (T + 1)),
+        )
+
+    def sample(self, obs: torch.Tensor, num_loops: list[int], actions: Optional[list[tuple[str, Optional[Union[list[int], int]]]]] = None, explore: bool = False) -> tuple[list[tuple[str, Optional[Union[list[int], int]]]], torch.Tensor, torch.Tensor, torch.Tensor]:
         """Sample an action from the model.
 
         Args:
@@ -58,130 +74,180 @@ class HiearchyModel(nn.Module):
             torch.Tensor: resulting entropy.
         """
 
-        *leading_dims, _ = obs.shape
+        batch_size, _ = obs.shape
+        assert actions is None or len(actions) == batch_size
 
-        # Spint `obs` into the input `x` and the `action_mask`
-        x = obs[..., :-(self.action_mask_size)]
-        action_mask = obs[..., -(self.action_mask_size):].bool()
+        # Split `obs` into the input `x` and the `action_mask`
+        x = obs[:, :-(self.action_mask_size)]
+        action_mask = obs[:, -(self.action_mask_size):].bool()
 
-        # print(action_mask)
-
-        # decompose action mask:
         L = cfg.max_num_loops
-
+        TS = cfg.num_tile_sizes
         TP_BEGIN = cfg.num_transformations
         T_BEGIN = TP_BEGIN + L
 
-        interchange_perm_count = (torch.tensor(num_loops) + 1).lgamma().exp().long() - 1
-
         # Define the mask of each transformation
-        transform_mask = action_mask[..., :cfg.num_transformations]
-        TP_mask = action_mask[..., TP_BEGIN:T_BEGIN]
-        T_mask = action_mask[..., T_BEGIN:]
+        transform_mask = action_mask[:, :cfg.num_transformations]
+        TP_mask = action_mask[:, TP_BEGIN:T_BEGIN].unsqueeze(-1).broadcast_to(batch_size, L, TS + 1)
+        TP_mask[:, :, 0] = 1  # Never mask "no tiling"
+        T_mask = action_mask[:, T_BEGIN:].unsqueeze(-1).broadcast_to(batch_size, L, TS + 1)
+        T_mask[:, :, 0] = 1  # Never mask "no tiling"
 
         # Model inference:
         x1 = self.backbone(x)
+
         transformation_logits = self.transformation_selection(x1)
-        interchange_logit = self.interchange_fc(x1)
-        tiling_logits = self.tiling_fc(x1)
-        parall_logits = self.parall_fc(x1)
+        parallelization_logits = self.parallelization_fc(x1).reshape(batch_size, L, TS + 1)
+        tiling_logits = self.tiling_fc(x1).reshape(batch_size, L, TS + 1)
+        interchange_logit = self.interchange_fc(x1).squeeze(-1)
 
         values = self.value_network(x)
 
-        tiling_logits = tiling_logits.reshape(*leading_dims, cfg.max_num_loops, cfg.num_tile_sizes + 1)
-        parall_logits = parall_logits.reshape(*leading_dims, cfg.max_num_loops, cfg.num_tile_sizes + 1)
+        if explore:
+            transformation_logits += torch.randn_like(transformation_logits)
+            parallelization_logits += torch.randn_like(parallelization_logits)
+            tiling_logits += torch.randn_like(tiling_logits)
+            interchange_logit += torch.randn_like(interchange_logit)
 
-        # print(parall_logits.shape, tiling_logits.shape, interchange_logits.shape)
+        # Apply masks on logits
+        transformation_logits = transformation_logits.where(transform_mask, -torch.inf)
+        parallelization_logits = parallelization_logits.where(TP_mask, -torch.inf)
+        tiling_logits = tiling_logits.where(T_mask, -torch.inf)
 
-        # Apply the mask on the transformations:
-        transformation_logits = torch.where(transform_mask, transformation_logits, -float('inf'))
-
-        # Get the actions indices:
+        # Create distributions with the masked probabilities
         transformation_dist = Categorical(logits=transformation_logits)
-        interchange_dist = Binomial(interchange_perm_count, logits=interchange_logit.squeeze(-1))  # B(n! - 1, p)
+        parallelization_dist = Categorical(logits=parallelization_logits)
         tiling_dist = Categorical(logits=tiling_logits)
-        parall_dist = Categorical(logits=parall_logits)
+        interchange_dist = Binomial((torch.tensor(num_loops) + 1).lgamma().exp().long() - (0 if cfg.use_interchange_mean else 1), logits=interchange_logit)
 
+        # Get chosen actions indices
         if actions is None:
             transformation_index = transformation_dist.sample()
+            parallelization_index = parallelization_dist.sample()
+            tiling_index = tiling_dist.sample()
             if cfg.use_interchange_mean:
                 interchange_index = interchange_dist.mean.long()
             else:
                 interchange_index = interchange_dist.sample().long()
-            tiling_index = tiling_dist.sample()
-            parall_index = parall_dist.sample()
-
         else:
+            transformation_index, parallelization_index, tiling_index, interchange_index = self.__raw_actions_to_indices(actions)
 
-            transformation_index = torch.zeros((len(actions),), dtype=torch.int64)
-            parall_index = torch.zeros((len(actions), L), dtype=torch.int64)
-            tiling_index = torch.zeros((len(actions), L), dtype=torch.int64)
-            interchange_index = torch.zeros((len(actions),), dtype=torch.int64)
+        # Get log probabilities of the actions
+        transformation_log_p = transformation_dist.log_prob(transformation_index)
+        interchange_log_p = interchange_dist.log_prob(interchange_index)
+        parallelization_log_p = parallelization_dist.log_prob(parallelization_index).sum(-1)
+        tiling_log_p = tiling_dist.log_prob(tiling_index).sum(-1)
 
-            for i, action in enumerate(actions):
-                action_name, parameters = action
-                if action_name == 'no_transformation':
-                    transformation_index[i] = 0
-                elif action_name == 'parallelization':
-                    transformation_index[i] = 1
-                    parall_index[i] = torch.tensor(list(parameters) + [0] * (L - len(parameters)))
-                elif action_name == 'tiling':
-                    transformation_index[i] = 2
-                    tiling_index[i] = torch.tensor(list(parameters) + [0] * (L - len(parameters)))
-                elif action_name == 'interchange':
-                    transformation_index[i] = 3
-                    interchange_index[i] = parameters
-                elif action_name == 'vectorization':
-                    transformation_index[i] = 4
-                elif action_name == 'img2col':
-                    transformation_index[i] = 5
+        # Get raw actions from indices
+        actions = self.__indices_to_raw_actions(transformation_index, parallelization_index, tiling_index, interchange_index, num_loops)
 
-        # Get the action prob and log_prob
-        transformation_log_p = transformation_dist.log_prob(transformation_index).reshape(-1)
-        interchange_log_p = interchange_dist.log_prob(interchange_index).reshape(-1)
-        parall_log_p = parall_dist.log_prob(parall_index).where(TP_mask, 0).sum(-1).reshape(-1)
-        tiling_log_p = tiling_dist.log_prob(tiling_index).where(T_mask, 0).sum(-1).reshape(-1)
+        action_log_p = transformation_log_p
+        action_log_p += parallelization_log_p * (transformation_index == 1)
+        action_log_p += tiling_log_p * (transformation_index == 2)
+        action_log_p += interchange_log_p * (transformation_index == 3)
 
-        actions = []
-        for i in range(transformation_index.shape[0]):
-            if transformation_index[i] == 0:
-                actions.append(['no_transformation', None])
-
-            elif transformation_index[i] == 1:
-                params = []
-                for j in range(parall_index[i].shape[0]):
-                    if TP_mask[i, j]:
-                        params.append(parall_index[i, j].item())
-                actions.append(['parallelization', params])
-
-            elif transformation_index[i] == 2:
-                params = []
-                for j in range(tiling_index[i].shape[0]):
-                    if T_mask[i, j]:
-                        params.append(tiling_index[i, j].item())
-                actions.append(['tiling', params])
-
-            elif transformation_index[i] == 3:
-                actions.append(['interchange', interchange_index[i].item()])
-
-            elif transformation_index[i] == 4:
-                actions.append(['vectorization', None])
-
-            elif transformation_index[i] == 5:
-                actions.append(['img2col', None])
-
-        is_no_action = (transformation_index == 0)
-        is_parall = (transformation_index == 1)
-        is_tiling = (transformation_index == 2)
-        is_interchange = (transformation_index == 3)
-
-        action_log_p = torch.zeros_like(transformation_index, dtype=torch.float32)
-        action_log_p[is_interchange] = interchange_log_p[is_interchange] + transformation_log_p[is_interchange]
-        action_log_p[is_tiling] = tiling_log_p[is_tiling] + transformation_log_p[is_tiling]
-        action_log_p[is_parall] = parall_log_p[is_parall] + transformation_log_p[is_parall]
-        action_log_p[is_no_action] = transformation_log_p[is_no_action]
-
-        entropy = transformation_dist.entropy().mean() + interchange_dist.entropy().mean() + tiling_dist.entropy().mean() + parall_dist.entropy().mean()
+        entropy = transformation_dist.entropy().mean() + tiling_dist.entropy().mean() + parallelization_dist.entropy().mean()
 
         return actions, action_log_p, values, entropy
-        # return action_log_p, entropy, values, sub_entropies
+
+    def sample_value(self, obs: torch.Tensor) -> torch.Tensor:
+        """Sample the value from the model.
+
+        Args:
+            obs (torch.Tensor): The input tensor.
+
+        Returns:
+            torch.Tensor: The value tensor.
+        """
+        return self.value_network(obs[..., :-(self.action_mask_size)])
+
+    def __transformation_to_int(self, transformation: str) -> int:
+        """Convert a transformation string to an integer.
+
+        Args:
+            transformation (str): The transformation string.
+
+        Returns:
+            int: The transformation integer.
+        """
+        return {
+            'no_transformation': 0,
+            'parallelization': 1,
+            'tiling': 2,
+            'interchange': 3,
+            'vectorization': 4,
+            'img2col': 5,
+        }[transformation]
+
+    def __int_to_transformation(self, transformation: int) -> str:
+        """Convert an integer to a transformation string.
+
+        Args:
+            transformation (int): The transformation integer.
+
+        Returns:
+            str: The transformation string.
+        """
+        return {
+            0: 'no_transformation',
+            1: 'parallelization',
+            2: 'tiling',
+            3: 'interchange',
+            4: 'vectorization',
+            5: 'img2col',
+        }[transformation]
+
+    def __raw_actions_to_indices(self, actions: list[tuple[str, Optional[Union[list[int], int]]]]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Convert a list of actions to tensor of indices.
+
+        Args:
+            actions (Optional[list[tuple[str, Optional[Union[list[int], int]]]]): The list of actions.
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: The indices tensors for the transformations, parallelizations, tilings, and interchanges.
+        """
+        L = cfg.max_num_loops
+        batch_size = len(actions)
+        transformation_index = torch.tensor([self.__transformation_to_int(name) for name, _ in actions], dtype=torch.int64)
+
+        parallelization_index = torch.zeros((batch_size, L), dtype=torch.int64)
+        tiling_index = torch.zeros((batch_size, L), dtype=torch.int64)
+        interchange_index = torch.zeros((batch_size,), dtype=torch.int64)
+        for i, action in enumerate(actions):
+            action_name, parameters = action
+            match action_name:
+                case 'parallelization':
+                    parallelization_index[i, :len(parameters)] = torch.tensor(parameters)
+                case 'tiling':
+                    tiling_index[i, :len(parameters)] = torch.tensor(parameters)
+                case 'interchange':
+                    interchange_index[i] = parameters
+
+        return transformation_index, parallelization_index, tiling_index, interchange_index
+
+    def __indices_to_raw_actions(self, transformation_index: torch.Tensor, parallelization_index: torch.Tensor, tiling_index: torch.Tensor, interchange_index: torch.Tensor, num_loops: list[int]) -> list[tuple[str, Optional[Union[list[int], int]]]]:
+        """Convert tensor indices to a list of actions.
+
+        Args:
+            transformation_index (torch.Tensor): The transformation indices.
+            parallelization_index (torch.Tensor): The parallelization indices.
+            tiling_index (torch.Tensor): The tiling indices.
+            interchange_index (torch.Tensor): The interchange indices.
+
+        Returns:
+            list[tuple[str, Optional[Union[list[int], int]]]]: The list of actions.
+        """
+        actions = []
+        for i in range(transformation_index.shape[0]):
+            transformation = self.__int_to_transformation(transformation_index[i].item())
+            parameters = None
+            match transformation:
+                case 'parallelization':
+                    parameters = parallelization_index[i, :num_loops[i]].tolist()
+                case 'tiling':
+                    parameters = tiling_index[i, :num_loops[i]].tolist()
+                case 'interchange':
+                    parameters = interchange_index[i].item()
+            actions.append((transformation, parameters))
+
+        return actions

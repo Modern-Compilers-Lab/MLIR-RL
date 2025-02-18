@@ -32,7 +32,6 @@ def build_op_features_vector(op_features: OperationFeatures):
         nested_loops[i] = nested_loop.upper_bound
 
     # load access matrices:
-
     load_data = op_features.load_data
 
     load_access_matrices = np.zeros((cfg.max_num_stores_loads, cfg.max_num_load_store_dim, cfg.max_num_loops), dtype=np.int16)
@@ -47,7 +46,7 @@ def build_op_features_vector(op_features: OperationFeatures):
                     n = indices_dim[index]
                     load_access_matrices[load_i, m, n] = factor
 
-    # load access matrices:
+    # store access matrices:
     store_data = op_features.store_data
 
     store_access_matrices = np.zeros((cfg.max_num_load_store_dim, cfg.max_num_loops), dtype=np.int16)
@@ -66,7 +65,6 @@ def build_op_features_vector(op_features: OperationFeatures):
     load_access_matrices = load_access_matrices.reshape(-1)
     store_access_matrices = store_access_matrices.reshape(-1)
 
-    # print('   ', nested_loops.shape, load_access_matrices.shape, store_access_matrices.shape, operations_count.shape)
     feature_vector = np.concatenate((nested_loops, load_access_matrices, store_access_matrices, operations_count))
 
     return feature_vector
@@ -112,12 +110,10 @@ def extract_op_features_from_affine_code(raw_operation: str, tmp_file_path: str)
             mapping_string = copy(maps[map_name])
             for i in range(len(args)):
                 mapping_string = mapping_string.replace(f'd{i}', args[i])
-            # print(new_op, map_name, args, maps[map_name], mapping_string)
             args_of_map[new_op] = mapping_string
 
         elif "affine.for" in line:
             _, arg, _, lower, _, upper, _ = line.strip().split(' ')
-            # print(arg, lower, upper)
             # TODO: handle iterator types better
             nested_loops.append(
                 NestedLoopFeatures(
@@ -131,7 +127,6 @@ def extract_op_features_from_affine_code(raw_operation: str, tmp_file_path: str)
             args_of_loops.append(arg)
 
         elif "affine.load" in line:
-            # print(line.strip().split(' ')[:-2])
             new_op, _, _, *alloc = line.strip().split(' ')[:-2]
             alloc = ' '.join(alloc)
             args = alloc.split('[')[1][:-1].split(', ')
@@ -162,7 +157,7 @@ def extract_op_features_from_affine_code(raw_operation: str, tmp_file_path: str)
     )
 
 
-def extract_bench_features_from_code(bench_name: str, code: str, root_execution_time: int, execution_time: int):
+def extract_bench_features_from_code(bench_name: str, code: str, root_execution_time: int):
     """Extract benchmark features from the given code.
 
     Args:
@@ -183,10 +178,10 @@ def extract_bench_features_from_code(bench_name: str, code: str, root_execution_
     )
     raw_ast_info = result.stdout.decode('utf-8')
 
-    return __extract_bench_features_from_ast_result(bench_name, raw_ast_info, root_execution_time, execution_time)
+    return __extract_bench_features_from_ast_result(bench_name, raw_ast_info, root_execution_time)
 
 
-def extract_bench_features_from_file(bench_name: str, file_path: str, root_execution_time: int, execution_time: int):
+def extract_bench_features_from_file(bench_name: str, file_path: str, root_execution_time: int):
     """Extract benchmark features from the code in the file.
 
     Args:
@@ -206,70 +201,7 @@ def extract_bench_features_from_file(bench_name: str, file_path: str, root_execu
     )
     raw_ast_info = result.stdout.decode('utf-8')
 
-    return __extract_bench_features_from_ast_result(bench_name, raw_ast_info, root_execution_time, execution_time)
-
-
-# def get_raw_ast_info(code: str, tmp_file_path: str):
-#     """Get the raw AST information from the code
-
-#     Args:
-#         code (str): the code to get the AST information from
-#         tmp_file_path (str): the temporary file path to write the code to
-
-#     Returns:
-#         str: the raw AST information
-#     """
-
-#     with open(tmp_file_path, "w") as file:
-#         file.write(code)
-
-#     result = subprocess.run(
-#         f'{os.getenv("AST_DUMPER_BIN_PATH")} {tmp_file_path}',
-#         shell=True,
-#         stdout=subprocess.PIPE,
-#         stderr=subprocess.PIPE
-#     )
-
-#     return result.stdout.decode('utf-8')
-
-
-# def get_ast(raw_ast_info: str):
-#     """Get the AST from the raw AST information
-
-#     Args:
-#         raw_ast_info (str): the raw AST information
-
-#     Returns:
-#         dict: containing for each consumer operation, the producers and the operation
-#         str: new code with tags
-#     """
-
-#     info, new_code = raw_ast_info.split("########################################")
-#     operations_lines, graph_lines = info.split('#BEGIN_GRAPH')
-
-#     operations_blocks = operations_lines.split('#START_OPERATION')
-#     operations_blocks = [block.strip() for block in operations_blocks if block]
-
-#     ast = {}
-#     for block in operations_blocks:
-#         block_lines = block.split('\n')
-
-#         operation_tag = block_lines[-2]
-#         operation = '\n'.join(block_lines[:-3])
-#         operation = operation.split("#START_NESTED_LOOPS")[0]
-
-#         ast[operation_tag] = {
-#             'producers': [],
-#             'operation': operation
-#         }
-
-#     graph_lines = graph_lines.split('\n')
-#     graph_lines = [line.split(' --> ') for line in graph_lines if ' --> ' in line]
-
-#     for (producer, consumer) in graph_lines:
-#         ast[consumer]['producers'].insert(0, producer)
-
-#     return ast, new_code.strip()
+    return __extract_bench_features_from_ast_result(bench_name, raw_ast_info, root_execution_time)
 
 
 # ================================================ Private functions ================================================
@@ -410,7 +342,7 @@ def __lower_linalg_to_loops(mlir_code: str, tmp_file_path: str):
         return None
 
 
-def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str, root_execution_time: int, execution_time: int):
+def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str, root_execution_time: int):
     """Extracts benchmark features from the code's AST result and execution time.
 
     Args:
@@ -423,7 +355,6 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
         BenchmarkFeatures: extracted benchmark features
     """
     info, full_code = raw_ast_info.split("########################################")
-    # exec_time = lower_and_run_code(full_code)
     operations_lines, _ = info.split('#BEGIN_GRAPH')
 
     operations_blocks = operations_lines.split('#START_OPERATION')
@@ -434,8 +365,8 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
     for operation_block in operations_blocks:
         nested_loops = []
         op_count = {}
-        load_data = []
-        store_data = []
+        load_data: list[list[str]] = []
+        store_data: list[str] = []
 
         operation, rest = operation_block.split("#START_NESTED_LOOPS")
 
@@ -454,13 +385,20 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
             ))
             loop_args.append(arg)
 
-        loads_data_str, rest = rest.split("#START_OP_COUNT")
+        loads_data_str, rest = rest.split("#START_STORE_DATA")
         for loop_arg in loop_args:
             loads_data_str = loads_data_str.replace(loop_arg, f'%{loop_arg}')
         for load_data_str in loads_data_str.strip().split("\n"):
             if not load_data_str:
                 continue
             load_data.append(load_data_str.split(", "))
+
+        store_data_str, rest = rest.split("#START_OP_COUNT")
+        for loop_arg in loop_args:
+            store_data_str = store_data_str.replace(loop_arg, f'%{loop_arg}')
+        store_data_list = store_data_str.strip().split("\n")
+        assert len(store_data_list) == 1, f"Store data list is not of length 1: {store_data_list}"
+        store_data = store_data_list[0].split(", ")
 
         ops_count_str, rest = rest.split("#START_TAG")
         for op_count_str in ops_count_str.strip().split("\n"):
@@ -483,5 +421,4 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
         operation_tags=ops_tags,
         operations=operations,
         root_exec_time=root_execution_time,
-        exec_time=execution_time
     )

@@ -184,6 +184,23 @@ int main(int argc, char **argv)
           }
         }
       }
+      llvm::outs() << "#START_STORE_DATA" << "\n";
+      size_t out_args_nbr = linalgOp.getRegionOutputArgs().size();
+      if (out_args_nbr > 1) {
+        throw std::runtime_error("Multiple output arguments are not supported.");
+      }
+      for (BlockArgument out_arg : linalgOp.getRegionOutputArgs()) {
+        AffineMap operand_map = linalgOp.getMatchingIndexingMap(linalgOp.getMatchingOpOperand(out_arg));
+        uint results_nbr = operand_map.getNumResults();
+        for (auto [index, map_result] : llvm::enumerate(operand_map.getResults())) {
+          map_result.print(llvm::outs());
+          if (index < results_nbr - 1) {
+            llvm::outs() << ", ";
+          } else {
+            llvm::outs() << "\n";
+          }
+        }
+      }
       llvm::outs() << "#START_OP_COUNT" << "\n";
       int add_count = 0, sub_count = 0, mul_count = 0, div_count = 0, exp_count = 0;
       linalgOp.walk([&](Operation *nested_op){

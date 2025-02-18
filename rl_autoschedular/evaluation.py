@@ -7,12 +7,44 @@ from mlir.passmanager import PassManager
 from typing import Union, Optional
 import multiprocessing
 from rl_autoschedular import config as cfg
+from rl_autoschedular.state import OperationState, BenchmarkFeatures
+from utils.log import print_alert
+import json
+
+
+def evaluate_code_with_timeout(state: OperationState, bench_data: BenchmarkFeatures, timeout: Optional[float] = 120) -> tuple[Optional[int], Union[Exception, bool]]:
+    """Evaluates the given MLIR code with a timeout.
+
+    Args:
+        state (OperationState): The operation state to evaluate.
+        bench_data (BenchmarkFeatures): The benchmark features data.
+        timeout (Optional[float]): The timeout in seconds.
+
+    Returns:
+        Optional[float]: the execution time in seconds.
+        Union[Exception, bool]: the assertion result or an exception if an error occurred.
+    """
+    code_cache_key = __get_code_cache_key(state, bench_data)
+    cache_exec_time = __check_execution_cache(state.bench_name, code_cache_key)
+    if cache_exec_time is not None:
+        return cache_exec_time, True
+    print_alert('Cache miss')
+
+    if cfg.use_bindings:
+        real_exec_time, success = evaluate_code_with_bindings_and_timeout(state.transformed_code, state.bench_name, timeout)
+    else:
+        real_exec_time, success = evaluate_code_with_cmd_and_timeout(state.transformed_code, state.tmp_file, timeout)
+
+    if success and real_exec_time is not None:
+        __update_execution_cache(state.bench_name, code_cache_key, real_exec_time)
+
+    return real_exec_time, success
 
 
 # ================================== Evaluation Functions (Python Bindings) ==================================
 
 # TODO: Adapt this function to be able to run code without benchmark name
-def evaluate_code_with_bindings(code: str, function_name: str) -> tuple[Optional[float], Union[Exception, bool]]:
+def evaluate_code_with_bindings(code: str, function_name: str) -> tuple[Optional[int], Union[Exception, bool]]:
     """Lowers and runs the given MLIR code using Python bindings, then returns the execution time and assertion
     result (if the executed code returns the correct result).
 
@@ -110,7 +142,7 @@ def evaluate_code_with_bindings_wrapper(code: str, function_name: str, exec_time
     assertions.append(assertion)
 
 
-def evaluate_code_with_bindings_and_timeout(code: str, function_name: str, timeout: Optional[float] = None):
+def evaluate_code_with_bindings_and_timeout(code: str, function_name: str, timeout: Optional[float]) -> tuple[Optional[int], Union[Exception, bool]]:
     """Evaluates the given MLIR code using Python bindings with a timeout.
 
     Args:
@@ -142,7 +174,7 @@ def evaluate_code_with_bindings_and_timeout(code: str, function_name: str, timeo
 
 # ================================== Evaluation Functions (MLIR CPU Runner) ==================================
 
-def evaluate_code_with_cmd(code: str, tmp_file_path: str):
+def evaluate_code_with_cmd(code: str, tmp_file_path: str) -> tuple[Optional[int], bool]:
     """Lowers and runs the given MLIR code using MLIR opt and MLIR CPU Runner, then returns the execution time and assertion.
 
     Args:
@@ -183,7 +215,7 @@ def evaluate_code_with_cmd_wrapper(code: str, tmp_file_path: str, exec_times, as
     assertions.append(assertion)
 
 
-def evaluate_code_with_cmd_and_timeout(code: str, tmp_file_path: str, timeout: Optional[float] = None):
+def evaluate_code_with_cmd_and_timeout(code: str, tmp_file_path: str, timeout: Optional[float]) -> tuple[Optional[int], bool]:
     """Evaluates the given MLIR code using MLIR opt and MLIR CPU Runner with a timeout.
 
     Args:
@@ -211,3 +243,89 @@ def evaluate_code_with_cmd_and_timeout(code: str, tmp_file_path: str, timeout: O
     else:
         # The function completed within the timeout
         return exec_times[0], assertions[0]
+
+
+def __check_execution_cache(bench_name: str, cache_key: str) -> Optional[int]:
+    """Check the execution cache for the given operation state.
+
+    Args:
+        cache_key (str): The cache key to check.
+
+    Returns:
+        Optional[int]: the execution time in nanoseconds if the operation is found in the cache, otherwise None.
+    """
+    if not cfg.exec_data_file:
+        return None
+
+    # Read json file
+    with open(cfg.exec_data_file, "r") as file:
+        data = json.load(file)
+
+    if bench_name not in data or cache_key not in data[bench_name]:
+        return None
+
+    return int(data[bench_name][cache_key])
+
+
+def __update_execution_cache(bench_name: str, cache_key: str, exec_time: int):
+    """Update the execution cache with the given operation state.
+
+    Args:
+        cache_key (str): The cache key to update.
+        exec_time (int): The execution time in nanoseconds.
+    """
+    if not cfg.exec_data_file:
+        return
+
+    # Read json file
+    with open(cfg.exec_data_file, "r") as file:
+        data = json.load(file)
+
+    if bench_name not in data:
+        data[bench_name] = {}
+
+    if cache_key in data[bench_name]:
+        print_alert("Unexpected hit", data[bench_name][cache_key], exec_time)
+        return
+    data[bench_name][cache_key] = exec_time
+
+    # Write json file
+    with open(cfg.exec_data_file, "w") as file:
+        json.dump(data, file, indent=4)
+
+
+def __get_code_cache_key(state: OperationState, bench_data: BenchmarkFeatures) -> str:
+    """Get the code cache key for the given operation state.
+
+    Args:
+        state (OperationState): The operation state to get the code cache key.
+        bench_data (BenchmarkFeatures): The benchmark features data.
+
+    Returns:
+        str: the code cache key.
+    """
+    trans_codes = {
+        'no_transformation': 'N',
+        'parallelization': 'P',
+        'tiling': 'T',
+        'interchange': 'I',
+        'vectorization': 'V',
+        'img2col': 'C'
+    }
+
+    ops_codes = [''] * len(bench_data.operation_tags)
+    code = ''
+    for transformation, parameters in state.transformation_history:
+        if transformation == 'done':
+            ops_codes[parameters[0]] = code
+            code = ''
+            continue
+
+        params_str = ','.join([str(p) for p in parameters])
+        code += f'{trans_codes[transformation]}({params_str})'
+
+    assert transformation != 'done'
+    last_op_idx = bench_data.operation_tags.index(state.operation_tag)
+    ops_codes[last_op_idx] = code
+
+    return '|'.join(ops_codes)

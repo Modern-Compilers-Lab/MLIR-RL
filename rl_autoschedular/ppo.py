@@ -6,7 +6,8 @@ from rl_autoschedular.model import HiearchyModel as Model
 from rl_autoschedular.state import OperationState
 from rl_autoschedular import config as cfg
 from dataclasses import dataclass
-from utils.log import print_info
+from utils.log import print_info, print_success
+from tqdm import trange
 
 
 @dataclass
@@ -14,7 +15,7 @@ class Trajectory:
     """Dataclass to store the trajectory data."""
     states: list[OperationState]
     """States in the trajectory."""
-    actions: list[tuple[str, list[int]]]
+    actions: list[tuple[str, Optional[Union[list[int], int]]]]
     """Actions in the trajectory."""
     values: torch.Tensor
     """Values of actions in the trajectory."""
@@ -30,11 +31,10 @@ class Trajectory:
     """Done flags in the trajectory."""
 
 
-def collect_trajectory(batch_count: int, model: Model, env: Env, device: torch.device = torch.device('cpu'), neptune_logs: Optional[neptune.Run] = None):
+def collect_trajectory(model: Model, env: Env, device: torch.device = torch.device('cpu'), neptune_logs: Optional[neptune.Run] = None):
     """Collect a trajectory using the model and the environment.
 
     Args:
-        batch_count (int): The number of batches to collect.
         model (MyModel): The model to use.
         env (Env): The environment to use.
         device (torch.device): The device to use. Defaults to torch.device('cpu').
@@ -55,54 +55,39 @@ def collect_trajectory(batch_count: int, model: Model, env: Env, device: torch.d
     stored_reward: list[torch.Tensor] = []
     stored_done: list[torch.Tensor] = []
 
-    for i in range(batch_count):
-        print_info(f'Batch {i + 1}/{batch_count}')
+    for i in range(cfg.batch_count):
+        print_info(f'Trajectory ({i + 1}/{cfg.batch_count}): {batch_state.bench_name} - {batch_state.operation_tag} - {batch_state.operation_type}')
         batch_terminated = False
         while not batch_terminated:
-            x = batch_obs
-            # with torch.no_grad():
             num_loops = len(batch_state.operation_features.nested_loops)
-            action_index, action_log_p, values, entropy = model.sample(x, [num_loops])
-            new_action_index, new_action_log_p, new_values, new_entropy = model.sample(x, [num_loops], actions=action_index)
-            assert (action_index == new_action_index), 'check the get_p yerham babak'
-            assert (action_log_p == new_action_log_p).all(), 'check the get_p yerham babak'
-            assert (values == new_values).all(), 'check the get_p yerham babak'
-            assert (entropy == new_entropy).all(), 'check the get_p yerham babak'
+            action_index, action_log_p, values, entropy = model.sample(batch_obs, [num_loops], explore=True)
 
             assert len(action_index) == 1
-            batch_next_obs, batch_reward, batch_terminated, batch_next_state, batch_final_state = env.step(batch_state, action_index[0])
+            batch_next_state, batch_next_obs, batch_reward, batch_terminated, batch_speedup, _ = env.step(batch_state, action_index[0])
 
             stored_action_index += action_index
 
             stored_state.append(batch_state)
             stored_value.append(values)
             stored_action_log_p.append(action_log_p)
-            stored_x.append(x)
+            stored_x.append(batch_obs)
             stored_reward.append(torch.tensor(batch_reward).unsqueeze(0))
             stored_done.append(torch.tensor(batch_terminated).unsqueeze(0))
 
-            if batch_terminated and batch_final_state is not None:
-                speedup_metric = batch_final_state.root_exec_time / batch_final_state.exec_time
-                print('-' * 70)
-                print(f"Bench: {batch_final_state.bench_name}")
-                print(batch_final_state.transformation_history)
-                print('reward:', batch_reward)
-                print('cummulative_reward:', batch_final_state.cummulative_reward)
-                print('Speedup:', speedup_metric)
-                print('Old Exec time:', batch_final_state.root_exec_time * 10**-9, 's')
-                print('New Exec time:', batch_final_state.exec_time * 10**-9, 's')
-                print('-' * 70)
+            if neptune_logs is not None:
+                neptune_logs['train/entropy'].append(entropy.item())
+            if batch_terminated:
                 if neptune_logs is not None:
-                    neptune_logs['train/final_speedup'].append(speedup_metric)
-                    neptune_logs['train/cummulative_reward'].append(batch_final_state.cummulative_reward)
-                    neptune_logs[f'train/{batch_final_state.bench_name}_speedup'].append(speedup_metric)
+                    neptune_logs['train/reward'].append(batch_reward)
+            if batch_speedup is not None:
+                if neptune_logs is not None:
+                    neptune_logs['train/speedup'].append(batch_speedup)
+                    neptune_logs[f'train/{batch_state.operation_type}_speedup'].append(batch_speedup)
 
             batch_state = batch_next_state
             batch_obs = batch_next_obs
 
-    # with torch.no_grad():
-    x = batch_obs
-    _, _, next_value, _ = model.sample(x, [len(batch_state.operation_features.nested_loops)])
+    next_value = model.sample_value(batch_obs)
 
     stored_value_tensor = torch.concatenate(stored_value)
     stored_action_log_p_tensor = torch.concatenate(stored_action_log_p)
@@ -171,7 +156,7 @@ def shuffle_trajectory(trajectory: Trajectory):
     return trajectory
 
 
-def shuffle_ppo_data(stored_action_index: list[tuple[str, list[int]]], stored_state: list[OperationState], stored_action_log_p: torch.Tensor, stored_x: torch.Tensor, advantages: torch.Tensor, returns: torch.Tensor):
+def shuffle_ppo_data(stored_action_index: list[tuple[str, Optional[Union[list[int], int]]]], stored_state: list[OperationState], stored_action_log_p: torch.Tensor, stored_x: torch.Tensor, advantages: torch.Tensor, returns: torch.Tensor):
     """Shuffle the PPO data.
 
     Args:
@@ -189,7 +174,7 @@ def shuffle_ppo_data(stored_action_index: list[tuple[str, list[int]]], stored_st
         torch.Tensor: shuffled returns.
     """
 
-    permutation = torch.randperm(stored_action_log_p.size()[0])
+    permutation = torch.randperm(stored_action_log_p.shape[0])
 
     stored_action_index = [stored_action_index[i] for i in permutation]
     stored_state = [stored_state[i] for i in permutation]
@@ -201,7 +186,27 @@ def shuffle_ppo_data(stored_action_index: list[tuple[str, list[int]]], stored_st
     return stored_action_index, stored_state, stored_action_log_p, stored_x, advantages, returns
 
 
-def compute_gae(done: torch.Tensor, rewards: torch.Tensor, values: torch.Tensor, next_values: torch.Tensor, gamma: float = 0.99, lambda_: float = 0.95):
+def shuffle_value_data(stored_x: torch.Tensor, stored_returns: torch.Tensor):
+    """Shuffle the value data.
+
+    Args:
+        stored_x (torch.Tensor): stored observation vectors.
+        stored_returns (torch.Tensor): stored returns.
+
+    Returns:
+        torch.Tensor: shuffled observation vectors.
+        torch.Tensor: shuffled returns.
+    """
+
+    permutation = torch.randperm(stored_x.shape[0])
+
+    stored_x = stored_x[permutation]
+    stored_returns = stored_returns[permutation]
+
+    return stored_x, stored_returns
+
+
+def compute_gae(done: torch.Tensor, rewards: torch.Tensor, values: torch.Tensor, next_values: torch.Tensor, gamma: float = 0.99, lambda_: float = 0.95) -> torch.Tensor:
     """Compute the Generalized Advantage Estimation.
 
     Args:
@@ -219,27 +224,50 @@ def compute_gae(done: torch.Tensor, rewards: torch.Tensor, values: torch.Tensor,
     assert len(values) == len(next_values) == len(rewards) == len(done)
 
     advantages = torch.zeros(done.shape[0], dtype=torch.float32)
-    returns = torch.zeros(done.shape[0], dtype=torch.float32)
     last_advantage = 0
-    last_return = 0
 
     for t in reversed(range(done.shape[0])):
         mask = 1.0 - done[t]
         last_value = next_values[t] * mask
         last_advantage = last_advantage * mask
-        last_return = last_return * mask
 
         delta = rewards[t] + gamma * last_value - values[t]
         last_advantage = delta + gamma * lambda_ * last_advantage
-        last_return = rewards[t] + gamma * last_return
 
         advantages[t] = last_advantage
+
+    return advantages
+
+
+def compute_returns(done: torch.Tensor, rewards: torch.Tensor, gamma: float = 0.99) -> torch.Tensor:
+    """Compute the returns.
+
+    Args:
+        done (torch.Tensor): done flags.
+        rewards (torch.Tensor): rewards.
+        values (torch.Tensor): values.
+        gamma (float): discount factor. Defaults to 0.99.
+
+    Returns:
+        torch.Tensor: returns.
+    """
+    assert len(rewards) == len(done)
+
+    returns = torch.zeros(done.shape[0], dtype=torch.float32)
+    last_return = 0
+
+    for t in reversed(range(done.shape[0])):
+        mask = 1.0 - done[t]
+        last_return = last_return * mask
+
+        last_return = rewards[t] + gamma * last_return
+
         returns[t] = last_return
 
-    return advantages, returns
+    return returns
 
 
-def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Optimizer, ppo_epochs: int, device: torch.device = torch.device('cpu'), entropy_coef: float = 0.01, neptune_logs: Optional[neptune.Run] = None):
+def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Optimizer, device: torch.device = torch.device('cpu'), neptune_logs: Optional[neptune.Run] = None):
     """Update the model using PPO.
 
     Args:
@@ -256,10 +284,8 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
         float: The average loss.
     """
 
-    loss_i = 0
-
-    for epoch in range(ppo_epochs):
-
+    ppo_trange = trange(cfg.ppo_epochs, desc='PPO Epochs')
+    for _ in ppo_trange:
         stored_state = trajectory.states
         stored_action_index = trajectory.actions
         stored_value = trajectory.values
@@ -274,21 +300,13 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
         stored_reward = stored_reward.reshape(-1).detach()
         stored_done = stored_done.reshape(-1).detach()
 
-        advantages, returns = compute_gae(stored_done, stored_reward, stored_value, stored_next_value)
-
-        # if epoch == 0:
-        #     for i in range(len(returns)):
-        #         if returns[i] != 0:
-        #             running_return_stats.add(stored_state[i].raw_operation, returns[i].item())
-
-        # for i in range(len(returns)):
-        #     if returns[i] != 0:
-        #         returns[i] = returns[i] / running_return_stats.std(stored_state[i].raw_operation)
+        advantages = compute_gae(stored_done, stored_reward, stored_value, stored_next_value)
+        returns = compute_returns(stored_done, stored_reward)
 
         stored_action_index, stored_state, stored_action_log_p, stored_x, stored_advantages, stored_returns = shuffle_ppo_data(stored_action_index, stored_state, stored_action_log_p, stored_x, advantages, returns)
 
-        acc_loss = 0
         len_trajectory = len(stored_action_index)
+        losses = []
         for i in range(0, len_trajectory, cfg.ppo_batch_size):
             betch_end = min(i + cfg.ppo_batch_size, len_trajectory)
             actions = stored_action_index[i:betch_end]
@@ -299,11 +317,10 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
             x = stored_x[i:betch_end].to(device)
 
             with torch.enable_grad():
-                # New predicition:
                 _, new_actions_log_p, new_values, entropy = model.sample(x, [len(state.operation_features.nested_loops) for state in states], actions)
 
-                if advantages.shape[0] > 1:
-                    advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+                # if advantages.shape[0] > 1:
+                #     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
                 new_actions_log_p, new_values, entropy = new_actions_log_p.reshape(-1), new_values.reshape(-1), entropy.reshape(-1)
 
@@ -313,30 +330,79 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
                 policy_loss = - torch.min(surr1, surr2).mean()
 
                 value_loss = ((returns.detach() - new_values)**2).mean()
-                # value_loss = ((returns.detach() - new_values).abs()).mean()
 
-                loss = policy_loss - entropy_coef * entropy + 0.5 * value_loss
+                loss = policy_loss + cfg.entropy_coef * entropy + cfg.value_coef * value_loss
 
             optimizer.zero_grad()
             loss.backward()
             clip_factor = torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
             optimizer.step()
 
-            acc_loss += loss.item()
-            loss_i += 1
+            losses.append(loss.item())
 
-            # Collecting metircs:
+            # Logging
             if neptune_logs is not None:
-                neptune_logs['train/policy_loss'].append(policy_loss.item())
-                neptune_logs['train/value_loss'].append(value_loss.item())
-                neptune_logs['train/entropy'].append(entropy.item())
-                neptune_logs['train/clip_factor'].append(clip_factor.item())
+                neptune_logs['train_ppo/policy_loss'].append(policy_loss.item())
+                neptune_logs['train_ppo/value_loss'].append(value_loss.item())
+                neptune_logs['train_ppo/entropy_loss'].append(entropy.item())
+                neptune_logs['train_ppo/clip_factor'].append(clip_factor.item())
+        batch_loss = sum(losses) / len(losses)
+        ppo_trange.set_postfix({'loss': batch_loss})
 
-        # print()
-        # print('***'*50)
-        # print()
 
-    return acc_loss / loss_i
+def value_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Optimizer, device: torch.device = torch.device('cpu'), neptune_logs: Optional[neptune.Run] = None):
+    """Update the value estimation using the trajectory.
+
+    Args:
+        trajectory (Trajectory): The trajectory to use.
+        model (Model): The model to update.
+        optimizer (torch.optim.Optimizer): The optimizer to use.
+        value_epochs (int): The number of value epochs.
+        device (torch.device): The device to use. Defaults to torch.device('cpu').
+        neptune_logs (Optional[neptune.Run]): The neptune run to log to if any. Defaults to None.
+
+    Returns:
+        float: The average loss.
+    """
+
+    value_trange = trange(cfg.value_epochs, desc='Value Epochs')
+    for _ in value_trange:
+        stored_x = trajectory.x
+        stored_reward = trajectory.rewards
+        stored_done = trajectory.done
+
+        stored_reward = stored_reward.reshape(-1).detach()
+        stored_done = stored_done.reshape(-1).detach()
+
+        returns = compute_returns(stored_done, stored_reward)
+
+        stored_x, stored_returns = shuffle_value_data(stored_x, returns)
+
+        len_trajectory = stored_returns.shape[0]
+        losses = []
+        for i in range(0, len_trajectory, cfg.ppo_batch_size):
+            betch_end = min(i + cfg.ppo_batch_size, len_trajectory)
+            returns = stored_returns[i:betch_end].to(device)
+            x = stored_x[i:betch_end].to(device)
+
+            with torch.enable_grad():
+                new_values = model.sample_value(x).reshape(-1)
+
+                loss = ((returns.detach() - new_values)**2).mean()
+
+            optimizer.zero_grad()
+            loss.backward()
+            clip_factor = torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
+            optimizer.step()
+
+            losses.append(loss.item())
+
+            # Logging
+            if neptune_logs is not None:
+                neptune_logs['train_value/value_loss'].append(loss.item())
+                neptune_logs['train_value/clip_factor'].append(clip_factor.item())
+        batch_loss = sum(losses) / len(losses)
+        value_trange.set_postfix({'loss': batch_loss})
 
 
 def evaluate_benchmark(model: Model, env: Env, device: torch.device = torch.device('cpu'), neptune_logs: Optional[neptune.Run] = None):
@@ -348,47 +414,38 @@ def evaluate_benchmark(model: Model, env: Env, device: torch.device = torch.devi
         device (torch.device): The device to use. Defaults to torch.device('cpu').
         neptune_logs (Optional[neptune.Run]): The neptune run to log to if any. Defaults to None.
     """
-    # NOTE: Only using one environment
     speedup_values: list[float] = []
-    for i, (bench_name, benchmark_data) in enumerate(env.benchmarks_data):
-        if cfg.data_format == 'mlir':
-            print(f'Benchmark ({i}):', bench_name)
-        else:
-            op_tag = benchmark_data.operation_tags[-1]
-            print(f'Operation ({i}):', benchmark_data.operations[op_tag].raw_operation)
-
-        # Reset the environement with the specific operation
+    nbr_benchmarks = len(env.benchmarks_data)
+    for i in range(nbr_benchmarks):
+        # Reset the environement with the specific benchmark
         state, obs = env.reset(i)
         obs = obs.to(device)
+        print_info(f'Evaluation ({i}/{nbr_benchmarks}): {state.bench_name}')
 
-        while True:
-
-            # with torch.no_grad():
+        bench_done = False
+        while not bench_done:
             # Select the action using the model
-            action, _, _, _ = model.sample(obs, [len(state.operation_features.nested_loops)])
+            action, _, _, entropy = model.sample(obs, [len(state.operation_features.nested_loops)])
 
             # Apply the action and get the next state
             assert len(action) == 1
-            next_obs, _, terminated, next_state, final_state = env.step(state, action[0])
+            next_state, next_obs, reward, terminated, speedup, bench_done = env.step(state, action[0])
 
-            if terminated and final_state is not None:
-                speedup_metric = final_state.root_exec_time / final_state.exec_time
-                print('Operation:', final_state.operation_features.raw_operation)
-                print('Base execution time:', final_state.root_exec_time, 's')
-                print('New execution time:', final_state.exec_time, 's')
-                print('Speedup:', speedup_metric)
-
+            if neptune_logs is not None:
+                neptune_logs['eval/entropy'].append(entropy.item())
+            if terminated:
+                print_success('Reward:', reward)
                 if neptune_logs is not None:
-                    neptune_logs[f'eval/{final_state.operation_features.raw_operation}_speedup'].append(speedup_metric)
-                    neptune_logs['eval/final_speedup'].append(speedup_metric)
-                    speedup_values.append(speedup_metric)
-
-                break
+                    neptune_logs['eval/reward'].append(reward)
+            if speedup is not None:
+                print_success(f'Speedup: {speedup}')
+                if neptune_logs is not None:
+                    neptune_logs['eval/speedup'].append(speedup)
+                    neptune_logs[f'eval/{state.operation_type}_speedup'].append(speedup)
+                    speedup_values.append(speedup)
 
             state = next_state
             obs = next_obs.to(device)
-
-        print('\n\n\n')
 
     if neptune_logs is not None:
         neptune_logs['eval/average_speedup'].append(sum(speedup_values) / len(speedup_values))

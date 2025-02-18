@@ -2,15 +2,15 @@ import os
 import re
 import subprocess
 from typing import Optional
-from rl_autoschedular.observation import extract_bench_features_from_code
 from utils.log import print_alert
 from rl_autoschedular import config as cfg
-from rl_autoschedular.state import OperationState, NestedLoopFeatures, BenchmarkFeatures
+from rl_autoschedular.state import OperationState
+import multiprocessing
 
 
 # ====================================== Transform dialect functions ======================================
 
-def transform_dialect_TP(code: str, operation_tag: str, tiling_size: list[int], nested_loops_features: list[NestedLoopFeatures], tmp_file_path: str):
+def transform_dialect_TP(code: str, operation_tag: str, tiling_sizes: list[int], tmp_file_path: str):
     """Apply the tiling and parallelization transformation to the specified operation in the given code.
 
     Args:
@@ -22,39 +22,19 @@ def transform_dialect_TP(code: str, operation_tag: str, tiling_size: list[int], 
     Returns:
         str: The code after applying the transformation.
     """
-    if not tiling_size:
+    if not tiling_sizes:
         return ''
-    if all([a == 0 for a in tiling_size]):
+    if all([a == 0 for a in tiling_sizes]):
         return code
 
     code = code.strip()
-
-    # Set tiling with parallelization for loops that can be parallelized
-    parallel_tiling_sizes = [0 if nested_loops_features[i].iterator_type == "reduction" else tiling_size[i] for i in range(len(tiling_size))]
-    if any([a != 0 for a in parallel_tiling_sizes]):
-        parallel_transform_dialect_code = (
-            f'    %parallel_{operation_tag} = transform.structured.match attributes{{tag = "{operation_tag}"}} in %arg1 : (!transform.any_op) -> !transform.any_op\n'
-            f'    %parallel_tiled_{operation_tag}, %forall_{operation_tag} = transform.structured.tile_using_forall %parallel_{operation_tag} tile_sizes {str(parallel_tiling_sizes)} : (!transform.any_op) -> (!transform.any_op, !transform.any_op)\n'
-        )
-    else:
-        parallel_transform_dialect_code = ''
-
-    # Set tiling only for reduction loops
-    only_tiling_sizes = [tiling_size[i] if nested_loops_features[i].iterator_type == "reduction" else 0 for i in range(len(tiling_size))]
-    if any([a != 0 for a in only_tiling_sizes]):
-        only_tiling_transform_dialect_code = (
-            f'    %reduction_{operation_tag} = transform.structured.match attributes{{tag = "{operation_tag}"}} in %arg1 : (!transform.any_op) -> !transform.any_op\n'
-            f'    %reduction_tiled_{operation_tag}, %loops_{operation_tag} = transform.structured.tile_using_for %reduction_{operation_tag} tile_sizes {str(only_tiling_sizes)} : (!transform.any_op) -> (!transform.any_op, !transform.any_op)\n'
-        )
-    else:
-        only_tiling_transform_dialect_code = ''
 
     # Add full transform dialect code into the main code
     transform_dialect_code = (
         f'\nmodule attributes {{transform.with_named_sequence}} {{\n'
         f'  transform.named_sequence @__transform_main(%arg1: !transform.any_op {{transform.readonly}}) {{\n'
-        f'{parallel_transform_dialect_code}'
-        f'{only_tiling_transform_dialect_code}'
+        f'    %parallel_{operation_tag} = transform.structured.match attributes{{tag = "{operation_tag}"}} in %arg1 : (!transform.any_op) -> !transform.any_op\n'
+        f'    %parallel_tiled_{operation_tag}, %forall_{operation_tag} = transform.structured.tile_using_forall %parallel_{operation_tag} tile_sizes {str(tiling_sizes)} : (!transform.any_op) -> (!transform.any_op, !transform.any_op)\n'
         f'    transform.yield\n'
         f'  }}\n'
         f'}}'
@@ -453,7 +433,7 @@ module attributes {{transform.with_named_sequence}} {{
     return result
 
 
-def apply_transformation(state: OperationState, bench_features: BenchmarkFeatures, code: str, transformation: str, parameters: list, use_vectorizer: bool = False):
+def apply_transformation(state: OperationState, code: str, transformation: str, parameters: list, use_vectorizer: bool = cfg.use_vectorizer) -> str:
     """Apply the specified transformation to the given code.
 
     Args:
@@ -472,11 +452,6 @@ def apply_transformation(state: OperationState, bench_features: BenchmarkFeature
 
     code = code.strip()
 
-    # Re-extract loop data if it's gonna be needed afterwards
-    if transformation in ['parallelization', 'vectorization']:
-        new_benchmark_features = extract_bench_features_from_code(state.bench_name, code, bench_features.root_exec_time, state.exec_time)
-        operation_features = new_benchmark_features.operations[state.operation_tag]
-
     if transformation == 'tiling':
         if not parameters:
             print_alert("REASON: No parameters")
@@ -486,7 +461,7 @@ def apply_transformation(state: OperationState, bench_features: BenchmarkFeature
         if not parameters:
             print_alert("REASON: No parameters")
             return ''
-        new_code = transform_dialect_TP(code, state.operation_tag, parameters, state.operation_features.nested_loops, tmp_file)
+        new_code = transform_dialect_TP(code, state.operation_tag, parameters, tmp_file)
     elif transformation == 'interchange':
         new_code = transform_dialect_interchange(code, state.operation_tag, parameters, tmp_file)
     elif transformation == 'img2col':
@@ -494,7 +469,7 @@ def apply_transformation(state: OperationState, bench_features: BenchmarkFeature
     elif transformation == 'vectorization':
         # If the operation isn't small enough for vectorization, ignore the transformation
         op_iter_space = 1
-        for nested_loop in operation_features.nested_loops:
+        for nested_loop in state.operation_features.nested_loops:
             op_iter_space *= nested_loop.upper_bound
         if op_iter_space > cfg.vect_size_limit:
             print_alert(f"REASON: Too large to vectorize {op_iter_space} > {cfg.vect_size_limit}")
@@ -514,7 +489,7 @@ def apply_transformation(state: OperationState, bench_features: BenchmarkFeature
     return new_code
 
 
-def apply_transformation_wrapper(state: OperationState, bench_features: BenchmarkFeatures, code: str, transformation: str, parameters: list, return_list, use_vectorizer: bool = False):
+def apply_transformation_wrapper(state: OperationState, code: str, transformation: str, parameters: list, use_vectorizer: bool, return_list):
     """Wrapper function to apply the transformation with multiprocessing.
 
     Args:
@@ -526,11 +501,11 @@ def apply_transformation_wrapper(state: OperationState, bench_features: Benchmar
         return_list (list): The list to store the result of the transformation.
         use_vectorizer (bool): Whether to use the vectorizer or not. Default is False.
     """
-    res = apply_transformation(state, bench_features, code, transformation, parameters, use_vectorizer)
+    res = apply_transformation(state, code, transformation, parameters, use_vectorizer)
     return_list.append(res)
 
 
-def apply_transformation_with_timeout(state: OperationState, bench_features: BenchmarkFeatures, code: str, transformation: str, parameters: list, timeout: Optional[float] = None, use_vectorizer: bool = cfg.use_vectorizer):
+def apply_transformation_with_timeout(state: OperationState, code: str, transformation: str, parameters: list, use_vectorizer: bool = cfg.use_vectorizer, timeout: Optional[float] = 20) -> str:
     """Apply the specified transformation to the given code with a timeout.
 
     Args:
@@ -545,23 +520,21 @@ def apply_transformation_with_timeout(state: OperationState, bench_features: Ben
     Returns:
         str: The code after applying the transformation.
     """
-    # manager = multiprocessing.Manager()
-    # return_list = manager.list()
-    # process = multiprocessing.Process(target=apply_transformation_wrapper, args=(state, code, transformation, parameters, return_list, from_lqcd))
-    # process.start()
-    # process.join(timeout)
+    manager = multiprocessing.Manager()
+    return_list = manager.list()
+    process = multiprocessing.Process(target=apply_transformation_wrapper, args=(state, code, transformation, parameters, use_vectorizer, return_list))
+    process.start()
+    process.join(timeout)
 
-    # if process.is_alive():
-    #     # The function is still running, terminate the process
-    #     process.terminate()
-    #     process.join()
+    if process.is_alive():
+        # The function is still running, terminate the process
+        process.terminate()
+        process.join()
 
-    #     return None
-    # else:
-    #     # The function completed within the timeout
-    #     return return_list[0]
-
-    return apply_transformation(state, bench_features, code, transformation, parameters, use_vectorizer)
+        return None
+    else:
+        # The function completed within the timeout
+        return return_list[0]
 
 
 # ========================================= Other functions =========================================

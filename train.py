@@ -6,13 +6,13 @@ load_dotenv(override=True)
 from rl_autoschedular.env import Env
 from rl_autoschedular.model import HiearchyModel as Model
 import torch
-from tqdm import tqdm
 from rl_autoschedular import config as cfg
 from utils.log import print_info
 from utils.neptune_utils import init_neptune
 from rl_autoschedular.ppo import (
     collect_trajectory,
     ppo_update,
+    value_update,
     evaluate_benchmark
 )
 
@@ -21,68 +21,60 @@ from rl_autoschedular.ppo import (
 device = torch.device("cpu")
 torch.set_grad_enabled(False)
 
-print_info('Finish imports')
-
 # Set environments
-env = Env(
-    reset_repeat=1,
-    step_repeat=1
-)
-eval_env = Env(
-    reset_repeat=1,
-    step_repeat=1
-)
-print_info('Env build ...')
-# NOTE: using only one environment
-print_info(f'tmp_file = {env.tmp_file}')
-
-# Print configuration
-print_info('Configuration:')
-print_info(cfg)
+env = Env()
+eval_env = Env(is_inference_env=True)
 
 # Set model
 model = Model()
-print_info('input_dim:', model.input_dim)
 
-optimizer = torch.optim.Adam(
+value_optimizer = torch.optim.Adam(
+    model.value_network.parameters(),
+    lr=cfg.lr
+)
+
+ppo_optimizer = torch.optim.Adam(
     model.parameters(),
     lr=cfg.lr
 )
 
 # Set neptune logs if enabled
-neptune_logs = init_neptune(['hierchical', 'sparse_reward'] + cfg.tags) if cfg.logging else None
+neptune_logs = init_neptune(['ppo'] + cfg.tags) if cfg.logging else None
 
 # Start training
-print_info('Start training ... ')
-tqdm_range = tqdm(range(cfg.nb_iterations), desc='Main loop')
-for step in tqdm_range:
-
+for step in range(cfg.nb_iterations):
+    print_info(f"--- Iteration: {step}/{cfg.nb_iterations} ---")
+    print_info('- Collecting trajectory -')
     trajectory = collect_trajectory(
-        cfg.batch_count,
         model,
         env,
-        device=device,
-        neptune_logs=neptune_logs
+        device,
+        neptune_logs
     )
 
-    loss = ppo_update(
+    value_update(
         trajectory,
         model,
-        optimizer,
-        ppo_epochs=cfg.ppo_epochs,
-        device=device,
-        entropy_coef=cfg.entropy_coef,
-        neptune_logs=neptune_logs
+        value_optimizer,
+        device,
+        neptune_logs
     )
 
-    torch.save(model.state_dict(), 'models/ppo_model.pt')
+    if (step + 1) % 5 == 0:
+        ppo_update(
+            trajectory,
+            model,
+            ppo_optimizer,
+            device,
+            neptune_logs
+        )
 
-    if step % 5 == 0:
+        print_info('- Evaluating benchmark -')
         evaluate_benchmark(
-            model=model,
-            env=eval_env,
-            device=device,
-            neptune_logs=neptune_logs
+            model,
+            eval_env,
+            device,
+            neptune_logs
         )
 
         if cfg.logging:
@@ -92,5 +84,3 @@ for step in tqdm_range:
 # Stop logs if enabled
 if cfg.logging:
     neptune_logs.stop()
-
-print_info('Training ended ... ')

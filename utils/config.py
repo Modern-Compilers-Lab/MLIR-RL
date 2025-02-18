@@ -34,10 +34,14 @@ class Config(metaclass=Singleton):
     """Number of batches in a trajectory"""
     nb_iterations: int
     """Number of iterations"""
+    value_epochs: int
+    """Number of epochs for value training"""
     ppo_epochs: int
     """Number of epochs for PPO"""
     ppo_batch_size: int
     """Batch size for PPO"""
+    value_coef: float
+    """Value coefficient"""
     entropy_coef: float
     """Entropy coefficient"""
     lr: float
@@ -50,6 +54,8 @@ class Config(metaclass=Singleton):
     """List of tags to add to the neptune experiment"""
     logging: bool
     """Flag to enable logging to neptune"""
+    exec_data_file: str
+    """Path to the file containing the execution data"""
 
     loaded: bool
     """Flag to check if the config was already loaded from JSON file or not"""
@@ -70,14 +76,17 @@ class Config(metaclass=Singleton):
         self.benchmarks_folder_path = ""
         self.batch_count = 20
         self.nb_iterations = 10000
-        self.ppo_epochs = 4
+        self.value_epochs = 4
+        self.ppo_epochs = 20
         self.ppo_batch_size = 32
+        self.value_coef = 0.5
         self.entropy_coef = 0.01
         self.lr = 0.001
         self.truncate = 5
         self.json_file = ""
         self.tags = []
         self.logging = True
+        self.exec_data_file = ""
         self.loaded = False
 
     def load_from_json(self):
@@ -100,14 +109,17 @@ class Config(metaclass=Singleton):
         self.benchmarks_folder_path = config["benchmarks_folder_path"]
         self.batch_count = config["batch_count"]
         self.nb_iterations = config["nb_iterations"]
+        self.value_epochs = config["value_epochs"]
         self.ppo_epochs = config["ppo_epochs"]
         self.ppo_batch_size = config["ppo_batch_size"]
+        self.value_coef = config["value_coef"]
         self.entropy_coef = config["entropy_coef"]
         self.lr = config["lr"]
         self.truncate = config["truncate"]
         self.json_file = config["json_file"]
         self.tags = config["tags"]
         self.logging = config["logging"]
+        self.exec_data_file = config["exec_data_file"]
         # Check the configuration values
         assert self.data_format in ["json", "mlir"], "Invalid data format. Should be 'json' or 'mlir'."
         assert self.optimization_mode in ["last", "all"], "Invalid optimization mode. Should be 'last' or 'all'."
@@ -133,14 +145,17 @@ class Config(metaclass=Singleton):
             "benchmarks_folder_path": self.benchmarks_folder_path,
             "batch_count": self.batch_count,
             "nb_iterations": self.nb_iterations,
+            "value_epochs": self.value_epochs,
             "ppo_epochs": self.ppo_epochs,
             "ppo_batch_size": self.ppo_batch_size,
+            "value_coef": self.value_coef,
             "entropy_coef": self.entropy_coef,
             "lr": self.lr,
             "truncate": self.truncate,
             "json_file": self.json_file,
             "tags": self.tags,
-            "logging": self.logging
+            "logging": self.logging,
+            "exec_data_file": self.exec_data_file
         }
 
     def __str__(self):
