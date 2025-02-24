@@ -366,6 +366,10 @@ class Env:
         if num_loops == 1:
             # If we have only one loop -> Cancel the interchange
             action_mask[3] = False
+            if cfg.interchange_mode == 'enumerate':
+                action_mask[I_BEGIN_1C] = True
+            if action_mask[:cfg.num_transformations].sum() == 0:
+                action_mask[0] = True
 
         return action_mask
 
@@ -406,6 +410,14 @@ class Env:
                         new_actions_mask[I_BEGIN + param] = False
                 else:
                     new_actions_mask[:N] = [True, True, False, False, True, False]
+
+        if num_loops == 1:
+            # If we have only one loop -> Cancel the interchange
+            new_actions_mask[3] = False
+            if cfg.interchange_mode == 'enumerate':
+                new_actions_mask[I_BEGIN] = True
+            if new_actions_mask[:cfg.num_transformations].sum() == 0:
+                new_actions_mask[0] = True
 
         return new_actions_mask
 

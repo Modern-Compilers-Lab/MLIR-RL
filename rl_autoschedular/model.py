@@ -174,7 +174,7 @@ class HiearchyModel(nn.Module):
                     loc=interchange_prob * total_count,
                     scale=self.interchange_logstd.exp(),
                     a=0,
-                    b=total_count,
+                    b=torch.maximum(total_count, torch.tensor(1)),
                 )
         else:
             interchange_dist = Categorical(logits=interchange_logits)
