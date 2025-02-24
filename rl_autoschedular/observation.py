@@ -5,7 +5,7 @@ import os
 from copy import copy
 import subprocess
 from rl_autoschedular import config as cfg
-from rl_autoschedular.state import OperationFeatures, NestedLoopFeatures, BenchmarkFeatures
+from rl_autoschedular.state import OperationFeatures, NestedLoopFeatures, BenchmarkFeatures, OperationState
 
 
 # ================================================ Public functions ================================================
@@ -202,6 +202,74 @@ def extract_bench_features_from_file(bench_name: str, file_path: str, root_execu
     raw_ast_info = result.stdout.decode('utf-8')
 
     return __extract_bench_features_from_ast_result(bench_name, raw_ast_info, root_execution_time)
+
+
+def update_operation_features(state: OperationState, transformation: str, parameters: list[int]) -> OperationFeatures:
+    """Update the operation features after applying a transformation.
+
+    Args:
+        operation_features (OperationFeatures): The operation features.
+        transformation (str): The transformation name.
+        parameters (list[int]): The transformation parameters.
+
+    Returns:
+        OperationFeatures: The updated operation features.
+    """
+    new_operation_features = state.operation_features.copy()
+    if transformation in ['no_transformation', 'vectorization']:
+        return new_operation_features
+
+    match transformation:
+        case 'parallelization' | 'tiling':
+            for nested_loop, tile_size in zip(new_operation_features.nested_loops, parameters):
+                if tile_size == 0:
+                    continue
+                nested_loop.upper_bound = tile_size
+        case 'interchange':
+            for i, j in enumerate(parameters):
+                new_operation_features.nested_loops[i] = state.operation_features.nested_loops[j]
+        case 'img2col':
+            # Get the matmul operation that now represents the convolution and wrap it in a funciton wrapper
+            # Note: Empty code and exec time 0 is used because we only need operation features
+            new_bench_data = extract_bench_features_from_code("", state.transformed_code, 0)
+            new_operation_features = new_bench_data.operations[new_bench_data.operation_tags[-1]]
+        case _:
+            raise ValueError(f"Invalid transformation: {transformation}")
+
+    return new_operation_features
+
+
+def update_operation_features_from_scratch(state: OperationState) -> OperationFeatures:
+    """Update the operation features iteratively from scratch.
+
+    Notes:
+        Should only be used when operation features haven't been updated before.
+        i.e: cfg.update_op_features = False
+
+    Args:
+        state (OperationState): The current state.
+
+    Returns:
+        OperationFeatures: The updated operation features.
+    """
+    assert not cfg.update_op_features
+
+    state_copy = state.copy()
+
+    # Get the path to traverse
+    path_start = state_copy.last_op_history_index()
+    if path_start is None:
+        return state_copy.operation_features
+    path = state_copy.transformation_history[state_copy.last_op_history_index():]
+
+    # Update the operation features iteratively
+    for transformation, parameters in path:
+        if transformation == 'img2col':
+            # Ignore img2col because it's guaranteed to be already updated
+            continue
+        state_copy.operation_features = update_operation_features(state_copy, transformation, parameters)
+
+    return state_copy.operation_features
 
 
 # ================================================ Private functions ================================================

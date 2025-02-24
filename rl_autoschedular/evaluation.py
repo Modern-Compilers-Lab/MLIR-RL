@@ -24,8 +24,14 @@ def evaluate_code_with_timeout(state: OperationState, bench_data: BenchmarkFeatu
         Optional[float]: the execution time in seconds.
         Union[Exception, bool]: the assertion result or an exception if an error occurred.
     """
+    tmp_exec_file = state.tmp_file.replace('tmp/', 'tmp/exec/').replace('.mlir', '.json')
+    if not os.path.exists(tmp_exec_file):
+        os.makedirs(os.path.dirname(tmp_exec_file), exist_ok=True)
+        with open(tmp_exec_file, "w") as file:
+            json.dump({}, file)
+
     code_cache_key = __get_code_cache_key(state, bench_data)
-    cache_exec_time = __check_execution_cache(state.bench_name, code_cache_key)
+    cache_exec_time = __check_execution_cache(state.bench_name, code_cache_key, tmp_exec_file)
     if cache_exec_time is not None:
         return cache_exec_time, True
     print_alert('Cache miss')
@@ -36,7 +42,7 @@ def evaluate_code_with_timeout(state: OperationState, bench_data: BenchmarkFeatu
         real_exec_time, success = evaluate_code_with_cmd_and_timeout(state.transformed_code, state.tmp_file, timeout)
 
     if success and real_exec_time is not None:
-        __update_execution_cache(state.bench_name, code_cache_key, real_exec_time)
+        __update_execution_cache(state.bench_name, code_cache_key, real_exec_time, tmp_exec_file)
 
     return real_exec_time, success
 
@@ -245,7 +251,7 @@ def evaluate_code_with_cmd_and_timeout(code: str, tmp_file_path: str, timeout: O
         return exec_times[0], assertions[0]
 
 
-def __check_execution_cache(bench_name: str, cache_key: str) -> Optional[int]:
+def __check_execution_cache(bench_name: str, cache_key: str, tmp_exec_file: str) -> Optional[int]:
     """Check the execution cache for the given operation state.
 
     Args:
@@ -254,31 +260,33 @@ def __check_execution_cache(bench_name: str, cache_key: str) -> Optional[int]:
     Returns:
         Optional[int]: the execution time in nanoseconds if the operation is found in the cache, otherwise None.
     """
-    if not cfg.exec_data_file:
-        return None
+    if cfg.exec_data_file:
+        # Start by checking the main execution cache file
+        with open(cfg.exec_data_file, "r") as file:
+            data = json.load(file)
 
-    # Read json file
-    with open(cfg.exec_data_file, "r") as file:
+        if bench_name in data and cache_key in data[bench_name]:
+            return int(data[bench_name][cache_key])
+
+    # If no hit in the main cache file, check the temporary cache file
+    with open(tmp_exec_file, "r") as file:
         data = json.load(file)
 
-    if bench_name not in data or cache_key not in data[bench_name]:
-        return None
+    if bench_name in data and cache_key in data[bench_name]:
+        return int(data[bench_name][cache_key])
 
-    return int(data[bench_name][cache_key])
+    # No hit in both cache files
+    return None
 
 
-def __update_execution_cache(bench_name: str, cache_key: str, exec_time: int):
-    """Update the execution cache with the given operation state.
+def __update_execution_cache(bench_name: str, cache_key: str, exec_time: int, tmp_exec_file: str):
+    """Update the temp execution cache with the given operation state.
 
     Args:
         cache_key (str): The cache key to update.
         exec_time (int): The execution time in nanoseconds.
     """
-    if not cfg.exec_data_file:
-        return
-
-    # Read json file
-    with open(cfg.exec_data_file, "r") as file:
+    with open(tmp_exec_file, "r") as file:
         data = json.load(file)
 
     if bench_name not in data:
@@ -289,8 +297,7 @@ def __update_execution_cache(bench_name: str, cache_key: str, exec_time: int):
         return
     data[bench_name][cache_key] = exec_time
 
-    # Write json file
-    with open(cfg.exec_data_file, "w") as file:
+    with open(tmp_exec_file, "w") as file:
         json.dump(data, file, indent=4)
 
 

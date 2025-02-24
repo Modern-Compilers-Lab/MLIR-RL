@@ -12,7 +12,6 @@ from utils.neptune_utils import init_neptune
 from rl_autoschedular.ppo import (
     collect_trajectory,
     ppo_update,
-    value_update,
     evaluate_benchmark
 )
 
@@ -20,20 +19,17 @@ from rl_autoschedular.ppo import (
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 device = torch.device("cpu")
 torch.set_grad_enabled(False)
+torch.autograd.set_detect_anomaly(True)
+
+print_info(f"Config: {cfg}")
 
 # Set environments
 env = Env()
-eval_env = Env(is_inference_env=True)
+eval_env = Env(env.tmp_file)
 
 # Set model
 model = Model()
-
-value_optimizer = torch.optim.Adam(
-    model.value_network.parameters(),
-    lr=cfg.lr
-)
-
-ppo_optimizer = torch.optim.Adam(
+optimizer = torch.optim.Adam(
     model.parameters(),
     lr=cfg.lr
 )
@@ -42,8 +38,9 @@ ppo_optimizer = torch.optim.Adam(
 neptune_logs = init_neptune(['ppo'] + cfg.tags) if cfg.logging else None
 
 # Start training
+# ppo_trajectory = None
 for step in range(cfg.nb_iterations):
-    print_info(f"--- Iteration: {step}/{cfg.nb_iterations} ---")
+    print_info(f"--- Iteration: {step}/{cfg.nb_iterations} {step/cfg.nb_iterations*100:.2f}% ---")
     print_info('- Collecting trajectory -')
     trajectory = collect_trajectory(
         model,
@@ -52,23 +49,15 @@ for step in range(cfg.nb_iterations):
         neptune_logs
     )
 
-    value_update(
+    ppo_update(
         trajectory,
         model,
-        value_optimizer,
+        optimizer,
         device,
         neptune_logs
     )
 
     if (step + 1) % 5 == 0:
-        ppo_update(
-            trajectory,
-            model,
-            ppo_optimizer,
-            device,
-            neptune_logs
-        )
-
         print_info('- Evaluating benchmark -')
         evaluate_benchmark(
             model,

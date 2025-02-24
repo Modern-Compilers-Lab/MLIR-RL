@@ -2,9 +2,10 @@ import os
 import re
 import subprocess
 from typing import Optional
-from utils.log import print_alert
+from utils.log import print_alert, print_error
 from rl_autoschedular import config as cfg
 from rl_autoschedular.state import OperationState
+from rl_autoschedular.observation import update_operation_features_from_scratch
 import multiprocessing
 
 
@@ -347,6 +348,10 @@ def transform_dialect_vectorise_with_vectorizer(code: str, operation_tag: str, t
     )
     vect_code = vect_code_process.stdout.decode('utf-8')
 
+    if vect_code_process.returncode != 0:
+        print_error(f"Vectorizer failed with error: {vect_code_process.stderr.decode('utf-8')}")
+        return ''
+
     # If vectorizer succeeded apply vectorization patterns else return empty string
     if vect_code:
         transform_dialect_code = """
@@ -447,6 +452,13 @@ def apply_transformation(state: OperationState, code: str, transformation: str, 
     Returns:
         str: The code after applying the transformation.
     """
+    # Operation features are needed for parallelization and vectorization
+    if transformation in ['parallelization', 'vectorization']:
+        if not cfg.update_op_features:
+            # If the operation features are not updated, update them from scratch
+            operation_features = update_operation_features_from_scratch(state)
+        else:
+            operation_features = state.operation_features
 
     tmp_file = state.tmp_file
 
@@ -461,7 +473,15 @@ def apply_transformation(state: OperationState, code: str, transformation: str, 
         if not parameters:
             print_alert("REASON: No parameters")
             return ''
-        new_code = transform_dialect_TP(code, state.operation_tag, parameters, tmp_file)
+        parallel_params = [0 if operation_features.nested_loops[i].iterator_type == "reduction" else parameters[i] for i in range(len(parameters))]
+        tiling_params = [parameters[i] if operation_features.nested_loops[i].iterator_type == "reduction" else 0 for i in range(len(parameters))]
+        new_code = code
+        if any([a != 0 for a in parallel_params]):
+            new_code = transform_dialect_TP(new_code, state.operation_tag, parallel_params, tmp_file)
+            if not new_code:
+                return ''
+        if any([a != 0 for a in tiling_params]):
+            new_code = transform_dialect_tile(new_code, state.operation_tag, tiling_params, tmp_file)
     elif transformation == 'interchange':
         new_code = transform_dialect_interchange(code, state.operation_tag, parameters, tmp_file)
     elif transformation == 'img2col':
@@ -469,7 +489,7 @@ def apply_transformation(state: OperationState, code: str, transformation: str, 
     elif transformation == 'vectorization':
         # If the operation isn't small enough for vectorization, ignore the transformation
         op_iter_space = 1
-        for nested_loop in state.operation_features.nested_loops:
+        for nested_loop in operation_features.nested_loops:
             op_iter_space *= nested_loop.upper_bound
         if op_iter_space > cfg.vect_size_limit:
             print_alert(f"REASON: Too large to vectorize {op_iter_space} > {cfg.vect_size_limit}")
@@ -477,7 +497,7 @@ def apply_transformation(state: OperationState, code: str, transformation: str, 
 
         if use_vectorizer:
             new_code = transform_dialect_vectorise_with_vectorizer(code, state.operation_tag, tmp_file)
-        elif state.operation_type == 'conv_2d+img2col':
+        elif state.operation_type == 'conv_2d' and (i := state.last_op_history_index()) is not None and state.transformation_history[i][0] == 'img2col':
             new_code = transform_dialect_vectorise_img2col(code, state.operation_tag, tmp_file)
         else:
             new_code = transform_dialect_vectorise(code, state.operation_tag, tmp_file)

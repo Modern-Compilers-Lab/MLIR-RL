@@ -3,6 +3,7 @@ import torch.nn as nn
 from torch.distributions import Categorical, Binomial
 from typing import Optional, Union
 from rl_autoschedular import config as cfg
+from rl_autoschedular.truncated_normal import TruncatedNormal
 
 
 class HiearchyModel(nn.Module):
@@ -17,49 +18,91 @@ class HiearchyModel(nn.Module):
         SD = cfg.max_num_stores_loads
         T = cfg.num_tile_sizes
 
-        self.input_dim = 6 + L + L * D * SD + L * D + 5 + cfg.truncate * 3 * L
-        self.action_mask_size = N + L + L
+        match cfg.interchange_mode:
+            case 'enumerate':
+                interchange_mask = 3 * L - 6
+                interchange_input = 0
+                interchange_layer = nn.Linear(512, 3 * L - 6)
+            case 'pointers':
+                interchange_mask = L
+                interchange_input = L
+                interchange_layer = nn.Linear(512, L)
+            case 'continuous':
+                interchange_mask = 0
+                interchange_input = 0
+                interchange_layer = nn.Linear(512, 1)
 
-        self.backbone = nn.Sequential(
-            nn.Linear(self.input_dim, 512),
-            nn.ReLU(),
-            nn.Linear(512, 512),
-            nn.ReLU(),
-        )
+        self.input_dim = 5 + L + L * D * SD + L * D + 5 + interchange_input + cfg.truncate * 3 * L
+        self.action_mask_size = N + L + L + interchange_mask
 
-        self.value_network = nn.Sequential(
-            nn.Linear(self.input_dim, 512),
-            nn.ReLU(),
-            nn.Linear(512, 512),
-            nn.ReLU(),
-            nn.Linear(512, 1),
-        )
+        if cfg.new_architecture:
+            self.backbone = nn.Sequential(
+                nn.Linear(self.input_dim, 512),
+                nn.ReLU(),
+                nn.Linear(512, 512),
+                nn.ReLU(),
+            )
 
-        self.transformation_selection = nn.Sequential(
-            nn.Linear(512, 512),
-            nn.ReLU(),
-            nn.Linear(512, N),
-        )
+            self.value_network = nn.Sequential(
+                nn.Linear(self.input_dim, 512),
+                nn.ReLU(),
+                nn.Linear(512, 512),
+                nn.ReLU(),
+                nn.Linear(512, 1),
+            )
 
-        self.interchange_fc = nn.Sequential(
-            nn.Linear(512, 512),
-            nn.ReLU(),
-            nn.Linear(512, 1),
-        )
+            self.transformation_selection = nn.Sequential(
+                nn.Linear(512, 512),
+                nn.ReLU(),
+                nn.Linear(512, N),
+            )
 
-        self.tiling_fc = nn.Sequential(
-            nn.Linear(512, 512),
-            nn.ReLU(),
-            nn.Linear(512, L * (T + 1)),
-        )
+            self.interchange_fc = nn.Sequential(
+                nn.Linear(512, 512),
+                nn.ReLU(),
+                interchange_layer,
+            )
 
-        self.parallelization_fc = nn.Sequential(
-            nn.Linear(512, 512),
-            nn.ReLU(),
-            nn.Linear(512, L * (T + 1)),
-        )
+            self.tiling_fc = nn.Sequential(
+                nn.Linear(512, 512),
+                nn.ReLU(),
+                nn.Linear(512, L * (T + 1)),
+            )
 
-    def sample(self, obs: torch.Tensor, num_loops: list[int], actions: Optional[list[tuple[str, Optional[Union[list[int], int]]]]] = None, explore: bool = False) -> tuple[list[tuple[str, Optional[Union[list[int], int]]]], torch.Tensor, torch.Tensor, torch.Tensor]:
+            self.parallelization_fc = nn.Sequential(
+                nn.Linear(512, 512),
+                nn.ReLU(),
+                nn.Linear(512, L * (T + 1)),
+            )
+        else:
+            self.backbone = nn.Sequential(
+                nn.Linear(self.input_dim, 512),
+                nn.ReLU(),
+                nn.Linear(512, 512),
+                nn.ReLU(),
+                nn.Linear(512, 512),
+                nn.ReLU(),
+            )
+
+            self.value_network = nn.Sequential(
+                nn.Linear(self.input_dim, 512),
+                nn.ReLU(),
+                nn.Linear(512, 512),
+                nn.ReLU(),
+                nn.Linear(512, 512),
+                nn.ReLU(),
+                nn.Linear(512, 1),
+            )
+
+            self.transformation_selection = nn.Linear(512, N)
+
+            self.interchange_fc = interchange_layer
+
+            self.tiling_fc = nn.Linear(512, L * (T + 1))
+
+            self.parallelization_fc = nn.Linear(512, L * (T + 1))
+
+    def sample(self, obs: torch.Tensor, num_loops: list[int], actions: Optional[list[tuple[str, Optional[Union[list[int], int]]]]] = None) -> tuple[list[tuple[str, Optional[Union[list[int], int]]]], torch.Tensor, torch.Tensor, torch.Tensor]:
         """Sample an action from the model.
 
         Args:
@@ -85,13 +128,18 @@ class HiearchyModel(nn.Module):
         TS = cfg.num_tile_sizes
         TP_BEGIN = cfg.num_transformations
         T_BEGIN = TP_BEGIN + L
+        I_BEGIN = T_BEGIN + L
 
         # Define the mask of each transformation
         transform_mask = action_mask[:, :cfg.num_transformations]
         TP_mask = action_mask[:, TP_BEGIN:T_BEGIN].unsqueeze(-1).broadcast_to(batch_size, L, TS + 1)
         TP_mask[:, :, 0] = 1  # Never mask "no tiling"
-        T_mask = action_mask[:, T_BEGIN:].unsqueeze(-1).broadcast_to(batch_size, L, TS + 1)
+        T_mask = action_mask[:, T_BEGIN:I_BEGIN].unsqueeze(-1).broadcast_to(batch_size, L, TS + 1)
         T_mask[:, :, 0] = 1  # Never mask "no tiling"
+        if cfg.interchange_mode == 'continuous':
+            I_mask = torch.ones((batch_size, 1), dtype=torch.bool)
+        else:
+            I_mask = action_mask[:, I_BEGIN:]
 
         # Model inference:
         x1 = self.backbone(x)
@@ -99,38 +147,51 @@ class HiearchyModel(nn.Module):
         transformation_logits = self.transformation_selection(x1)
         parallelization_logits = self.parallelization_fc(x1).reshape(batch_size, L, TS + 1)
         tiling_logits = self.tiling_fc(x1).reshape(batch_size, L, TS + 1)
-        interchange_logit = self.interchange_fc(x1).squeeze(-1)
+        interchange_logits = self.interchange_fc(x1)
 
         values = self.value_network(x)
-
-        if explore:
-            transformation_logits += torch.randn_like(transformation_logits)
-            parallelization_logits += torch.randn_like(parallelization_logits)
-            tiling_logits += torch.randn_like(tiling_logits)
-            interchange_logit += torch.randn_like(interchange_logit)
 
         # Apply masks on logits
         transformation_logits = transformation_logits.where(transform_mask, -torch.inf)
         parallelization_logits = parallelization_logits.where(TP_mask, -torch.inf)
         tiling_logits = tiling_logits.where(T_mask, -torch.inf)
+        interchange_logits = interchange_logits.where(I_mask, -torch.inf)
 
         # Create distributions with the masked probabilities
         transformation_dist = Categorical(logits=transformation_logits)
         parallelization_dist = Categorical(logits=parallelization_logits)
         tiling_dist = Categorical(logits=tiling_logits)
-        interchange_dist = Binomial((torch.tensor(num_loops) + 1).lgamma().exp().long() - (0 if cfg.use_interchange_mean else 1), logits=interchange_logit)
-
-        # Get chosen actions indices
-        if actions is None:
-            transformation_index = transformation_dist.sample()
-            parallelization_index = parallelization_dist.sample()
-            tiling_index = tiling_dist.sample()
-            if cfg.use_interchange_mean:
-                interchange_index = interchange_dist.mean.long()
+        if cfg.interchange_mode == 'continuous':
+            interchange_prob = interchange_logits.squeeze(-1).sigmoid()
+            total_count = (torch.tensor(num_loops) + 1).lgamma().exp().long() - 1
+            if cfg.interchange_distribution == 'binomial':
+                interchange_dist = Binomial(total_count, probs=interchange_prob)
             else:
-                interchange_index = interchange_dist.sample().long()
+                interchange_dist = TruncatedNormal(
+                    loc=interchange_prob * total_count,
+                    scale=1,
+                    a=0,
+                    b=total_count,
+                )
         else:
-            transformation_index, parallelization_index, tiling_index, interchange_index = self.__raw_actions_to_indices(actions)
+            interchange_dist = Categorical(logits=interchange_logits)
+
+        # Get chosen actions and their indices
+        with torch.no_grad():
+            if actions is None:
+                # Sample actions
+                transformation_index = transformation_dist.sample()
+                parallelization_index = parallelization_dist.sample()
+                tiling_index = tiling_dist.sample()
+                if cfg.interchange_mode == 'continuous' and cfg.use_interchange_mean:
+                    interchange_index = interchange_dist.mean.long()
+                else:
+                    interchange_index = interchange_dist.sample().long()
+
+                # Get raw actions from indices
+                actions = self.__indices_to_raw_actions(transformation_index, parallelization_index, tiling_index, interchange_index, num_loops)
+            else:
+                transformation_index, parallelization_index, tiling_index, interchange_index = self.__raw_actions_to_indices(actions)
 
         # Get log probabilities of the actions
         transformation_log_p = transformation_dist.log_prob(transformation_index)
@@ -138,15 +199,17 @@ class HiearchyModel(nn.Module):
         parallelization_log_p = parallelization_dist.log_prob(parallelization_index).sum(-1)
         tiling_log_p = tiling_dist.log_prob(tiling_index).sum(-1)
 
-        # Get raw actions from indices
-        actions = self.__indices_to_raw_actions(transformation_index, parallelization_index, tiling_index, interchange_index, num_loops)
-
+        # Calculate the total log probability
         action_log_p = transformation_log_p
         action_log_p += parallelization_log_p * (transformation_index == 1)
         action_log_p += tiling_log_p * (transformation_index == 2)
         action_log_p += interchange_log_p * (transformation_index == 3)
 
-        entropy = transformation_dist.entropy().mean() + tiling_dist.entropy().mean() + parallelization_dist.entropy().mean()
+        entropy = transformation_dist.entropy().mean()
+        entropy += (parallelization_dist.entropy().sum(-1) * (transformation_index == 1)).mean()
+        entropy += (tiling_dist.entropy().sum(-1) * (transformation_index == 2)).mean()
+        if not isinstance(interchange_dist, Binomial) or batch_size == 1:
+            entropy += (interchange_dist.entropy() * (transformation_index == 3)).mean()
 
         return actions, action_log_p, values, entropy
 
@@ -159,7 +222,7 @@ class HiearchyModel(nn.Module):
         Returns:
             torch.Tensor: The value tensor.
         """
-        return self.value_network(obs[..., :-(self.action_mask_size)])
+        return self.value_network(obs[:, :-(self.action_mask_size)])
 
     def __transformation_to_int(self, transformation: str) -> int:
         """Convert a transformation string to an integer.

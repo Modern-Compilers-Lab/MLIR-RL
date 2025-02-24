@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Optional
 import numpy as np
 
 
@@ -62,7 +62,7 @@ class BenchmarkFeatures:
     """Execution time of the benchmark in nanoseconds without any transformation."""
 
 
-OperationType = Literal["generic", "matmul", "conv_2d", "pooling", "add", "conv_2d+img2col"]
+OperationType = Literal["generic", "matmul", "conv_2d", "pooling", "add"]
 
 
 @dataclass
@@ -89,6 +89,8 @@ class OperationState:
     """Execution time of the operation in nanoseconds."""
     transformation_history: list[tuple[str, list[int]]]
     """List of transformations with their parameters applied to the operation."""
+    interchange_permutation: list[int]
+    """Current permutation of the interchange transformation (used only)."""
     tmp_file: str
     """Temporary file to store the MLIR code."""
 
@@ -106,5 +108,20 @@ class OperationState:
             self.step_count,
             self.exec_time,
             [(transformation, params.copy()) for transformation, params in self.transformation_history],
+            self.interchange_permutation.copy(),
             self.tmp_file
         )
+
+    def last_op_history_index(self) -> Optional[int]:
+        """Get the index of the beginning of the history of the last operation."""
+        history_len = len(self.transformation_history)
+        if history_len == 0:
+            return None
+        if self.transformation_history[-1][0] == 'done':
+            return None
+        i = history_len - 1
+        while i > 0 and self.transformation_history[i][0] != 'done':
+            i -= 1
+        if self.transformation_history[i][0] == 'done':
+            return i + 1
+        return i
