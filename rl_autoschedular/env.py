@@ -705,6 +705,7 @@ class Env:
             case 'no_transformation' | 'vectorization':
                 # For convolution, before vectorization, we need to first apply another tiling in order to decompose it to 1d convolution
                 if (state.operation_type == 'conv_2d'):
+                    second_interchange_parameters = None
                     if ('conv_2d_nhwc_hwcf' in state.operation_features.raw_operation):
                         second_interchange_parameters = parameters.copy()
                         second_interchange_parameters[1] = 1
@@ -717,18 +718,19 @@ class Env:
                         second_interchange_parameters = [0] * 6
                         second_interchange_parameters[2] = 1
                         second_interchange_parameters[4] = 1
-                    try:
-                        transformed_code = apply_transformation_with_timeout(
-                            state=state,
-                            code=state.transformed_code,
-                            transformation='tiling',
-                            parameters=second_interchange_parameters,
-                        )
+                    if second_interchange_parameters is not None:
+                        try:
+                            transformed_code = apply_transformation_with_timeout(
+                                state=state,
+                                code=state.transformed_code,
+                                transformation='tiling',
+                                parameters=second_interchange_parameters,
+                            )
 
-                        transformed_code = apply_conv2d_decomposition(transformed_code, state.operation_tag, self.tmp_file)
-                    except Exception as e:
-                        print_error(f"Error while applying the transformation: {e}")
-                        return '', False
+                            transformed_code = apply_conv2d_decomposition(transformed_code, state.operation_tag, self.tmp_file)
+                        except Exception as e:
+                            print_error(f"Error while applying the transformation: {e}")
+                            return '', False
 
                 if state.operation_type == 'pooling':
                     # Force no transformation on pooling operations
