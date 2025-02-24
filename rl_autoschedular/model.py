@@ -31,66 +31,69 @@ class HiearchyModel(nn.Module):
                 interchange_mask = 0
                 interchange_input = 0
                 interchange_layer = nn.Linear(512, 1)
+                if cfg.interchange_distribution == 'normal':
+                    self.interchange_logstd = nn.Parameter(torch.zeros(1))
 
         self.input_dim = 5 + L + L * D * SD + L * D + 5 + interchange_input + cfg.truncate * 3 * L
         self.action_mask_size = N + L + L + interchange_mask
+        activation_layer = nn.ReLU if cfg.activation == 'relu' else nn.Tanh
 
         if cfg.new_architecture:
             self.backbone = nn.Sequential(
                 nn.Linear(self.input_dim, 512),
-                nn.ReLU(),
+                activation_layer(),
                 nn.Linear(512, 512),
-                nn.ReLU(),
+                activation_layer(),
             )
 
             self.value_network = nn.Sequential(
                 nn.Linear(self.input_dim, 512),
-                nn.ReLU(),
+                activation_layer(),
                 nn.Linear(512, 512),
-                nn.ReLU(),
+                activation_layer(),
                 nn.Linear(512, 1),
             )
 
             self.transformation_selection = nn.Sequential(
                 nn.Linear(512, 512),
-                nn.ReLU(),
+                activation_layer(),
                 nn.Linear(512, N),
             )
 
             self.interchange_fc = nn.Sequential(
                 nn.Linear(512, 512),
-                nn.ReLU(),
+                activation_layer(),
                 interchange_layer,
             )
 
             self.tiling_fc = nn.Sequential(
                 nn.Linear(512, 512),
-                nn.ReLU(),
+                activation_layer(),
                 nn.Linear(512, L * (T + 1)),
             )
 
             self.parallelization_fc = nn.Sequential(
                 nn.Linear(512, 512),
-                nn.ReLU(),
+                activation_layer(),
                 nn.Linear(512, L * (T + 1)),
             )
         else:
             self.backbone = nn.Sequential(
                 nn.Linear(self.input_dim, 512),
-                nn.ReLU(),
+                activation_layer(),
                 nn.Linear(512, 512),
-                nn.ReLU(),
+                activation_layer(),
                 nn.Linear(512, 512),
-                nn.ReLU(),
+                activation_layer(),
             )
 
             self.value_network = nn.Sequential(
                 nn.Linear(self.input_dim, 512),
-                nn.ReLU(),
+                activation_layer(),
                 nn.Linear(512, 512),
-                nn.ReLU(),
+                activation_layer(),
                 nn.Linear(512, 512),
-                nn.ReLU(),
+                activation_layer(),
                 nn.Linear(512, 1),
             )
 
@@ -169,7 +172,7 @@ class HiearchyModel(nn.Module):
             else:
                 interchange_dist = TruncatedNormal(
                     loc=interchange_prob * total_count,
-                    scale=1,
+                    scale=self.interchange_logstd.exp(),
                     a=0,
                     b=total_count,
                 )

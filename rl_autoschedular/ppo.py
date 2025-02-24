@@ -193,7 +193,7 @@ def shuffle_trajectory(trajectory: Trajectory):
     return trajectory
 
 
-def shuffle_ppo_data(stored_action_index: list[tuple[str, Optional[Union[list[int], int]]]], stored_state: list[OperationState], stored_action_log_p: torch.Tensor, stored_x: torch.Tensor, advantages: torch.Tensor, returns: torch.Tensor):
+def shuffle_ppo_data(stored_action_index: list[tuple[str, Optional[Union[list[int], int]]]], stored_state: list[OperationState], stored_action_log_p: torch.Tensor, stored_values: torch.Tensor, stored_x: torch.Tensor, advantages: torch.Tensor, returns: torch.Tensor):
     """Shuffle the PPO data.
 
     Args:
@@ -216,11 +216,12 @@ def shuffle_ppo_data(stored_action_index: list[tuple[str, Optional[Union[list[in
     stored_action_index = [stored_action_index[i] for i in permutation]
     stored_state = [stored_state[i] for i in permutation]
     stored_action_log_p = stored_action_log_p[permutation]
+    stored_values = stored_values[permutation]
     stored_x = stored_x[permutation]
     advantages = advantages[permutation]
     returns = returns[permutation]
 
-    return stored_action_index, stored_state, stored_action_log_p, stored_x, advantages, returns
+    return stored_action_index, stored_state, stored_action_log_p, stored_values, stored_x, advantages, returns
 
 
 def shuffle_value_data(stored_x: torch.Tensor, stored_returns: torch.Tensor):
@@ -243,7 +244,7 @@ def shuffle_value_data(stored_x: torch.Tensor, stored_returns: torch.Tensor):
     return stored_x, stored_returns
 
 
-def compute_gae(done: torch.Tensor, rewards: torch.Tensor, values: torch.Tensor, next_values: torch.Tensor, gamma: float = 0.99, lambda_: float = 0.95) -> torch.Tensor:
+def compute_gae(done: torch.Tensor, rewards: torch.Tensor, values: torch.Tensor, next_values: torch.Tensor, gamma: float = 0.99, lambda_: float = 0.95) -> tuple[torch.Tensor, torch.Tensor]:
     """Compute the Generalized Advantage Estimation.
 
     Args:
@@ -272,8 +273,9 @@ def compute_gae(done: torch.Tensor, rewards: torch.Tensor, values: torch.Tensor,
         last_advantage = delta + gamma * lambda_ * last_advantage
 
         advantages[t] = last_advantage
+    returns = advantages + values
 
-    return advantages
+    return advantages, returns
 
 
 def compute_returns(done: torch.Tensor, rewards: torch.Tensor, gamma: float = 0.99) -> torch.Tensor:
@@ -325,22 +327,21 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
     for _ in ppo_trange:
         stored_state = trajectory.states
         stored_action_index = trajectory.actions
-        stored_value = trajectory.values
+        stored_values = trajectory.values
         stored_next_value = trajectory.next_values
         stored_action_log_p = trajectory.action_log_p
         stored_x = trajectory.x
         stored_reward = trajectory.rewards
         stored_done = trajectory.done
 
-        stored_value = stored_value.reshape(-1)
+        stored_values = stored_values.reshape(-1)
         stored_next_value = stored_next_value.reshape(-1)
         stored_reward = stored_reward.reshape(-1)
         stored_done = stored_done.reshape(-1)
 
-        advantages = compute_gae(stored_done, stored_reward, stored_value, stored_next_value)
-        returns = compute_returns(stored_done, stored_reward)
+        advantages, returns = compute_gae(stored_done, stored_reward, stored_values, stored_next_value)
 
-        stored_action_index, stored_state, stored_action_log_p, stored_x, stored_advantages, stored_returns = shuffle_ppo_data(stored_action_index, stored_state, stored_action_log_p, stored_x, advantages, returns)
+        stored_action_index, stored_state, stored_action_log_p, stored_values, stored_x, stored_advantages, stored_returns = shuffle_ppo_data(stored_action_index, stored_state, stored_action_log_p, stored_values, stored_x, advantages, returns)
 
         len_trajectory = len(stored_action_index)
         losses = []
@@ -349,6 +350,7 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
             actions = stored_action_index[i:betch_end]
             states = stored_state[i:betch_end]
             actions_log_p = stored_action_log_p[i:betch_end]
+            values = stored_values[i:betch_end]
             advantages = stored_advantages[i:betch_end]
             returns = stored_returns[i:betch_end]
             x = stored_x[i:betch_end]
@@ -363,16 +365,20 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
                 surr1 = ratios * advantages
                 surr2 = torch.clamp(ratios, 1 - 0.2, 1 + 0.2) * advantages
                 policy_loss = - torch.min(surr1, surr2).mean()
-                # policy_loss = - (new_actions_log_p * advantages).mean()
 
-                value_loss = (returns - new_values).abs().mean()
-                # value_loss = (returns - new_values).pow(2).mean()
+                vclip = values + torch.clamp(new_values - values, -0.2, 0.2)
+                vloss1 = (returns - vclip).pow(2)
+                vloss2 = (returns - new_values).pow(2)
+                value_loss = 0.5 * torch.max(vloss1, vloss2).mean()
 
                 loss = policy_loss + cfg.value_coef * value_loss - cfg.entropy_coef * entropy
 
+                clip_frac = (torch.abs((ratios - 1.0)) > 0.2).float().mean()
+                approx_kl = (actions_log_p - new_actions_log_p).pow(2).mean() / 2
+
             optimizer.zero_grad()
             loss.backward()
-            clip_factor = torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
             optimizer.step()
 
             losses.append(loss.item())
@@ -381,7 +387,8 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
             if neptune_logs is not None:
                 neptune_logs['train_ppo/policy_loss'].append(policy_loss.item())
                 neptune_logs['train_ppo/entropy_loss'].append(entropy.item())
-                neptune_logs['train_ppo/clip_factor'].append(clip_factor.item())
+                neptune_logs['train_ppo/clip_frac'].append(clip_frac.item())
+                neptune_logs['train_ppo/approx_kl'].append(approx_kl.item())
 
         if len(losses) > 0:
             epoch_loss = sum(losses) / len(losses)

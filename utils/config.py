@@ -38,6 +38,8 @@ class Config(metaclass=Singleton):
     """Flag to indicate if the new architecture should be used or not"""
     normalize_bounds: bool
     """Flag to indicate if the upper bounds in the input should be normalized or not"""
+    activation: Literal["relu", "tanh"]
+    """The activation function to use in the network"""
     data_format: Literal["json", "mlir"]
     """The format of the data, can be either "json" or "mlir". "json" mode reads json files containing benchmark features, "mlir" mode reads mlir code files directly and extract features from it using AST dumper. Default is "json"."""
     optimization_mode: Literal["last", "all"]
@@ -92,6 +94,7 @@ class Config(metaclass=Singleton):
         self.reverse_history = True
         self.new_architecture = False
         self.normalize_bounds = True
+        self.activation = "relu"
         self.data_format = "json"
         self.optimization_mode = "last"
         self.benchmarks_folder_path = ""
@@ -99,7 +102,7 @@ class Config(metaclass=Singleton):
         self.nb_iterations = 10000
         self.value_epochs = 4
         self.ppo_epochs = 4
-        self.ppo_batch_size = 32
+        self.ppo_batch_size = 4
         self.value_coef = 0.5
         self.entropy_coef = 0.01
         self.lr = 0.001
@@ -132,6 +135,7 @@ class Config(metaclass=Singleton):
         self.reverse_history = config["reverse_history"]
         self.new_architecture = config["new_architecture"]
         self.normalize_bounds = config["normalize_bounds"]
+        self.activation = config["activation"]
         self.data_format = config["data_format"]
         self.optimization_mode = config["optimization_mode"]
         self.benchmarks_folder_path = config["benchmarks_folder_path"]
@@ -175,6 +179,7 @@ class Config(metaclass=Singleton):
             "reverse_history": self.reverse_history,
             "new_architecture": self.new_architecture,
             "normalize_bounds": self.normalize_bounds,
+            "activation": self.activation,
             "data_format": self.data_format,
             "optimization_mode": self.optimization_mode,
             "benchmarks_folder_path": self.benchmarks_folder_path,
