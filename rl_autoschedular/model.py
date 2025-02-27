@@ -105,7 +105,7 @@ class HiearchyModel(nn.Module):
 
             self.parallelization_fc = nn.Linear(512, L * (T + 1))
 
-    def sample(self, obs: torch.Tensor, num_loops: list[int], actions: Optional[list[tuple[str, Optional[Union[list[int], int]]]]] = None) -> tuple[list[tuple[str, Optional[Union[list[int], int]]]], torch.Tensor, torch.Tensor, torch.Tensor]:
+    def sample(self, obs: torch.Tensor, num_loops: list[int], actions: Optional[list[tuple[str, Optional[Union[list[int], int]]]]] = None, greedy: bool = False, explore_factor: float = 0.0) -> tuple[list[tuple[str, Optional[Union[list[int], int]]]], torch.Tensor, torch.Tensor, torch.Tensor]:
         """Sample an action from the model.
 
         Args:
@@ -154,42 +154,73 @@ class HiearchyModel(nn.Module):
 
         values = self.value_network(x)
 
+        # Create noisy logits
+        with torch.no_grad():
+            transformation_logits_noisy = transformation_logits + torch.randn_like(transformation_logits) * explore_factor
+            parallelization_logits_noisy = parallelization_logits + torch.randn_like(parallelization_logits) * explore_factor
+            tiling_logits_noisy = tiling_logits + torch.randn_like(tiling_logits) * explore_factor
+            interchange_logits_noisy = interchange_logits + torch.randn_like(interchange_logits) * explore_factor
+
         # Apply masks on logits
         transformation_logits = transformation_logits.where(transform_mask, -torch.inf)
         parallelization_logits = parallelization_logits.where(TP_mask, -torch.inf)
         tiling_logits = tiling_logits.where(T_mask, -torch.inf)
         interchange_logits = interchange_logits.where(I_mask, -torch.inf)
+        with torch.no_grad():
+            transformation_logits_noisy = transformation_logits_noisy.where(transform_mask, -torch.inf)
+            parallelization_logits_noisy = parallelization_logits_noisy.where(TP_mask, -torch.inf)
+            tiling_logits_noisy = tiling_logits_noisy.where(T_mask, -torch.inf)
+            interchange_logits_noisy = interchange_logits_noisy.where(I_mask, -torch.inf)
 
         # Create distributions with the masked probabilities
         transformation_dist = Categorical(logits=transformation_logits)
+        transformation_dist_noisy = Categorical(logits=transformation_logits_noisy)
         parallelization_dist = Categorical(logits=parallelization_logits)
+        parallelization_dist_noisy = Categorical(logits=parallelization_logits_noisy)
         tiling_dist = Categorical(logits=tiling_logits)
+        tiling_dist_noisy = Categorical(logits=tiling_logits_noisy)
         if cfg.interchange_mode == 'continuous':
             interchange_prob = interchange_logits.squeeze(-1).sigmoid()
-            total_count = (torch.tensor(num_loops) + 1).lgamma().exp().long() - 1
+            interchange_prob_noisy = interchange_logits_noisy.squeeze(-1).sigmoid()
+            total_count = (torch.tensor(num_loops) + 1).lgamma().exp().long()
             if cfg.interchange_distribution == 'binomial':
                 interchange_dist = Binomial(total_count, probs=interchange_prob)
+                interchange_dist_noisy = Binomial(total_count, probs=interchange_prob_noisy)
             else:
                 interchange_dist = TruncatedNormal(
                     loc=interchange_prob * total_count,
                     scale=self.interchange_logstd.exp(),
                     a=0,
-                    b=torch.maximum(total_count, torch.tensor(1)),
+                    b=total_count,
+                )
+                interchange_dist_noisy = TruncatedNormal(
+                    loc=interchange_prob_noisy * total_count,
+                    scale=self.interchange_logstd.exp(),
+                    a=0,
+                    b=total_count,
                 )
         else:
             interchange_dist = Categorical(logits=interchange_logits)
+            interchange_dist_noisy = Categorical(logits=interchange_logits_noisy)
 
         # Get chosen actions and their indices
         with torch.no_grad():
             if actions is None:
-                # Sample actions
-                transformation_index = transformation_dist.sample()
-                parallelization_index = parallelization_dist.sample()
-                tiling_index = tiling_dist.sample()
-                if cfg.interchange_mode == 'continuous' and cfg.use_interchange_mean:
-                    interchange_index = interchange_dist.mean.long()
+                if greedy:
+                    # Get the indices of the maximum logit
+                    transformation_index = transformation_logits_noisy.argmax(-1)
+                    parallelization_index = parallelization_logits_noisy.argmax(-1)
+                    tiling_index = tiling_logits_noisy.argmax(-1)
+                    if cfg.interchange_mode == 'continuous':
+                        interchange_index = interchange_dist_noisy.mean.long()
+                    else:
+                        interchange_index = interchange_logits_noisy.argmax(-1)
                 else:
-                    interchange_index = interchange_dist.sample().long()
+                    # Sample actions
+                    transformation_index = transformation_dist_noisy.sample()
+                    parallelization_index = parallelization_dist_noisy.sample()
+                    tiling_index = tiling_dist_noisy.sample()
+                    interchange_index = interchange_dist_noisy.sample().long()
 
                 # Get raw actions from indices
                 actions = self.__indices_to_raw_actions(transformation_index, parallelization_index, tiling_index, interchange_index, num_loops)
@@ -204,9 +235,14 @@ class HiearchyModel(nn.Module):
 
         # Calculate the total log probability
         action_log_p = transformation_log_p
-        action_log_p += parallelization_log_p * (transformation_index == 1)
-        action_log_p += tiling_log_p * (transformation_index == 2)
-        action_log_p += interchange_log_p * (transformation_index == 3)
+        if cfg.mul_log_p:
+            action_log_p += parallelization_log_p * (transformation_index == 1)
+            action_log_p += tiling_log_p * (transformation_index == 2)
+            action_log_p += interchange_log_p * (transformation_index == 3)
+        else:
+            action_log_p[transformation_index == 1] += parallelization_log_p[transformation_index == 1]
+            action_log_p[transformation_index == 2] += tiling_log_p[transformation_index == 2]
+            action_log_p[transformation_index == 3] += interchange_log_p[transformation_index == 3]
 
         entropy = transformation_dist.entropy().mean()
         entropy += (parallelization_dist.entropy().sum(-1) * (transformation_index == 1)).mean()

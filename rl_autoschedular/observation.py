@@ -260,7 +260,7 @@ def update_operation_features_from_scratch(state: OperationState) -> OperationFe
     path_start = state_copy.last_op_history_index()
     if path_start is None:
         return state_copy.operation_features
-    path = state_copy.transformation_history[state_copy.last_op_history_index():]
+    path = state_copy.transformation_history[path_start:]
 
     # Update the operation features iteratively
     for transformation, parameters in path:

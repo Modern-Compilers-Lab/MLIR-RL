@@ -24,7 +24,7 @@ class Config(metaclass=Singleton):
     """The method used for interchange action"""
     interchange_distribution: Literal['binomial', 'normal']
     """The distribution used for continuous interchange action"""
-    use_interchange_mean: bool
+    use_exploration: bool
     """Flag to enable using the mean of the interchange distribution instead of the sampled value (only in case of continuous interchange)"""
     use_bindings: bool
     """Flag to enable using python bindings for execution, if False, the execution will be done using the command line. Default is False."""
@@ -38,6 +38,10 @@ class Config(metaclass=Singleton):
     """Flag to indicate if the new architecture should be used or not"""
     normalize_bounds: bool
     """Flag to indicate if the upper bounds in the input should be normalized or not"""
+    mul_log_p: bool
+    """Flag to indicate if the log probability should be multiplied by 0 or selected"""
+    force_vector: bool
+    """Flag to force vectorization"""
     activation: Literal["relu", "tanh"]
     """The activation function to use in the network"""
     data_format: Literal["json", "mlir"]
@@ -85,7 +89,7 @@ class Config(metaclass=Singleton):
         self.num_transformations = 6
         self.vect_size_limit = 512
         self.init_action_mask = [False, True, False, False, False, False]
-        self.use_interchange_mean = True
+        self.use_exploration = False
         self.interchange_mode = "enumerate"
         self.interchange_distribution = "binomial"
         self.use_bindings = False
@@ -94,6 +98,8 @@ class Config(metaclass=Singleton):
         self.reverse_history = True
         self.new_architecture = False
         self.normalize_bounds = True
+        self.mul_log_p = False
+        self.force_vector = True
         self.activation = "relu"
         self.data_format = "json"
         self.optimization_mode = "last"
@@ -128,13 +134,15 @@ class Config(metaclass=Singleton):
         self.init_action_mask = config["init_action_mask"]
         self.interchange_mode = config["interchange_mode"]
         self.interchange_distribution = config["interchange_distribution"]
-        self.use_interchange_mean = config["use_interchange_mean"]
+        self.use_exploration = config["use_exploration"]
         self.use_bindings = config["use_bindings"]
         self.use_vectorizer = config["use_vectorizer"]
         self.update_op_features = config["update_op_features"]
         self.reverse_history = config["reverse_history"]
         self.new_architecture = config["new_architecture"]
         self.normalize_bounds = config["normalize_bounds"]
+        self.mul_log_p = config["mul_log_p"]
+        self.force_vector = config["force_vector"]
         self.activation = config["activation"]
         self.data_format = config["data_format"]
         self.optimization_mode = config["optimization_mode"]
@@ -172,13 +180,15 @@ class Config(metaclass=Singleton):
             "init_action_mask": self.init_action_mask,
             "interchange_mode": self.interchange_mode,
             "interchange_distribution": self.interchange_distribution,
-            "use_interchange_mean": self.use_interchange_mean,
+            "use_exploration": self.use_exploration,
             "use_bindings": self.use_bindings,
             "use_vectorizer": self.use_vectorizer,
             "update_op_features": self.update_op_features,
             "reverse_history": self.reverse_history,
             "new_architecture": self.new_architecture,
             "normalize_bounds": self.normalize_bounds,
+            "mul_log_p": self.mul_log_p,
+            "force_vector": self.force_vector,
             "activation": self.activation,
             "data_format": self.data_format,
             "optimization_mode": self.optimization_mode,

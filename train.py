@@ -25,7 +25,7 @@ print_info(f"Config: {cfg}")
 
 # Set environments
 env = Env()
-eval_env = Env(env.tmp_file)
+eval_env = Env(env.tmp_file, log_schedule=True)
 
 # Set model
 model = Model()
@@ -35,7 +35,10 @@ optimizer = torch.optim.Adam(
 )
 
 # Set neptune logs if enabled
-neptune_logs = init_neptune(['ppo'] + cfg.tags) if cfg.logging else None
+neptune_logs = init_neptune(
+    tags=['ppo'] + cfg.tags,
+    mode='sync' if cfg.logging else 'debug'
+)
 
 # Start training
 # ppo_trajectory = None
@@ -45,16 +48,17 @@ for step in range(cfg.nb_iterations):
     trajectory = collect_trajectory(
         model,
         env,
+        step,
+        neptune_logs,
         device,
-        neptune_logs
     )
 
     ppo_update(
         trajectory,
         model,
         optimizer,
+        neptune_logs,
         device,
-        neptune_logs
     )
 
     if (step + 1) % 5 == 0:
@@ -62,8 +66,8 @@ for step in range(cfg.nb_iterations):
         evaluate_benchmark(
             model,
             eval_env,
+            neptune_logs,
             device,
-            neptune_logs
         )
 
         if cfg.logging:

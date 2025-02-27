@@ -12,7 +12,7 @@ from utils.log import print_alert
 import json
 
 
-def evaluate_code_with_timeout(state: OperationState, bench_data: BenchmarkFeatures, timeout: Optional[float] = 120) -> tuple[Optional[int], Union[Exception, bool]]:
+def evaluate_code(state: OperationState, bench_data: BenchmarkFeatures) -> tuple[Optional[int], Union[Exception, bool]]:
     """Evaluates the given MLIR code with a timeout.
 
     Args:
@@ -37,9 +37,9 @@ def evaluate_code_with_timeout(state: OperationState, bench_data: BenchmarkFeatu
     print_alert('Cache miss')
 
     if cfg.use_bindings:
-        real_exec_time, success = evaluate_code_with_bindings_and_timeout(state.transformed_code, state.bench_name, timeout)
+        real_exec_time, success = evaluate_code_with_bindings(state.transformed_code, state.bench_name)
     else:
-        real_exec_time, success = evaluate_code_with_cmd_and_timeout(state.transformed_code, state.tmp_file, timeout)
+        real_exec_time, success = evaluate_code_with_cmd(state.transformed_code, state.tmp_file)
 
     if success and real_exec_time is not None:
         __update_execution_cache(state.bench_name, code_cache_key, real_exec_time, tmp_exec_file)
@@ -193,8 +193,6 @@ def evaluate_code_with_cmd(code: str, tmp_file_path: str) -> tuple[Optional[int]
     """
     command_1 = f"{os.getenv('LLVM_BUILD_PATH')}/bin/mlir-opt -loop-invariant-code-motion -canonicalize -eliminate-empty-tensors -empty-tensor-to-alloc-tensor -one-shot-bufferize='bufferize-function-boundaries function-boundary-type-conversion=identity-layout-map' -convert-vector-to-scf -convert-linalg-to-loops -buffer-deallocation-pipeline -scf-forall-to-parallel -convert-scf-to-openmp -expand-strided-metadata -finalize-memref-to-llvm -convert-scf-to-cf -lower-affine -convert-openmp-to-llvm -convert-vector-to-llvm -convert-math-to-llvm -finalize-memref-to-llvm -convert-func-to-llvm -convert-index-to-llvm -convert-arith-to-llvm -convert-cf-to-llvm -reconcile-unrealized-casts -canonicalize -cse"
     command_2 = f"{os.getenv('LLVM_BUILD_PATH')}/bin/mlir-cpu-runner -e main -entry-point-result=void -shared-libs={os.getenv('LLVM_BUILD_PATH')}/lib/libmlir_runner_utils.so,{os.getenv('LLVM_BUILD_PATH')}/lib/libmlir_c_runner_utils.so,{os.getenv('LLVM_BUILD_PATH')}/lib/libomp.so"
-
-    os.environ["OMP_NUM_THREADS"] = "8"
 
     with open(tmp_file_path, "w") as file:
         file.write(code)

@@ -3,7 +3,7 @@ from rl_autoschedular.state import (
     OperationState, BenchmarkFeatures, OperationFeatures,
     OperationType
 )
-from typing import Optional, Union
+from typing import Optional, Union, Literal
 from rl_autoschedular.observation import (
     extract_bench_features_from_file,
     extract_bench_features_from_code,
@@ -11,11 +11,11 @@ from rl_autoschedular.observation import (
     update_operation_features
 )
 from rl_autoschedular.transforms import (
-    apply_transformation_with_timeout,
+    apply_transformation,
     apply_conv2d_decomposition
 )
-from rl_autoschedular.evaluation import evaluate_code_with_timeout
-from utils.log import print_error
+from rl_autoschedular.evaluation import evaluate_code
+from utils.log import print_error, print_success
 from tqdm import tqdm
 import numpy as np
 import torch
@@ -33,8 +33,10 @@ class Env:
     """Lists for each benchmark the benchmark's name and its features."""
     tmp_file: str
     """The temporary file to store the intermediate representations."""
+    log_schedule: bool
+    """Flag to log the schedule of the operations."""
 
-    def __init__(self, tmp_file: Optional[str] = None):
+    def __init__(self, tmp_file: Optional[str] = None, log_schedule: bool = False):
         """Initialize the environment.
 
         Args:
@@ -43,6 +45,7 @@ class Env:
         # Generate a random file to be used in order to apply the transformations and evaluate the code
         # This is done in order to enable having multiple experiments at the same time, by letting each
         # experiment use a separate unique file to read and write intermediate representations
+        self.log_schedule = log_schedule
         if tmp_file is None:
             random_str = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
             tmp_file = f"tmp/{random_str}.mlir"
@@ -70,7 +73,7 @@ class Env:
                 'linalg.matmul',
                 'linalg.conv_2d',
                 # 'pooling',
-                'linalg.generic',
+                # 'linalg.generic',
                 'linalg.add',
             ]
             json_data = {op: details for op, details in json_data.items() if any([s in op for s in operation_filter])}
@@ -83,7 +86,7 @@ class Env:
                 code = json_data[i][1]["transform_wrapped_operation"]
                 root_exec_time = json_data[i][1]["execution_time"]
                 # Build benchmark features
-                bench_name = f"bench_{i}"
+                bench_name = json_data[i][0]
                 benchmark_data = extract_bench_features_from_code(bench_name, code, int(root_exec_time))
                 if cfg.optimization_mode == "last":
                     last_op_tag = benchmark_data.operation_tags[-1]
@@ -154,7 +157,7 @@ class Env:
         # - Maximum number of steps is reached
         if transformation in ['no_transformation', 'vectorization'] or next_state.step_count == cfg.truncate:
             try:
-                new_exec_time, exec_succeeded = evaluate_code_with_timeout(next_state, bench_data)
+                new_exec_time, exec_succeeded = evaluate_code(next_state, bench_data)
                 if isinstance(exec_succeeded, Exception):
                     raise exec_succeeded
                 if not exec_succeeded or new_exec_time is None:
@@ -168,7 +171,17 @@ class Env:
             # i.e: if execution failed: punish the agent, reset the code, and move on to another operation
             reward = self.__action_reward(trans_succeeded, exec_succeeded, new_exec_time, next_state.exec_time)
             speedup = (bench_data.root_exec_time / new_exec_time) if new_exec_time is not None else 1.0
+
+            # Save the schedule in case we need to log it afterwards
+            if self.log_schedule:
+                state_history = next_state.transformation_history.copy()
+
             next_state, next_obs, bench_done = self.__get_next_op_state(next_state, new_exec_time)
+
+            # Log the schedule if the benchmark is done
+            if self.log_schedule and bench_done:
+                print_success(f"Schedule: {state_history} - {speedup}")
+
             return next_state, next_obs, reward, True, speedup, bench_done
 
         # If the episode is not done, return the updated state with a reward of 0
@@ -290,6 +303,15 @@ class Env:
         # Keep new code and execution time only if the new code is valid
         keep_new = new_exec_time is not None
 
+        # Get the last validated history
+        last_op_idx = state.last_op_history_index()
+        if last_op_idx is None:
+            # It means there are no loose transformations (without 'done' at the end)
+            validated_history = state.transformation_history
+        else:
+            # Get all transformations up until the last 'done'
+            validated_history = state.transformation_history[:last_op_idx]
+
         # Build a new state that points to the next operation
         new_op_tag = bench_data.operation_tags[operation_idx - 1]
         new_op_features = bench_data.operations[new_op_tag]
@@ -307,7 +329,7 @@ class Env:
             actions_mask=new_actions_mask,  # New action mask
             step_count=0,  # Reset step count
             exec_time=new_exec_time if keep_new else state.exec_time,  # New execution time if keep new. Same execution time if not.
-            transformation_history=state.transformation_history + [('done', [operation_idx])] if keep_new else [],  # Same history (with done) if keep new. Empty history if not.
+            transformation_history=state.transformation_history + [('done', [operation_idx])] if keep_new else validated_history,  # Same history (with done) if keep new. Validated history if not.
             interchange_permutation=[],  # Reset interchange permutation
             tmp_file=self.tmp_file,
         )
@@ -399,9 +421,9 @@ class Env:
             case 'img2col':
                 new_actions_mask[:N] = cfg.init_action_mask
             case 'parallelization':
-                new_actions_mask[:N] = [True, False, False, False, True, False]
+                new_actions_mask[:N] = [not cfg.force_vector, False, False, False, True, False]
             case 'tiling':
-                new_actions_mask[:N] = [True, False, False, True, True, False]
+                new_actions_mask[:N] = [not cfg.force_vector, False, False, True, True, False]
             case 'interchange':
                 if len(parameters) > 0 and len(parameters) < num_loops:
                     # In case of incomplete interchange, prevent any other action, and prevent repeating a loop
@@ -409,7 +431,7 @@ class Env:
                     for param in parameters:
                         new_actions_mask[I_BEGIN + param] = False
                 else:
-                    new_actions_mask[:N] = [True, True, False, False, True, False]
+                    new_actions_mask[:N] = [not cfg.force_vector, True, False, False, True, False]
 
         if num_loops == 1:
             # If we have only one loop -> Cancel the interchange
@@ -527,7 +549,7 @@ class Env:
         if action_name in ['tiling', 'parallelization']:
             # Get loop upper bounds
             candidates = [
-                [0] + self.__get_tiling_candidates(loop.upper_bound)
+                [0] + self.__get_tiling_candidates(loop.upper_bound, loop.iterator_type, action_name == 'parallelization')
                 for loop in state.operation_features.nested_loops
             ]
 
@@ -538,7 +560,7 @@ class Env:
                     parameters = candidates[parameter]
                     assert len(parameters) == num_loops
                 case 'pointers':
-                    assert parameter not in state.interchange_permutation
+                    assert parameter not in state.interchange_permutation, f"Loop {parameter} is already in the interchange permutation: {state.interchange_permutation}"
                     assert len(state.interchange_permutation) < num_loops
                     parameters = state.interchange_permutation + [parameter]
                 case 'continuous':
@@ -580,7 +602,7 @@ class Env:
 
         return ('no_transformation', [0])
 
-    def __get_tiling_candidates(self, n: int) -> list[int]:
+    def __get_tiling_candidates(self, n: int, iterator: Literal['parallel', 'reduction'], for_parallelization: bool) -> list[int]:
         """Get the tiling candidates for a given loop.
 
         Args:
@@ -594,7 +616,7 @@ class Env:
         num_candidates = cfg.num_tile_sizes
 
         # If there is only one or no iteration, then, no tiling is possible
-        if n <= 1:
+        if n <= 1 or (iterator == 'reduction' and for_parallelization):
             return [0] * num_candidates
 
         # Get the factors of the loop upper bound
@@ -645,7 +667,8 @@ class Env:
         """
         x = parameter
         n = num_loops
-        assert x < math.factorial(n)
+        if x >= math.factorial(n):
+            x = math.factorial(n) - 1
 
         # Convert x to factorial number
         fact_x = '0'
@@ -687,7 +710,7 @@ class Env:
             case 'parallelization' | 'tiling' | 'img2col':
                 # Apply the transformation and get the new code
                 try:
-                    transformed_code = apply_transformation_with_timeout(
+                    transformed_code = apply_transformation(
                         state=state,
                         code=state.transformed_code,
                         transformation=transformation,
@@ -701,7 +724,7 @@ class Env:
                 if len(parameters) == num_loops:
                     # We apply interchange only when the permutation is complete
                     try:
-                        transformed_code = apply_transformation_with_timeout(
+                        transformed_code = apply_transformation(
                             state=state,
                             code=state.transformed_code,
                             transformation=transformation,
@@ -732,7 +755,7 @@ class Env:
                         second_interchange_parameters[4] = 1
                     if second_interchange_parameters is not None:
                         try:
-                            transformed_code = apply_transformation_with_timeout(
+                            transformed_code = apply_transformation(
                                 state=state,
                                 code=state.transformed_code,
                                 transformation='tiling',
@@ -751,7 +774,7 @@ class Env:
                 else:
                     # Otherwise apply the transformation and get the new code
                     try:
-                        transformed_code = apply_transformation_with_timeout(
+                        transformed_code = apply_transformation(
                             state=state,
                             code=state.transformed_code,
                             transformation=transformation,

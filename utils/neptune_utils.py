@@ -9,7 +9,6 @@ def init_neptune(tags: list, mode: Literal["async", "sync", "offline", "read-onl
     # Initialize neptune run
     run = neptune.init_run(
         project=os.getenv('NEPTUNE_PROJECT'),
-        api_token=os.getenv('NEPTUNE_TOKEN'),
         tags=tags,
         mode=mode
     )

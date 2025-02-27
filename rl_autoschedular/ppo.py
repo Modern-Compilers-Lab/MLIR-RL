@@ -6,8 +6,9 @@ from rl_autoschedular.model import HiearchyModel as Model
 from rl_autoschedular.state import OperationState
 from rl_autoschedular import config as cfg
 from dataclasses import dataclass
-from utils.log import print_info, print_success
+from utils.log import print_info
 from tqdm import trange
+import math
 
 
 @dataclass
@@ -68,14 +69,14 @@ class Trajectory:
         )
 
 
-def collect_trajectory(model: Model, env: Env, device: torch.device = torch.device('cpu'), neptune_logs: Optional[neptune.Run] = None):
+def collect_trajectory(model: Model, env: Env, step: int, neptune_logs: neptune.Run, device: torch.device = torch.device('cpu')):
     """Collect a trajectory using the model and the environment.
 
     Args:
         model (MyModel): The model to use.
         env (Env): The environment to use.
+        neptune_logs (neptune.Run): The neptune run to log to if any. Defaults to None.
         device (torch.device): The device to use. Defaults to torch.device('cpu').
-        neptune_logs (Optional[neptune.Run]): The neptune run to log to if any. Defaults to None.
 
     Returns:
         Trajectory: The collected trajectory.
@@ -92,13 +93,25 @@ def collect_trajectory(model: Model, env: Env, device: torch.device = torch.devi
     stored_reward: list[torch.Tensor] = []
     stored_done: list[torch.Tensor] = []
 
+    log_rewards: list[float] = []
+    log_speedups: list[float] = []
+    log_entropy: list[float] = []
+    log_final_speedups: list[float] = []
+    log_op_speedups: dict[str, list[float]] = {}
+
+    if cfg.use_exploration:
+        ratio = step / cfg.nb_iterations
+        explore_factor = -math.pow(2.0, ratio) + 2.0
+    else:
+        explore_factor = 0.0
+
     traj_trange = trange(cfg.bench_count, desc='Trajectory')
     for i in traj_trange:
-        traj_trange.set_postfix({'bench': batch_state.bench_name})
+        traj_trange.set_postfix({'explore': explore_factor, 'bench': batch_state.bench_name})
         bench_done = False
         while not bench_done:
             num_loops = len(batch_state.operation_features.nested_loops)
-            action_index, action_log_p, values, entropy = model.sample(batch_obs, [num_loops])
+            action_index, action_log_p, values, entropy = model.sample(batch_obs, [num_loops], explore_factor=explore_factor)
 
             assert len(action_index) == 1
             batch_next_state, batch_next_obs, batch_reward, batch_terminated, batch_speedup, bench_done = env.step(batch_state, action_index[0])
@@ -109,20 +122,27 @@ def collect_trajectory(model: Model, env: Env, device: torch.device = torch.devi
             stored_action_log_p.append(action_log_p)
             stored_x.append(batch_obs)
             stored_reward.append(torch.tensor(batch_reward).unsqueeze(0))
-            stored_done.append(torch.tensor(batch_terminated).unsqueeze(0))
+            stored_done.append(torch.tensor(bench_done).unsqueeze(0))
 
-            if neptune_logs is not None:
-                neptune_logs['train/entropy'].append(entropy.item())
-                if batch_terminated:
-                    neptune_logs['train/reward'].append(batch_reward)
-                if batch_speedup is not None:
-                    neptune_logs['train/speedup'].append(batch_speedup)
-                    neptune_logs[f'train/{batch_state.operation_type}_speedup'].append(batch_speedup)
+            log_entropy.append(entropy.item())
+            if batch_terminated:
+                log_rewards.append(batch_reward)
+            if batch_speedup is not None:
+                log_speedups.append(batch_speedup)
+                if batch_state.operation_type not in log_op_speedups:
+                    log_op_speedups[batch_state.operation_type] = []
+                log_op_speedups[batch_state.operation_type].append(batch_speedup)
 
             batch_state = batch_next_state
             batch_obs = batch_next_obs
-        if neptune_logs is not None:
-            neptune_logs['train/final_speedup'].append(batch_speedup)
+        log_final_speedups.append(batch_speedup)
+
+    neptune_logs['train/entropy'].extend(log_entropy, wait=True)
+    neptune_logs['train/reward'].extend(log_rewards, wait=True)
+    neptune_logs['train/speedup'].extend(log_speedups, wait=True)
+    neptune_logs['train/final_speedup'].extend(log_final_speedups, wait=True)
+    for op_type, speedups in log_op_speedups.items():
+        neptune_logs[f'train/{op_type}_speedup'].extend(speedups, wait=True)
 
     next_value = model.sample_value(batch_obs)
 
@@ -306,22 +326,25 @@ def compute_returns(done: torch.Tensor, rewards: torch.Tensor, gamma: float = 0.
     return returns
 
 
-def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Optimizer, device: torch.device = torch.device('cpu'), neptune_logs: Optional[neptune.Run] = None):
+def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Optimizer, neptune_logs: neptune.Run, device: torch.device = torch.device('cpu')):
     """Update the model using PPO.
 
     Args:
         trajectory (Trajectory): The trajectory to use.
         model (Model): The model to update.
         optimizer (torch.optim.Optimizer): The optimizer to use.
-        ppo_epochs (int): The number of PPO epochs.
-        ppo_batch_size (int): The PPO batch size.
+        neptune_logs (neptune.Run): The neptune run to log to if any. Defaults to None.
         device (torch.device): The device to use. Defaults to torch.device('cpu').
-        entropy_coef (float): The entropy coefficient. Defaults to 0.01.
-        neptune_logs (Optional[neptune.Run]): The neptune run to log to if any. Defaults to None.
 
     Returns:
         float: The average loss.
     """
+
+    log_policy_loss: list[float] = []
+    log_entropy_loss: list[float] = []
+    log_value_loss: list[float] = []
+    log_clip_frac: list[float] = []
+    log_approx_kl: list[float] = []
 
     ppo_trange = trange(cfg.ppo_epochs, desc='PPO Epochs')
     for _ in ppo_trange:
@@ -356,7 +379,7 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
             x = stored_x[i:betch_end]
 
             with torch.enable_grad():
-                _, new_actions_log_p, new_values, entropy = model.sample(x, [len(state.operation_features.nested_loops) for state in states], actions)
+                _, new_actions_log_p, new_values, entropy = model.sample(x, [len(state.operation_features.nested_loops) for state in states], actions=actions)
 
                 if advantages.shape[0] > 1:
                     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
@@ -371,7 +394,10 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
                 vloss2 = (returns - new_values).pow(2)
                 value_loss = 0.5 * torch.max(vloss1, vloss2).mean()
 
-                loss = policy_loss + cfg.value_coef * value_loss - cfg.entropy_coef * entropy
+                if cfg.use_exploration:
+                    loss = policy_loss + cfg.value_coef * value_loss
+                else:
+                    loss = policy_loss + cfg.value_coef * value_loss - cfg.entropy_coef * entropy
 
                 clip_frac = (torch.abs((ratios - 1.0)) > 0.2).float().mean()
                 approx_kl = (actions_log_p - new_actions_log_p).pow(2).mean() / 2
@@ -384,84 +410,96 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
             losses.append(loss.item())
 
             # Logging
-            if neptune_logs is not None:
-                neptune_logs['train_ppo/policy_loss'].append(policy_loss.item())
-                neptune_logs['train_ppo/entropy_loss'].append(entropy.item())
-                neptune_logs['train_ppo/clip_frac'].append(clip_frac.item())
-                neptune_logs['train_ppo/approx_kl'].append(approx_kl.item())
+            log_policy_loss.append(policy_loss.item())
+            log_entropy_loss.append(-entropy.item())
+            log_value_loss.append(value_loss.item())
+            log_clip_frac.append(clip_frac.item())
+            log_approx_kl.append(approx_kl.item())
 
         if len(losses) > 0:
             epoch_loss = sum(losses) / len(losses)
             ppo_trange.set_postfix({'loss': epoch_loss})
 
-
-def value_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Optimizer, device: torch.device = torch.device('cpu'), neptune_logs: Optional[neptune.Run] = None):
-    """Update the value estimation using the trajectory.
-
-    Args:
-        trajectory (Trajectory): The trajectory to use.
-        model (Model): The model to update.
-        optimizer (torch.optim.Optimizer): The optimizer to use.
-        value_epochs (int): The number of value epochs.
-        device (torch.device): The device to use. Defaults to torch.device('cpu').
-        neptune_logs (Optional[neptune.Run]): The neptune run to log to if any. Defaults to None.
-
-    Returns:
-        float: The average loss.
-    """
-
-    value_trange = trange(cfg.value_epochs, desc='Value Epochs')
-    for _ in value_trange:
-        stored_x = trajectory.x
-        stored_reward = trajectory.rewards
-        stored_done = trajectory.done
-
-        stored_reward = stored_reward.reshape(-1)
-        stored_done = stored_done.reshape(-1)
-
-        returns = compute_returns(stored_done, stored_reward)
-
-        stored_x, stored_returns = shuffle_value_data(stored_x, returns)
-
-        len_trajectory = stored_returns.shape[0]
-        losses = []
-        for i in range(0, len_trajectory, cfg.ppo_batch_size):
-            betch_end = min(i + cfg.ppo_batch_size, len_trajectory)
-            returns = stored_returns[i:betch_end]
-            x = stored_x[i:betch_end]
-
-            with torch.enable_grad():
-                new_values = model.sample_value(x).reshape(-1)
-
-                # loss = (returns - new_values).pow(2).mean()
-                loss = (returns - new_values).abs().mean()
-
-            optimizer.zero_grad()
-            loss.backward()
-            clip_factor = torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
-            optimizer.step()
-
-            losses.append(loss.item())
-
-            # Logging
-            if neptune_logs is not None:
-                neptune_logs['train_value/value_loss'].append(loss.item())
-                neptune_logs['train_value/clip_factor'].append(clip_factor.item())
-
-        if len(losses) > 0:
-            epoch_loss = sum(losses) / len(losses)
-            value_trange.set_postfix({'loss': epoch_loss})
+    neptune_logs['train_ppo/policy_loss'].extend(log_policy_loss, wait=True)
+    neptune_logs['train_ppo/entropy_loss'].extend(log_entropy_loss, wait=True)
+    neptune_logs['train_ppo/value_loss'].extend(log_value_loss, wait=True)
+    neptune_logs['train_ppo/clip_factor'].extend(log_clip_frac, wait=True)
+    neptune_logs['train_ppo/approx_kl'].extend(log_approx_kl, wait=True)
 
 
-def evaluate_benchmark(model: Model, env: Env, device: torch.device = torch.device('cpu'), neptune_logs: Optional[neptune.Run] = None):
+# def value_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Optimizer, neptune_logs: neptune.Run, device: torch.device = torch.device('cpu')):
+#     """Update the value estimation using the trajectory.
+
+#     Args:
+#         trajectory (Trajectory): The trajectory to use.
+#         model (Model): The model to update.
+#         optimizer (torch.optim.Optimizer): The optimizer to use.
+#         value_epochs (int): The number of value epochs.
+#         neptune_logs (neptune.Run): The neptune run to log to if any. Defaults to None.
+#         device (torch.device): The device to use. Defaults to torch.device('cpu').
+
+#     Returns:
+#         float: The average loss.
+#     """
+
+#     value_trange = trange(cfg.value_epochs, desc='Value Epochs')
+#     for _ in value_trange:
+#         stored_x = trajectory.x
+#         stored_reward = trajectory.rewards
+#         stored_done = trajectory.done
+
+#         stored_reward = stored_reward.reshape(-1)
+#         stored_done = stored_done.reshape(-1)
+
+#         returns = compute_returns(stored_done, stored_reward)
+
+#         stored_x, stored_returns = shuffle_value_data(stored_x, returns)
+
+#         len_trajectory = stored_returns.shape[0]
+#         losses = []
+#         for i in range(0, len_trajectory, cfg.ppo_batch_size):
+#             betch_end = min(i + cfg.ppo_batch_size, len_trajectory)
+#             returns = stored_returns[i:betch_end]
+#             x = stored_x[i:betch_end]
+
+#             with torch.enable_grad():
+#                 new_values = model.sample_value(x).reshape(-1)
+
+#                 # loss = (returns - new_values).pow(2).mean()
+#                 loss = (returns - new_values).abs().mean()
+
+#             optimizer.zero_grad()
+#             loss.backward()
+#             clip_factor = torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
+#             optimizer.step()
+
+#             losses.append(loss.item())
+
+#             # Logging
+#             neptune_logs['train_value/value_loss'].append(loss.item())
+#             neptune_logs['train_value/clip_factor'].append(clip_factor.item())
+
+#         if len(losses) > 0:
+#             epoch_loss = sum(losses) / len(losses)
+#             value_trange.set_postfix({'loss': epoch_loss})
+
+
+def evaluate_benchmark(model: Model, env: Env, neptune_logs: neptune.Run, device: torch.device = torch.device('cpu')):
     """Evaluate the benchmark using the model.
 
     Args:
         model (Model): The model to use.
         env (Env): The environment to use.
-        device (torch.device): The device to use. Defaults to torch.device('cpu').
         neptune_logs (Optional[neptune.Run]): The neptune run to log to if any. Defaults to None.
+        device (torch.device): The device to use. Defaults to torch.device('cpu').
     """
+
+    log_entropy: list[float] = []
+    log_reward: list[float] = []
+    log_cumulative_reward: list[float] = []
+    log_final_speedup: list[float] = []
+    log_op_speedups: dict[str, list[float]] = {}
+
     speedup_values: list[float] = []
     nbr_benchmarks = len(env.benchmarks_data)
     for i in range(nbr_benchmarks):
@@ -474,34 +512,35 @@ def evaluate_benchmark(model: Model, env: Env, device: torch.device = torch.devi
         cumulative_reward = 0
         while not bench_done:
             # Select the action using the model
-            action, _, _, entropy = model.sample(obs, [len(state.operation_features.nested_loops)])
+            action, _, _, entropy = model.sample(obs, [len(state.operation_features.nested_loops)], greedy=True)
 
             # Apply the action and get the next state
             assert len(action) == 1
             next_state, next_obs, reward, terminated, speedup, bench_done = env.step(state, action[0])
 
-            if neptune_logs is not None:
-                neptune_logs['eval/entropy'].append(entropy.item())
+            log_entropy.append(entropy.item())
             if terminated:
-                print_success('Reward:', reward)
                 cumulative_reward += reward
-                if neptune_logs is not None:
-                    neptune_logs['eval/reward'].append(reward)
+                log_reward.append(reward)
             if speedup is not None:
-                print_success(f'Speedup: {speedup}')
-                if neptune_logs is not None:
-                    neptune_logs[f'eval/{state.operation_type}_speedup'].append(speedup)
+                if state.operation_type not in log_op_speedups:
+                    log_op_speedups[state.operation_type] = []
+                log_op_speedups[state.operation_type].append(speedup)
 
             state = next_state
             obs = next_obs.to(device)
 
-        if neptune_logs is not None:
-            neptune_logs['eval/cumulative_reward'].append(cumulative_reward)
+        log_cumulative_reward.append(cumulative_reward)
         assert speedup is not None
-        print_success(f'Final Speedup: {speedup}')
-        if neptune_logs is not None:
-            neptune_logs['eval/final_speedup'].append(speedup)
-            speedup_values.append(speedup)
+        log_final_speedup.append(speedup)
+        speedup_values.append(speedup)
 
-    if neptune_logs is not None and len(speedup_values) > 0:
-        neptune_logs['eval/average_speedup'].append(sum(speedup_values) / len(speedup_values))
+    if len(speedup_values) > 0:
+        neptune_logs['eval/average_speedup'].append(sum(speedup_values) / len(speedup_values), wait=True)
+
+    neptune_logs['eval/entropy'].extend(log_entropy, wait=True)
+    neptune_logs['eval/reward'].extend(log_reward, wait=True)
+    neptune_logs['eval/cumulative_reward'].extend(log_cumulative_reward, wait=True)
+    neptune_logs['eval/final_speedup'].extend(log_final_speedup, wait=True)
+    for op_type, speedups in log_op_speedups.items():
+        neptune_logs[f'eval/{op_type}_speedup'].extend(speedups, wait=True)
