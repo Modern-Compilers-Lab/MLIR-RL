@@ -272,6 +272,22 @@ def update_operation_features_from_scratch(state: OperationState) -> OperationFe
     return state_copy.operation_features
 
 
+def get_up_to_date_operation_features(state: OperationState) -> OperationFeatures:
+    """Get the up-to-date operation features.
+
+    Args:
+        state (OperationState): The current state.
+
+    Returns:
+        OperationFeatures: The up-to-date operation features.
+    """
+    if cfg.update_op_features:
+        # Features already updated
+        return state.operation_features
+
+    return update_operation_features_from_scratch(state)
+
+
 # ================================================ Private functions ================================================
 
 

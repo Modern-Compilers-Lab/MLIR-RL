@@ -8,11 +8,13 @@ from rl_autoschedular.observation import (
     extract_bench_features_from_file,
     extract_bench_features_from_code,
     build_op_features_vector,
-    update_operation_features
+    update_operation_features,
+    get_up_to_date_operation_features,
 )
 from rl_autoschedular.transforms import (
     apply_transformation,
-    apply_conv2d_decomposition
+    apply_conv2d_decomposition,
+    is_vectorizable
 )
 from rl_autoschedular.evaluation import evaluate_code
 from utils.log import print_error, print_success
@@ -393,6 +395,8 @@ class Env:
             if action_mask[:cfg.num_transformations].sum() == 0:
                 action_mask[0] = True
 
+        action_mask = self.__ensure_feasible_vectorization(action_mask, operation_features)
+
         return action_mask
 
     def __update_action_mask(self, state: OperationState, transformation: str, parameters: list[int], num_loops: int) -> np.ndarray:
@@ -441,7 +445,38 @@ class Env:
             if new_actions_mask[:cfg.num_transformations].sum() == 0:
                 new_actions_mask[0] = True
 
+        operation_features = get_up_to_date_operation_features(state)
+        new_actions_mask = self.__ensure_feasible_vectorization(new_actions_mask, operation_features)
+
         return new_actions_mask
+
+    def __ensure_feasible_vectorization(self, action_mask: np.ndarray, operation_features: OperationFeatures) -> np.ndarray:
+        """Ensure that vectorization is feasible for the current operation.
+        If not, the vectorization will be turned into no_transformation.
+
+        Args:
+            action_mask (np.ndarray): The action mask.
+            operation_features (OperationFeatures): The operation features.
+
+        Returns:
+            np.ndarray: The updated action mask.
+        """
+        # If vectorization is already disabled, nothing to do
+        if not action_mask[4]:
+            return action_mask
+
+        # Check if vectorization is feasible
+        vectorizable = is_vectorizable(operation_features)
+
+        # If vectorization is feasible, nothing to do
+        if vectorizable:
+            return action_mask
+
+        # Otherwise, turn vectorization into no_transformation
+        action_mask[4] = False
+        action_mask[0] = True
+
+        return action_mask
 
     def __init_action_history(self) -> np.ndarray:
         """Initialize the action history.
@@ -547,10 +582,13 @@ class Env:
 
         # Sellect the tiling candidates for each loop
         if action_name in ['tiling', 'parallelization']:
+            # Get updated features
+            operation_features = get_up_to_date_operation_features(state)
+
             # Get loop upper bounds
             candidates = [
                 [0] + self.__get_tiling_candidates(loop.upper_bound, loop.iterator_type, action_name == 'parallelization')
-                for loop in state.operation_features.nested_loops
+                for loop in operation_features.nested_loops
             ]
 
         if action_name == 'interchange':

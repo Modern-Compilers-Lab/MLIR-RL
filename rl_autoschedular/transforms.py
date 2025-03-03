@@ -2,10 +2,10 @@ import os
 import re
 import subprocess
 from typing import Optional
-from utils.log import print_alert, print_error
+from utils.log import print_error
 from rl_autoschedular import config as cfg
-from rl_autoschedular.state import OperationState
-from rl_autoschedular.observation import update_operation_features_from_scratch
+from rl_autoschedular.state import OperationState, OperationFeatures
+from rl_autoschedular.observation import get_up_to_date_operation_features
 import multiprocessing
 
 
@@ -23,8 +23,10 @@ def transform_dialect_TP(code: str, operation_tag: str, tiling_sizes: list[int],
     Returns:
         str: The code after applying the transformation.
     """
-    if not tiling_sizes:
-        return ''
+    if not code:
+        return code
+
+    # If tiling sizes are all zeros, means no tiling is needed
     if all([a == 0 for a in tiling_sizes]):
         return code
 
@@ -68,8 +70,10 @@ def transform_dialect_tile(code: str, operation_tag: str, tiling_size: list[int]
     Returns:
         str: The code after applying the transformation.
     """
-    if not tiling_size:
-        return ''
+    if not code:
+        return code
+
+    # If tiling sizes are all zeros, means no tiling is needed
     if all([a == 0 for a in tiling_size]):
         return code
 
@@ -116,7 +120,11 @@ def transform_dialect_interchange(code: str, operation_tag: str, interchange_lis
     Returns:
         str: The code after applying the transformation.
     """
-    if not interchange_list:
+    if not code:
+        return code
+
+    # If the permutation list is same as the identity permutation, means no interchange is needed
+    if interchange_list == list(range(len(interchange_list))):
         return code
 
     code = code.strip()
@@ -192,6 +200,8 @@ def transform_dialect_vectorise_img2col(code: str, operation_tag: str, tmp_file_
     Returns:
         str: The code after applying the transformation.
     """
+    if not code:
+        return code
 
     code = code.strip()
 
@@ -284,6 +294,8 @@ def transform_dialect_vectorise(code: str, operation_tag: str, tmp_file_path: st
     Returns:
         str: The code after applying the transformation.
     """
+    if not code:
+        return code
 
     code = code.strip()
 
@@ -336,6 +348,8 @@ def transform_dialect_vectorise_with_vectorizer(code: str, operation_tag: str, t
     Returns:
         str: The code after applying the transformation.
     """
+    if not code:
+        return code
 
     code = code.strip()
 
@@ -402,6 +416,8 @@ def transform_dialect_img2col(code: str, operation_tag: str, tmp_file_path: str)
     Returns:
         str: The code after applying the transformation.
     """
+    if not code:
+        return code
 
     code = code.strip()
 
@@ -454,46 +470,25 @@ def apply_transformation(state: OperationState, code: str, transformation: str, 
     """
     # Operation features are needed for parallelization and vectorization
     if transformation in ['parallelization', 'vectorization']:
-        if not cfg.update_op_features:
-            # If the operation features are not updated, update them from scratch
-            operation_features = update_operation_features_from_scratch(state)
-        else:
-            operation_features = state.operation_features
+        operation_features = get_up_to_date_operation_features(state)
 
     tmp_file = state.tmp_file
 
     code = code.strip()
 
     if transformation == 'tiling':
-        if not parameters:
-            print_alert("REASON: No parameters")
-            return ''
         new_code = transform_dialect_tile(code, state.operation_tag, parameters, tmp_file)
     elif transformation == 'parallelization':
-        if not parameters:
-            print_alert("REASON: No parameters")
-            return ''
         parallel_params = [0 if operation_features.nested_loops[i].iterator_type == "reduction" else parameters[i] for i in range(len(parameters))]
         tiling_params = [parameters[i] if operation_features.nested_loops[i].iterator_type == "reduction" else 0 for i in range(len(parameters))]
-        new_code = code
-        if any([a != 0 for a in parallel_params]):
-            new_code = transform_dialect_TP(new_code, state.operation_tag, parallel_params, tmp_file)
-            if not new_code:
-                return ''
-        if any([a != 0 for a in tiling_params]):
-            new_code = transform_dialect_tile(new_code, state.operation_tag, tiling_params, tmp_file)
+        new_code = transform_dialect_TP(code, state.operation_tag, parallel_params, tmp_file)
+        new_code = transform_dialect_tile(new_code, state.operation_tag, tiling_params, tmp_file)
     elif transformation == 'interchange':
         new_code = transform_dialect_interchange(code, state.operation_tag, parameters, tmp_file)
     elif transformation == 'img2col':
         new_code = transform_dialect_img2col(code, state.operation_tag, tmp_file)
     elif transformation == 'vectorization':
-        # If the operation isn't small enough for vectorization, ignore the transformation
-        op_iter_space = 1
-        for nested_loop in operation_features.nested_loops:
-            op_iter_space *= nested_loop.upper_bound
-        if op_iter_space > cfg.vect_size_limit:
-            print_alert(f"REASON: Too large to vectorize {op_iter_space} > {cfg.vect_size_limit}")
-            return ''
+        assert is_vectorizable(operation_features), "Too large to vectorize"
 
         if use_vectorizer:
             new_code = transform_dialect_vectorise_with_vectorizer(code, state.operation_tag, tmp_file)
@@ -657,3 +652,18 @@ def get_ops_by_tags(code: str, operation_tags: list, tmp_file_path: str):
             i += 1
 
     return res
+
+
+def is_vectorizable(operation_features: OperationFeatures) -> bool:
+    """Check if the operation is small enough for vectorization.
+
+    Args:
+        operation_features (OperationFeatures): The operation features.
+
+    Returns:
+        bool: Whether the operation is vectorizable or not.
+    """
+    op_iter_space = 1
+    for nested_loop in operation_features.nested_loops:
+        op_iter_space *= nested_loop.upper_bound
+    return op_iter_space <= cfg.vect_size_limit
