@@ -5,28 +5,25 @@ from mlir.runtime import get_ranked_memref_descriptor
 from mlir.passmanager import PassManager
 import os
 
-bench_name = "fdtd"
-MATRIX_SIZE = 2048
-TMAX = 50
-assert TMAX != 0 and TMAX != 1
+bench_name = "seidel"
+MATRIX_SIZE = 32
+TSTEPS = 2
 bench_file = f"{bench_name}.mlir.bench"
-bench_output = f"{bench_name}_{MATRIX_SIZE}_{TMAX}.mlir"
+bench_output = f"{bench_name}_{MATRIX_SIZE}_{TSTEPS}.mlir"
 
 params = {
-    "NX0": MATRIX_SIZE,
-    "NY0": MATRIX_SIZE,
-    "NX1": MATRIX_SIZE - 1,
-    "NY1": MATRIX_SIZE - 1,
-    "TMAX": TMAX,
+    "N0": MATRIX_SIZE,
+    "N2": MATRIX_SIZE - 2,
+    "N1": MATRIX_SIZE + 1,
+    "TSTEPS": TSTEPS,
 }
 
 inputs = {
-    'EX': np.random.rand(MATRIX_SIZE, MATRIX_SIZE) * 100,
-    'EY': np.random.rand(MATRIX_SIZE, MATRIX_SIZE) * 100,
-    'HZ': np.random.rand(MATRIX_SIZE, MATRIX_SIZE) * 100,
+    'A': np.random.rand(MATRIX_SIZE, MATRIX_SIZE) * 100,
+    'B': np.zeros((MATRIX_SIZE, MATRIX_SIZE)),
 }
 
-order = ['EX', 'EY', 'HZ']
+order = ['B', 'A']
 
 with open(bench_file, "r") as f:
     code = f.read()
@@ -37,18 +34,11 @@ with open(bench_output, "w") as f:
     f.write(code)
 np.savez(f"{bench_output}.npz", **inputs)
 
-EY = inputs['EY'].copy()
-EX = inputs['EX'].copy()
-HZ = inputs['HZ'].copy()
+A = inputs['A'].copy()
 for _ in range(2):
-    for t in range(TMAX):
-        EY[0, :] = t
-        EY[1:, :] = EY[1:, :] - 0.5 * (HZ[1:, :] - HZ[:-1, :])
-        EX[:, 1:] = EX[:, 1:] - 0.5 * (HZ[:, 1:] - HZ[:, :-1])
-        HZ[:-1, :-1] = HZ[:-1, :-1] - 0.7 * (
-            EX[:-1, 1:] - EX[:-1, :-1] + EY[1:, :-1] - EY[:-1, :-1]
-        )
-expected = HZ
+    for _ in range(TSTEPS):
+        A[1:-1, 1:-1] = (A[:-2, :-2] + A[:-2, 1:-1] + A[:-2, 2:] + A[1:-1, :-2] + A[1:-1, 1:-1] + A[1:-1, 2:] + A[2:, :-2] + A[2:, 1:-1] + A[2:, 2:]) / 9.0
+expected = A
 np.save(f"{bench_output}.npy", expected)
 
 # ------ End of generation ------ #
@@ -104,7 +94,7 @@ try:
 except Exception as e:
     print(None, e)
 
-actual = inputs['HZ']
+actual = inputs[order[-1]]
 # if expected.dtype == np.complex128:
 #     actual = actual.view(np.complex128).squeeze(len(actual.shape) - 1)
 assertion = np.allclose(actual, expected)

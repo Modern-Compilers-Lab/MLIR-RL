@@ -5,25 +5,20 @@ from mlir.runtime import get_ranked_memref_descriptor
 from mlir.passmanager import PassManager
 import os
 
-bench_name = "seidel"
-MATRIX_SIZE = 32
-TSTEPS = 2
+bench_name = "floyd"
+MATRIX_SIZE = 2048
 bench_file = f"{bench_name}.mlir.bench"
-bench_output = f"{bench_name}_{MATRIX_SIZE}_{TSTEPS}.mlir"
+bench_output = f"{bench_name}_{MATRIX_SIZE}.mlir"
 
 params = {
-    "N0": MATRIX_SIZE,
-    "N2": MATRIX_SIZE - 2,
-    "N1": MATRIX_SIZE + 1,
-    "TSTEPS": TSTEPS,
+    "N": MATRIX_SIZE,
 }
 
 inputs = {
-    'A': np.random.rand(MATRIX_SIZE, MATRIX_SIZE) * 100,
-    'B': np.zeros((MATRIX_SIZE, MATRIX_SIZE)),
+    'P': np.random.rand(MATRIX_SIZE, MATRIX_SIZE) * 100,
 }
 
-order = ['A', 'B']
+order = ['P']
 
 with open(bench_file, "r") as f:
     code = f.read()
@@ -34,11 +29,10 @@ with open(bench_output, "w") as f:
     f.write(code)
 np.savez(f"{bench_output}.npz", **inputs)
 
-A = inputs['A'].copy()
-for _ in range(2):
-    for _ in range(TSTEPS):
-        A[1:-1, 1:-1] = (A[:-2, :-2] + A[:-2, 1:-1] + A[:-2, 2:] + A[1:-1, :-2] + A[1:-1, 1:-1] + A[1:-1, 2:] + A[2:, :-2] + A[2:, 1:-1] + A[2:, 2:]) / 9.0
-expected = A
+P = inputs['P'].copy()
+for k in range(MATRIX_SIZE):
+    P[:, :] = np.minimum(P[:, :], P[:, k].reshape(-1, 1) + P[k, :].reshape(1, -1))
+expected = P
 np.save(f"{bench_output}.npy", expected)
 
 # ------ End of generation ------ #
@@ -94,7 +88,7 @@ try:
 except Exception as e:
     print(None, e)
 
-actual = inputs['A']
+actual = inputs[order[-1]]
 # if expected.dtype == np.complex128:
 #     actual = actual.view(np.complex128).squeeze(len(actual.shape) - 1)
 assertion = np.allclose(actual, expected)

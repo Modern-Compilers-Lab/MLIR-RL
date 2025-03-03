@@ -1,5 +1,5 @@
 func.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }
-func.func @main(%A: memref<N0xN0xf64>, %B: memref<N0xN0xf64>) -> i64 attributes { llvm.emit_c_interface } {
+func.func @main(%B: memref<N0xN0xf64>, %A: memref<N0xN0xf64>) -> i64 attributes { llvm.emit_c_interface } {
   %t0 = func.call @nanoTime() : () -> i64
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index

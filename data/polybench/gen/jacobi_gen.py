@@ -23,7 +23,7 @@ inputs = {
     'B': np.zeros((MATRIX_SIZE, MATRIX_SIZE)),
 }
 
-order = ['A', 'B']
+order = ['B', 'A']
 
 with open(bench_file, "r") as f:
     code = f.read()
@@ -94,7 +94,7 @@ try:
 except Exception as e:
     print(None, e)
 
-actual = inputs['A']
+actual = inputs[order[-1]]
 # if expected.dtype == np.complex128:
 #     actual = actual.view(np.complex128).squeeze(len(actual.shape) - 1)
 assertion = np.allclose(actual, expected)

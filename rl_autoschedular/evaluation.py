@@ -1,5 +1,6 @@
 import os
 import numpy as np
+from numpy.lib.npyio import NpzFile
 from mlir.ir import Context, Module
 from mlir.execution_engine import ExecutionEngine, ctypes
 from mlir.runtime import get_ranked_memref_descriptor
@@ -104,12 +105,12 @@ def evaluate_code_with_bindings(code: str, function_name: str) -> tuple[Optional
     with open(full_function_name, "r") as f:
         original_code = f.read()
 
-    np_file = np.load(full_function_name + ".npz")
+    np_file: NpzFile = np.load(full_function_name + ".npz")
     expected: np.ndarray = np.load(full_function_name + ".npy")
 
     args_names: list[str] = sorted(
         np_file.files,
-        key=lambda s: original_code.index(s)
+        key=lambda s: original_code.index('%' + s)
     )
     args_map: dict[str, np.ndarray] = {arr: np_file[arr] for arr in args_names}
     args = []
@@ -125,12 +126,14 @@ def evaluate_code_with_bindings(code: str, function_name: str) -> tuple[Optional
         execution_engine.invoke("main", *args)
         execution_engine.invoke("main", *args)
     except Exception as e:
+        np_file.close()
         return None, e
     actual = args_map[args_names[-1]]
     if expected.dtype == np.complex128:
         actual = actual.view(np.complex128).squeeze(len(actual.shape) - 1)
     assertion = np.allclose(actual, expected)
 
+    np_file.close()
     return delta_arg[0], assertion
 
 
