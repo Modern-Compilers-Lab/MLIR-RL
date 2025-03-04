@@ -37,8 +37,10 @@ class Env:
     """The temporary file to store the intermediate representations."""
     log_schedule: bool
     """Flag to log the schedule of the operations."""
+    inference_env: bool
+    """Flag to indicate if the environment is used for inference or training."""
 
-    def __init__(self, tmp_file: Optional[str] = None, log_schedule: bool = False):
+    def __init__(self, tmp_file: Optional[str] = None, log_schedule: bool = False, inference_env: bool = False):
         """Initialize the environment.
 
         Args:
@@ -48,6 +50,7 @@ class Env:
         # This is done in order to enable having multiple experiments at the same time, by letting each
         # experiment use a separate unique file to read and write intermediate representations
         self.log_schedule = log_schedule
+        self.inference_env = inference_env
         if tmp_file is None:
             random_str = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
             tmp_file = f"tmp/{random_str}.mlir"
@@ -261,7 +264,7 @@ class Env:
         operation_type = self.__get_operation_type(operation_features.raw_operation)
 
         # Build action mask
-        actions_mask = self.__init_action_mask(operation_features)
+        action_mask = self.__init_action_mask(operation_features)
 
         # Create empty action history
         actions = self.__init_action_history()
@@ -274,7 +277,7 @@ class Env:
             validated_code=bench_data.code,
             transformed_code=bench_data.code,
             actions=actions,
-            actions_mask=actions_mask,
+            action_mask=action_mask,
             step_count=0,
             exec_time=bench_data.root_exec_time,
             transformation_history=[],
@@ -318,7 +321,7 @@ class Env:
         new_op_tag = bench_data.operation_tags[operation_idx - 1]
         new_op_features = bench_data.operations[new_op_tag]
         new_op_type = self.__get_operation_type(new_op_features.raw_operation)
-        new_actions_mask = self.__init_action_mask(new_op_features)
+        new_action_mask = self.__init_action_mask(new_op_features)
         new_actions = self.__init_action_history()
         next_state = OperationState(
             bench_name=state.bench_name,
@@ -328,7 +331,7 @@ class Env:
             validated_code=state.transformed_code if keep_new else state.validated_code,  # New code if keep new. Same code if not.
             transformed_code=state.transformed_code if keep_new else state.validated_code,  # Same code if keep new. Old code if not.
             actions=new_actions,  # Empty actions history
-            actions_mask=new_actions_mask,  # New action mask
+            action_mask=new_action_mask,  # New action mask
             step_count=0,  # Reset step count
             exec_time=new_exec_time if keep_new else state.exec_time,  # New execution time if keep new. Same execution time if not.
             transformation_history=state.transformation_history + [('done', [operation_idx])] if keep_new else validated_history,  # Same history (with done) if keep new. Validated history if not.
@@ -399,7 +402,7 @@ class Env:
 
         return action_mask
 
-    def __update_action_mask(self, state: OperationState, transformation: str, parameters: list[int], num_loops: int) -> np.ndarray:
+    def __update_action_mask(self, action_mask: np.ndarray, transformation: str, parameters: list[int], num_loops: int) -> np.ndarray:
         """Update the action mask based on the transformation applied.
 
         Args:
@@ -411,7 +414,7 @@ class Env:
         Returns:
             np.ndarray: The updated action mask.
         """
-        new_actions_mask = state.actions_mask.copy()
+        new_action_mask = action_mask.copy()
 
         N = cfg.num_transformations
         L = cfg.max_num_loops
@@ -419,40 +422,36 @@ class Env:
 
         if cfg.interchange_mode == 'pointers':
             # Reset pointer masking
-            new_actions_mask[I_BEGIN:I_BEGIN + num_loops] = True
+            new_action_mask[I_BEGIN:I_BEGIN + num_loops] = True
 
         match transformation:
             case 'img2col':
-                new_actions_mask[:N] = cfg.init_action_mask
+                new_action_mask[:N] = cfg.init_action_mask
             case 'parallelization':
-                new_actions_mask[:N] = [not cfg.force_vector, False, False, False, True, False]
+                new_action_mask[:N] = [not cfg.force_vector, False, False, False, True, False]
             case 'tiling':
-                new_actions_mask[:N] = [not cfg.force_vector, False, False, True, True, False]
+                new_action_mask[:N] = [not cfg.force_vector, False, False, True, True, False]
             case 'interchange':
                 if len(parameters) > 0 and len(parameters) < num_loops:
                     # In case of incomplete interchange, prevent any other action, and prevent repeating a loop
-                    new_actions_mask[:N] = [False, False, False, True, False, False]
+                    new_action_mask[:N] = [False, False, False, True, False, False]
                     for param in parameters:
-                        new_actions_mask[I_BEGIN + param] = False
+                        new_action_mask[I_BEGIN + param] = False
                 else:
-                    new_actions_mask[:N] = [not cfg.force_vector, True, False, False, True, False]
+                    new_action_mask[:N] = [not cfg.force_vector, True, False, False, True, False]
 
         if num_loops == 1:
             # If we have only one loop -> Cancel the interchange
-            new_actions_mask[3] = False
+            new_action_mask[3] = False
             if cfg.interchange_mode == 'enumerate':
-                new_actions_mask[I_BEGIN] = True
-            if new_actions_mask[:cfg.num_transformations].sum() == 0:
-                new_actions_mask[0] = True
+                new_action_mask[I_BEGIN] = True
+            if new_action_mask[:cfg.num_transformations].sum() == 0:
+                new_action_mask[0] = True
 
-        operation_features = get_up_to_date_operation_features(state)
-        new_actions_mask = self.__ensure_feasible_vectorization(new_actions_mask, operation_features)
-
-        return new_actions_mask
+        return new_action_mask
 
     def __ensure_feasible_vectorization(self, action_mask: np.ndarray, operation_features: OperationFeatures) -> np.ndarray:
-        """Ensure that vectorization is feasible for the current operation.
-        If not, the vectorization will be turned into no_transformation.
+        """Automatically disable unfeasible vectorization if we should to.
 
         Args:
             action_mask (np.ndarray): The action mask.
@@ -461,22 +460,26 @@ class Env:
         Returns:
             np.ndarray: The updated action mask.
         """
-        # If vectorization is already disabled, nothing to do
-        if not action_mask[4]:
-            return action_mask
+        new_action_mask = action_mask.copy()
+
+        # Nothing to do, If:
+        # - Vectorization is already disabled
+        # - It's a training env and we want to punish the agent for unfeasible vectorization
+        if (not new_action_mask[4]) or (not self.inference_env and cfg.punish_vector):
+            return new_action_mask
 
         # Check if vectorization is feasible
         vectorizable = is_vectorizable(operation_features)
 
         # If vectorization is feasible, nothing to do
         if vectorizable:
-            return action_mask
+            return new_action_mask
 
         # Otherwise, turn vectorization into no_transformation
-        action_mask[4] = False
-        action_mask[0] = True
+        new_action_mask[4] = False
+        new_action_mask[0] = True
 
-        return action_mask
+        return new_action_mask
 
     def __init_action_history(self) -> np.ndarray:
         """Initialize the action history.
@@ -545,7 +548,7 @@ class Env:
             op_features_vector = np.concatenate((op_features_vector, interchange_perm_vector))
 
         action_history = state.actions.reshape(-1)
-        action_mask = state.actions_mask
+        action_mask = state.action_mask
 
         obs = np.concatenate((
             # The input of the policy network:
@@ -753,6 +756,7 @@ class Env:
                         code=state.transformed_code,
                         transformation=transformation,
                         parameters=parameters,
+                        in_inference=self.inference_env,
                     )
                 except Exception as e:
                     print_error(f"Error while applying the transformation: {e}")
@@ -767,6 +771,7 @@ class Env:
                             code=state.transformed_code,
                             transformation=transformation,
                             parameters=parameters,
+                            in_inference=self.inference_env,
                         )
                     except Exception as e:
                         print_error(f"Error while applying the transformation: {e}")
@@ -798,6 +803,7 @@ class Env:
                                 code=state.transformed_code,
                                 transformation='tiling',
                                 parameters=second_interchange_parameters,
+                                in_inference=self.inference_env,
                             )
 
                             transformed_code = apply_conv2d_decomposition(transformed_code, state.operation_tag, self.tmp_file)
@@ -817,6 +823,7 @@ class Env:
                             code=state.transformed_code,
                             transformation=transformation,
                             parameters=parameters,
+                            in_inference=self.inference_env,
                         )
                     except Exception as e:
                         print_error(f"Error while applying the transformation: {e}")
@@ -875,7 +882,7 @@ class Env:
             - operation_type (only in case of conv2d+img2col)
             - actions (to register the transformation for the next input)
             - transformation_history
-            - actions_mask
+            - action_mask
             - step _count
 
         Args:
@@ -889,8 +896,7 @@ class Env:
         num_loops = len(state.operation_features.nested_loops)
 
         # Update the action mask
-        new_actions_mask = self.__update_action_mask(state, transformation, parameters, num_loops)
-        state.actions_mask = new_actions_mask
+        state.action_mask = self.__update_action_mask(state.action_mask, transformation, parameters, num_loops)
 
         # If interchange permutation is not complete
         #  -> Record it in the state, and return
@@ -905,13 +911,15 @@ class Env:
         # - The transformation is img2col (necessary)
         # - The config says so
         if cfg.update_op_features or transformation == 'img2col':
-            new_op_features = update_operation_features(state, transformation, parameters)
-            state.operation_features = new_op_features
+            state.operation_features = update_operation_features(state, transformation, parameters)
 
         # Register the action in the history
-        new_actions = self.__update_action_history(state, transformation, parameters)
-        state.actions = new_actions
+        state.actions = self.__update_action_history(state, transformation, parameters)
         state.transformation_history.append((transformation, parameters))
+
+        # Verify if vectorization is feasible after the transformation
+        up_to_date_op_features = get_up_to_date_operation_features(state)
+        state.action_mask = self.__ensure_feasible_vectorization(state.action_mask, up_to_date_op_features)
 
         # Update the step count
         state.step_count += 1

@@ -25,7 +25,11 @@ print_info(f"Config: {cfg}")
 
 # Set environments
 env = Env()
-eval_env = Env(env.tmp_file, log_schedule=True)
+eval_env = Env(
+    tmp_file=env.tmp_file,
+    log_schedule=True,
+    inference_env=True,
+)
 
 # Set model
 model = Model()

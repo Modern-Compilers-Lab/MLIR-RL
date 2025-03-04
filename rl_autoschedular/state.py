@@ -81,7 +81,7 @@ class OperationState:
     """The operation string with wrapping and transformations."""
     actions: np.ndarray
     """Action parameters for parallelization, tiling and interchange. The shape is (truncate, 3, MAX_NUM_LOOPS)."""
-    actions_mask: np.ndarray
+    action_mask: np.ndarray
     """Mask for the actions. The shape is (5 + L + L) where L = MAX_NUM_LOOPS."""
     step_count: int
     """The current step in the list of transformations applied to the operation."""
@@ -104,7 +104,7 @@ class OperationState:
             self.validated_code,
             self.transformed_code,
             self.actions.copy(),
-            self.actions_mask.copy(),
+            self.action_mask.copy(),
             self.step_count,
             self.exec_time,
             [(transformation, params.copy()) for transformation, params in self.transformation_history],

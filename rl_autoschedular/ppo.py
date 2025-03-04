@@ -378,11 +378,11 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
             returns = stored_returns[i:betch_end]
             x = stored_x[i:betch_end]
 
+            if advantages.shape[0] > 1:
+                advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+
             with torch.enable_grad():
                 _, new_actions_log_p, new_values, entropy = model.sample(x, [len(state.operation_features.nested_loops) for state in states], actions=actions)
-
-                if advantages.shape[0] > 1:
-                    advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
                 ratios = torch.exp(new_actions_log_p - actions_log_p)
                 surr1 = ratios * advantages
@@ -399,8 +399,8 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
                 else:
                     loss = policy_loss + cfg.value_coef * value_loss - cfg.entropy_coef * entropy
 
-                clip_frac = (torch.abs((ratios - 1.0)) > 0.2).float().mean()
-                approx_kl = (actions_log_p - new_actions_log_p).pow(2).mean() / 2
+            clip_frac = (torch.abs((ratios - 1.0)) > 0.2).float().mean()
+            approx_kl = (actions_log_p - new_actions_log_p).pow(2).mean() / 2
 
             optimizer.zero_grad()
             loss.backward()
