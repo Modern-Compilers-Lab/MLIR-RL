@@ -390,13 +390,9 @@ class Env:
         elif cfg.interchange_mode == 'pointers':
             action_mask[I_BEGIN_1C + num_loops:] = False
 
-        if num_loops == 1:
-            # If we have only one loop -> Cancel the interchange
-            action_mask[3] = False
-            if cfg.interchange_mode == 'enumerate':
-                action_mask[I_BEGIN_1C] = True
-            if action_mask[:cfg.num_transformations].sum() == 0:
-                action_mask[0] = True
+        if num_loops == 1 and cfg.interchange_mode == 'enumerate':
+            # If we have only one loop -> Allow the first candidate which will be the identity permutation
+            action_mask[I_BEGIN_1C] = True
 
         action_mask = self.__ensure_feasible_vectorization(action_mask, operation_features)
 
@@ -440,13 +436,9 @@ class Env:
                 else:
                     new_action_mask[:N] = [not cfg.force_vector, True, False, False, True, False]
 
-        if num_loops == 1:
-            # If we have only one loop -> Cancel the interchange
-            new_action_mask[3] = False
-            if cfg.interchange_mode == 'enumerate':
-                new_action_mask[I_BEGIN] = True
-            if new_action_mask[:cfg.num_transformations].sum() == 0:
-                new_action_mask[0] = True
+        if num_loops == 1 and cfg.interchange_mode == 'enumerate':
+            # If we have only one loop -> Allow the first candidate which will be the identity permutation
+            new_action_mask[I_BEGIN] = True
 
         return new_action_mask
 

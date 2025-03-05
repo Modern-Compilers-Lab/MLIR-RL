@@ -4,6 +4,7 @@ from torch.distributions import Categorical, Binomial
 from typing import Optional, Union
 from rl_autoschedular import config as cfg
 from rl_autoschedular.truncated_normal import TruncatedNormal
+import math
 
 
 class HiearchyModel(nn.Module):
@@ -182,7 +183,7 @@ class HiearchyModel(nn.Module):
         if cfg.interchange_mode == 'continuous':
             interchange_prob = interchange_logits.squeeze(-1).sigmoid()
             interchange_prob_noisy = interchange_logits_noisy.squeeze(-1).sigmoid()
-            total_count = (torch.tensor(num_loops) + 1).lgamma().exp().long()
+            total_count = torch.tensor([math.factorial(loops) for loops in num_loops])
             if cfg.interchange_distribution == 'binomial':
                 interchange_dist = Binomial(total_count, probs=interchange_prob)
                 interchange_dist_noisy = Binomial(total_count, probs=interchange_prob_noisy)
