@@ -1,5 +1,6 @@
 import random
 import string
+import sys
 
 
 def generate_random_string():
@@ -22,10 +23,10 @@ def print_success(*args):
 def print_alert(*args):
     """Prints an alert message"""
     message = ' '.join(map(str, args))
-    print(f"\033[93m[ALERT]\t {message}\033[0m")
+    print(f"\033[93m[ALERT]\t {message}\033[0m", file=sys.stderr)
 
 
 def print_error(*args):
     """Prints an error message"""
     message = ' '.join(map(str, args))
-    print(f"\033[91m[ERROR]\t {message}\033[0m")
+    print(f"\033[91m[ERROR]\t {message}\033[0m", file=sys.stderr)

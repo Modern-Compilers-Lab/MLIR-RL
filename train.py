@@ -6,8 +6,9 @@ load_dotenv(override=True)
 from rl_autoschedular.env import Env
 from rl_autoschedular.model import HiearchyModel as Model
 import torch
+from tqdm import trange
 from rl_autoschedular import config as cfg
-from utils.log import print_info
+from utils.log import print_info, print_success
 from utils.neptune_utils import init_neptune
 from rl_autoschedular.ppo import (
     collect_trajectory,
@@ -19,9 +20,17 @@ from rl_autoschedular.ppo import (
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 device = torch.device("cpu")
 torch.set_grad_enabled(False)
-torch.autograd.set_detect_anomaly(True)
+# torch.autograd.set_detect_anomaly(True)
+torch.set_num_threads(4)
 
 print_info(f"Config: {cfg}")
+
+# Set neptune logs if enabled
+neptune_logs = init_neptune(
+    tags=['ppo'] + cfg.tags,
+    mode='sync' if cfg.logging else 'debug'
+)
+print_success("Neptune initialized")
 
 # Set environments
 env = Env()
@@ -30,6 +39,7 @@ eval_env = Env(
     log_schedule=True,
     inference_env=True,
 )
+print_success("Environments initialized")
 
 # Set model
 model = Model()
@@ -37,18 +47,11 @@ optimizer = torch.optim.Adam(
     model.parameters(),
     lr=cfg.lr
 )
-
-# Set neptune logs if enabled
-neptune_logs = init_neptune(
-    tags=['ppo'] + cfg.tags,
-    mode='sync' if cfg.logging else 'debug'
-)
+print_success("Model initialized")
 
 # Start training
 # ppo_trajectory = None
-for step in range(cfg.nb_iterations):
-    print_info(f"--- Iteration: {step}/{cfg.nb_iterations} {step/cfg.nb_iterations*100:.2f}% ---")
-    print_info('- Collecting trajectory -')
+for step in trange(cfg.nb_iterations, desc='Main loop'):
     trajectory = collect_trajectory(
         model,
         env,

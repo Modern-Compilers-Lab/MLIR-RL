@@ -22,7 +22,7 @@ eval "$(conda shell.bash hook)"
 conda activate $CONDA_ENV_NAME
 
 # Set config file path
-export OMP_NUM_THREADS=28
+export OMP_NUM_THREADS=8
 export CONFIG_FILE_PATH=config/example.json
 # Execute the code
 python /scratch/$NYU_NET_ID/MLIR-RL/train.py

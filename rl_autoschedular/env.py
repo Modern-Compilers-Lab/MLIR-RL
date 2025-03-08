@@ -64,11 +64,11 @@ class Env:
         if cfg.data_format == "mlir":
             # Load execution times from json file
             with open(cfg.json_file, "r") as file:
-                benchmarks_json: dict[str, float] = json.load(file)
+                benchmarks_json: dict[str, int] = json.load(file)
             # Build benchmark features
-            for bench_name, root_exec_time in benchmarks_json.items():
+            for bench_name, root_exec_time in tqdm(benchmarks_json.items(), desc="Extracting benchmark features", unit="bench"):
                 bench_file = os.path.join(cfg.benchmarks_folder_path, bench_name + ".mlir")
-                benchmark_data = extract_bench_features_from_file(bench_name, bench_file, int(root_exec_time * 10**9))
+                benchmark_data = extract_bench_features_from_file(bench_name, bench_file, root_exec_time)
                 self.benchmarks_data.append(benchmark_data)
         else:
             # Load operations data from json file
@@ -82,16 +82,15 @@ class Env:
                 'linalg.add',
             ]
             json_data = {op: details for op, details in json_data.items() if any([s in op for s in operation_filter])}
-            json_data = [(details['operation'], details) for _, details in json_data.items()]
+            json_data: list[tuple[str, dict]] = [(details['operation'], details) for _, details in json_data.items()]
 
             # Get the AST of the MLIR code and give a tag to each linalg operation
             # The last operation represents the operations that we want to optimize (the first operations are just linalg.fills)
-            for i in tqdm(range(len(json_data))):
+            for bench_name, details in tqdm(json_data, desc="Extracting benchmark features", unit="bench"):
                 # Get full MLIR code and execution time
-                code = json_data[i][1]["transform_wrapped_operation"]
-                root_exec_time = json_data[i][1]["execution_time"]
+                code = details["transform_wrapped_operation"]
+                root_exec_time = details["execution_time"]
                 # Build benchmark features
-                bench_name = json_data[i][0]
                 benchmark_data = extract_bench_features_from_code(bench_name, code, int(root_exec_time))
                 if cfg.optimization_mode == "last":
                     last_op_tag = benchmark_data.operation_tags[-1]
@@ -426,7 +425,7 @@ class Env:
             case 'parallelization':
                 new_action_mask[:N] = [not cfg.force_vector, False, False, False, True, False]
             case 'tiling':
-                new_action_mask[:N] = [not cfg.force_vector, False, False, True, True, False]
+                new_action_mask[:N] = [False, False, False, True, False, False]
             case 'interchange':
                 if len(parameters) > 0 and len(parameters) < num_loops:
                     # In case of incomplete interchange, prevent any other action, and prevent repeating a loop
@@ -434,7 +433,7 @@ class Env:
                     for param in parameters:
                         new_action_mask[I_BEGIN + param] = False
                 else:
-                    new_action_mask[:N] = [not cfg.force_vector, True, False, False, True, False]
+                    new_action_mask[:N] = [False, True, False, False, False, False]
 
         if num_loops == 1 and cfg.interchange_mode == 'enumerate':
             # If we have only one loop -> Allow the first candidate which will be the identity permutation

@@ -6,7 +6,7 @@ from rl_autoschedular.model import HiearchyModel as Model
 from rl_autoschedular.state import OperationState
 from rl_autoschedular import config as cfg
 from dataclasses import dataclass
-from utils.log import print_info
+from utils.log import print_info, print_error
 from tqdm import trange
 import math
 
@@ -367,7 +367,6 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
         stored_action_index, stored_state, stored_action_log_p, stored_values, stored_x, stored_advantages, stored_returns = shuffle_ppo_data(stored_action_index, stored_state, stored_action_log_p, stored_values, stored_x, advantages, returns)
 
         len_trajectory = len(stored_action_index)
-        losses = []
         for i in range(0, len_trajectory, cfg.ppo_batch_size):
             betch_end = min(i + cfg.ppo_batch_size, len_trajectory)
             actions = stored_action_index[i:betch_end]
@@ -403,22 +402,20 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
             approx_kl = (actions_log_p - new_actions_log_p).pow(2).mean() / 2
 
             optimizer.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
-            optimizer.step()
-
-            losses.append(loss.item())
+            try:
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
+                optimizer.step()
+            except Exception as e:
+                print_error(f'Error during PPO update: {e}')
 
             # Logging
+            ppo_trange.set_postfix({'loss': loss.item(), 'policy_loss': policy_loss.item(), 'value_loss': value_loss.item(), 'clip_frac': clip_frac.item(), 'approx_kl': approx_kl.item()})
             log_policy_loss.append(policy_loss.item())
             log_entropy_loss.append(-entropy.item())
             log_value_loss.append(value_loss.item())
             log_clip_frac.append(clip_frac.item())
             log_approx_kl.append(approx_kl.item())
-
-        if len(losses) > 0:
-            epoch_loss = sum(losses) / len(losses)
-            ppo_trange.set_postfix({'loss': epoch_loss})
 
     neptune_logs['train_ppo/policy_loss'].extend(log_policy_loss, wait=True)
     neptune_logs['train_ppo/entropy_loss'].extend(log_entropy_loss, wait=True)
