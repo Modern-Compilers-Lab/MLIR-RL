@@ -53,7 +53,7 @@ class Env:
         self.inference_env = inference_env
         if tmp_file is None:
             random_str = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
-            tmp_file = f"tmp/{random_str}.mlir"
+            tmp_file = f"tmp-debug/{random_str}.mlir" if cfg.debug else f"tmp/{random_str}.mlir"
         with open(tmp_file, "w") as file:
             file.write("")
         self.tmp_file = tmp_file

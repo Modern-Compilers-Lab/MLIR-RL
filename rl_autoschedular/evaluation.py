@@ -25,7 +25,10 @@ def evaluate_code(state: OperationState, bench_data: BenchmarkFeatures) -> tuple
         Optional[float]: the execution time in seconds.
         Union[Exception, bool]: the assertion result or an exception if an error occurred.
     """
-    tmp_exec_file = state.tmp_file.replace('tmp/', 'tmp/exec/').replace('.mlir', '.json')
+    tmp_folder, tmp_file = state.tmp_file.split('/')
+    tmp_folder = os.path.join(tmp_folder, 'exec')
+    tmp_file = tmp_file.replace('.mlir', '.json')
+    tmp_exec_file = os.path.join(tmp_folder, tmp_file)
     if not os.path.exists(tmp_exec_file):
         os.makedirs(os.path.dirname(tmp_exec_file), exist_ok=True)
         with open(tmp_exec_file, "w") as file:

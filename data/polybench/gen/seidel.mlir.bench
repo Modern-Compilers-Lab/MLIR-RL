@@ -5,28 +5,33 @@ func.func @main(%B: memref<N0xN0xf64>, %A: memref<N0xN0xf64>) -> i64 attributes 
   %c1 = arith.constant 1 : index
   %c9.0_f64 = arith.constant 9.0 : f64
   %cTSTEPS = arith.constant TSTEPS : index
-  %A_i_2 = memref.subview %A[0, 0][N2, N0][1, 1] : memref<N0xN0xf64> to memref<N2xN0xf64>
-  %A_j_2 = memref.subview %A[0, 0][N0, N2][1, 1] : memref<N0xN0xf64> to memref<N0xN2xf64, strided<[N0, 1]>>
-  %A_ij_2 = memref.subview %A[0, 0][N2, N2][1, 1] : memref<N0xN0xf64> to memref<N2xN2xf64, strided<[N0, 1]>>
-  %A_pad = memref.subview %A[1, 1][N2, N2][1, 1] : memref<N0xN0xf64> to memref<N2xN2xf64, strided<[N0, 1], offset: N1>>
-  %B_pad = memref.subview %B[1, 1][N2, N2][1, 1] : memref<N0xN0xf64> to memref<N2xN2xf64, strided<[N0, 1], offset: N1>>
+  %A_ij_2 = memref.subview %A[0, 0][N_2, N_2][1, 1] : memref<N0xN0xf64> to memref<N_2xN_2xf64, strided<[N0, 1]>>
+  %A_ijo_2 = memref.subview %A[0, 1][N_2, N_2][1, 1] : memref<N0xN0xf64> to memref<N_2xN_2xf64, strided<[N0, 1], offset: 1>>
+  %A_ijoo_2 = memref.subview %A[0, 2][N_2, N_2][1, 1] : memref<N0xN0xf64> to memref<N_2xN_2xf64, strided<[N0, 1], offset: 2>>
+  %A_ioj_2 = memref.subview %A[1, 0][N_2, N_2][1, 1] : memref<N0xN0xf64> to memref<N_2xN_2xf64, strided<[N0, 1], offset: N0>>
+  %A_iojo_2 = memref.subview %A[1, 1][N_2, N_2][1, 1] : memref<N0xN0xf64> to memref<N_2xN_2xf64, strided<[N0, 1], offset: N1>>
+  %A_iojoo_2 = memref.subview %A[1, 2][N_2, N_2][1, 1] : memref<N0xN0xf64> to memref<N_2xN_2xf64, strided<[N0, 1], offset: N2>>
+  %A_iooj_2 = memref.subview %A[2, 0][N_2, N_2][1, 1] : memref<N0xN0xf64> to memref<N_2xN_2xf64, strided<[N0, 1], offset: N3>>
+  %A_ioojo_2 = memref.subview %A[2, 1][N_2, N_2][1, 1] : memref<N0xN0xf64> to memref<N_2xN_2xf64, strided<[N0, 1], offset: N4>>
+  %A_ioojoo_2 = memref.subview %A[2, 2][N_2, N_2][1, 1] : memref<N0xN0xf64> to memref<N_2xN_2xf64, strided<[N0, 1], offset: N5>>
+  %B_iojo_2 = memref.subview %B[1, 1][N_2, N_2][1, 1] : memref<N0xN0xf64> to memref<N_2xN_2xf64, strided<[N0, 1], offset: N1>>
   scf.for %0 = %c0 to %cTSTEPS step %c1 {
     linalg.generic {
       indexing_maps = [
-        affine_map<(d0, d1)->(d0    , d1    )>,
-        affine_map<(d0, d1)->(d0    , d1 + 1)>,
-        affine_map<(d0, d1)->(d0    , d1 + 2)>,
-        affine_map<(d0, d1)->(d0 + 1, d1    )>,
-        affine_map<(d0, d1)->(d0 + 1, d1 + 1)>,
-        affine_map<(d0, d1)->(d0 + 1, d1 + 2)>,
-        affine_map<(d0, d1)->(d0 + 2, d1    )>,
-        affine_map<(d0, d1)->(d0 + 2, d1 + 1)>,
-        affine_map<(d0, d1)->(d0 + 2, d1 + 2)>,
-        affine_map<(d0, d1)->(d0 + 1, d1 + 1)>
+        affine_map<(d0, d1)->(d0, d1)>,
+        affine_map<(d0, d1)->(d0, d1)>,
+        affine_map<(d0, d1)->(d0, d1)>,
+        affine_map<(d0, d1)->(d0, d1)>,
+        affine_map<(d0, d1)->(d0, d1)>,
+        affine_map<(d0, d1)->(d0, d1)>,
+        affine_map<(d0, d1)->(d0, d1)>,
+        affine_map<(d0, d1)->(d0, d1)>,
+        affine_map<(d0, d1)->(d0, d1)>,
+        affine_map<(d0, d1)->(d0, d1)>
       ],
       iterator_types = ["parallel", "parallel"]
-    } ins(%A_ij_2, %A_i_2, %A_i_2, %A_j_2, %A, %A, %A_j_2, %A, %A: memref<N2xN2xf64, strided<[N0, 1]>>, memref<N2xN0xf64>, memref<N2xN0xf64>, memref<N0xN2xf64, strided<[N0, 1]>>, memref<N0xN0xf64>, memref<N0xN0xf64>, memref<N0xN2xf64, strided<[N0, 1]>>, memref<N0xN0xf64>, memref<N0xN0xf64>)
-      outs(%B: memref<N0xN0xf64>) {
+    } ins(%A_ij_2, %A_ijo_2, %A_ijoo_2, %A_ioj_2, %A_iojo_2, %A_iojoo_2, %A_iooj_2, %A_ioojo_2, %A_ioojoo_2: memref<N_2xN_2xf64, strided<[N0, 1]>>, memref<N_2xN_2xf64, strided<[N0, 1], offset: 1>>, memref<N_2xN_2xf64, strided<[N0, 1], offset: 2>>, memref<N_2xN_2xf64, strided<[N0, 1], offset: N0>>, memref<N_2xN_2xf64, strided<[N0, 1], offset: N1>>, memref<N_2xN_2xf64, strided<[N0, 1], offset: N2>>, memref<N_2xN_2xf64, strided<[N0, 1], offset: N3>>, memref<N_2xN_2xf64, strided<[N0, 1], offset: N4>>, memref<N_2xN_2xf64, strided<[N0, 1], offset: N5>>)
+      outs(%B_iojo_2: memref<N_2xN_2xf64, strided<[N0, 1], offset: N1>>) {
       ^bb0(%arg0: f64, %arg1: f64, %arg2: f64, %arg3: f64, %arg4: f64, %arg5: f64, %arg6: f64, %arg7: f64, %arg8: f64, %arg9: f64):
       %1 = arith.addf %arg0, %arg1 fastmath<nnan, ninf, nsz, reassoc, contract, afn> : f64
       %2 = arith.addf %1, %arg2 fastmath<nnan, ninf, nsz, reassoc, contract, afn> : f64
@@ -42,7 +47,7 @@ func.func @main(%B: memref<N0xN0xf64>, %A: memref<N0xN0xf64>) -> i64 attributes 
     linalg.generic {
       indexing_maps = [affine_map<(d0, d1)->(d0, d1)>, affine_map<(d0, d1)->(d0, d1)>],
       iterator_types = ["parallel", "parallel"]
-    } ins(%B_pad: memref<N2xN2xf64, strided<[N0, 1], offset: N1>>) outs(%A_pad: memref<N2xN2xf64, strided<[N0, 1], offset: N1>>) {
+    } ins(%B_iojo_2: memref<N_2xN_2xf64, strided<[N0, 1], offset: N1>>) outs(%A_iojo_2: memref<N_2xN_2xf64, strided<[N0, 1], offset: N1>>) {
       ^bb0(%arg0: f64, %arg1: f64):
       linalg.yield %arg0 : f64
     }

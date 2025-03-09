@@ -7,20 +7,24 @@ func.func @main(%EX: memref<NX0xNY0xf64>, %EY: memref<NX0xNY0xf64>, %HZ: memref<
   %c0.7_f64 = arith.constant 0.7 : f64
   %cTMAX = arith.constant TMAX : index
   scf.for %0 = %c0 to %cTMAX step %c1 {
+    %EY_i0 = memref.subview %EY[0, 0][1, NY0][1, 1] : memref<NX0xNY0xf64> to memref<1xNY0xf64>
+    %EY_j = memref.collapse_shape %EY_i0 [[0, 1]] : memref<1xNY0xf64> into memref<NY0xf64>
     linalg.generic {
-      indexing_maps = [affine_map<(d0)->(0, d0)>],
+      indexing_maps = [affine_map<(d0)->(d0)>],
       iterator_types = ["parallel"]
-    } outs (%EY: memref<NX0xNY0xf64>) {
+    } outs (%EY_j: memref<NY0xf64>) {
       ^bb0(%arg0: f64):
       %1 = arith.index_cast %0 : index to i64
       %2 = arith.sitofp %1 : i64 to f64
       linalg.yield %2 : f64
     }
     %HZ_i_1 = memref.subview %HZ[0, 0][NX1, NY0][1, 1] : memref<NX0xNY0xf64> to memref<NX1xNY0xf64>
+    %HZ_io_1 = memref.subview %HZ[1, 0][NX1, NY0][1, 1] : memref<NX0xNY0xf64> to memref<NX1xNY0xf64, strided<[NY0, 1], offset: NY0>>
+    %EY_io_1 = memref.subview %EY[1, 0][NX1, NY0][1, 1] : memref<NX0xNY0xf64> to memref<NX1xNY0xf64, strided<[NY0, 1], offset: NY0>>
     linalg.generic {
-      indexing_maps = [affine_map<(d0, d1)->(d0, d1)>, affine_map<(d0, d1)->(d0 + 1, d1)>, affine_map<(d0, d1)->(d0 + 1, d1)>],
+      indexing_maps = [affine_map<(d0, d1)->(d0, d1)>, affine_map<(d0, d1)->(d0, d1)>, affine_map<(d0, d1)->(d0, d1)>],
       iterator_types = ["parallel", "parallel"]
-    } ins(%HZ_i_1, %HZ: memref<NX1xNY0xf64>, memref<NX0xNY0xf64>) outs(%EY: memref<NX0xNY0xf64>) {
+    } ins(%HZ_i_1, %HZ_io_1: memref<NX1xNY0xf64>, memref<NX1xNY0xf64, strided<[NY0, 1], offset: NY0>>) outs(%EY_io_1: memref<NX1xNY0xf64, strided<[NY0, 1], offset: NY0>>) {
       ^bb0(%arg0: f64, %arg1: f64, %arg2: f64):
       %1 = arith.subf %arg1, %arg0 fastmath<nnan, ninf, nsz, reassoc, contract, afn> : f64
       %2 = arith.mulf %c0.5_f64, %1 fastmath<nnan, ninf, nsz, reassoc, contract, afn> : f64
@@ -28,10 +32,12 @@ func.func @main(%EX: memref<NX0xNY0xf64>, %EY: memref<NX0xNY0xf64>, %HZ: memref<
       linalg.yield %3 : f64
     }
     %HZ_j_1 = memref.subview %HZ[0, 0][NX0, NY1][1, 1] : memref<NX0xNY0xf64> to memref<NX0xNY1xf64, strided<[NY0, 1]>>
+    %HZ_jo_1 = memref.subview %HZ[0, 1][NX0, NY1][1, 1] : memref<NX0xNY0xf64> to memref<NX0xNY1xf64, strided<[NY0, 1], offset: 1>>
+    %EX_jo_1 = memref.subview %EX[0, 1][NX0, NY1][1, 1] : memref<NX0xNY0xf64> to memref<NX0xNY1xf64, strided<[NY0, 1], offset: 1>>
     linalg.generic {
-      indexing_maps = [affine_map<(d0, d1)->(d0, d1)>, affine_map<(d0, d1)->(d0, d1 + 1)>, affine_map<(d0, d1)->(d0, d1 + 1)>],
+      indexing_maps = [affine_map<(d0, d1)->(d0, d1)>, affine_map<(d0, d1)->(d0, d1)>, affine_map<(d0, d1)->(d0, d1)>],
       iterator_types = ["parallel", "parallel"]
-    } ins(%HZ_j_1, %HZ: memref<NX0xNY1xf64, strided<[NY0, 1]>>, memref<NX0xNY0xf64>) outs(%EX: memref<NX0xNY0xf64>) {
+    } ins(%HZ_j_1, %HZ_jo_1: memref<NX0xNY1xf64, strided<[NY0, 1]>>, memref<NX0xNY1xf64, strided<[NY0, 1], offset: 1>>) outs(%EX_jo_1: memref<NX0xNY1xf64, strided<[NY0, 1], offset: 1>>) {
       ^bb0(%arg0: f64, %arg1: f64, %arg2: f64):
       %1 = arith.subf %arg1, %arg0 fastmath<nnan, ninf, nsz, reassoc, contract, afn> : f64
       %2 = arith.mulf %c0.5_f64, %1 fastmath<nnan, ninf, nsz, reassoc, contract, afn> : f64
@@ -41,12 +47,12 @@ func.func @main(%EX: memref<NX0xNY0xf64>, %EY: memref<NX0xNY0xf64>, %HZ: memref<
     %HZ_ij_1 = memref.subview %HZ[0, 0][NX1, NY1][1, 1] : memref<NX0xNY0xf64> to memref<NX1xNY1xf64, strided<[NY0, 1]>>
     %EX_ij_1 = memref.subview %EX[0, 0][NX1, NY1][1, 1] : memref<NX0xNY0xf64> to memref<NX1xNY1xf64, strided<[NY0, 1]>>
     %EY_ij_1 = memref.subview %EY[0, 0][NX1, NY1][1, 1] : memref<NX0xNY0xf64> to memref<NX1xNY1xf64, strided<[NY0, 1]>>
-    %EX_i_1 = memref.subview %EX[0, 0][NX1, NY0][1, 1] : memref<NX0xNY0xf64> to memref<NX1xNY0xf64>
-    %EY_j_1 = memref.subview %EY[0, 0][NX0, NY1][1, 1] : memref<NX0xNY0xf64> to memref<NX0xNY1xf64, strided<[NY0, 1]>>
+    %EX_ijo_1 = memref.subview %EX[0, 1][NX1, NY1][1, 1] : memref<NX0xNY0xf64> to memref<NX1xNY1xf64, strided<[NY0, 1], offset: 1>>
+    %EY_ioj_1 = memref.subview %EY[1, 0][NX1, NY1][1, 1] : memref<NX0xNY0xf64> to memref<NX1xNY1xf64, strided<[NY0, 1], offset: NY0>>
     linalg.generic {
-      indexing_maps = [affine_map<(d0, d1)->(d0, d1)>, affine_map<(d0, d1)->(d0, d1)>, affine_map<(d0, d1)->(d0, d1 + 1)>, affine_map<(d0, d1)->(d0 + 1, d1)>, affine_map<(d0, d1)->(d0, d1)>],
+      indexing_maps = [affine_map<(d0, d1)->(d0, d1)>, affine_map<(d0, d1)->(d0, d1)>, affine_map<(d0, d1)->(d0, d1)>, affine_map<(d0, d1)->(d0, d1)>, affine_map<(d0, d1)->(d0, d1)>],
       iterator_types = ["parallel", "parallel"]
-    } ins(%EX_ij_1, %EY_ij_1, %EX_i_1, %EY_j_1: memref<NX1xNY1xf64, strided<[NY0, 1]>>, memref<NX1xNY1xf64, strided<[NY0, 1]>>, memref<NX1xNY0xf64>, memref<NX0xNY1xf64, strided<[NY0, 1]>>) outs(%HZ_ij_1: memref<NX1xNY1xf64, strided<[NY0, 1]>>) {
+    } ins(%EX_ij_1, %EY_ij_1, %EX_ijo_1, %EY_ioj_1: memref<NX1xNY1xf64, strided<[NY0, 1]>>, memref<NX1xNY1xf64, strided<[NY0, 1]>>, memref<NX1xNY1xf64, strided<[NY0, 1], offset: 1>>, memref<NX1xNY1xf64, strided<[NY0, 1], offset: NY0>>) outs(%HZ_ij_1: memref<NX1xNY1xf64, strided<[NY0, 1]>>) {
       ^bb0(%arg0: f64, %arg1: f64, %arg2: f64, %arg3: f64, %arg4: f64):
       %1 = arith.subf %arg2, %arg0 fastmath<nnan, ninf, nsz, reassoc, contract, afn> : f64
       %2 = arith.addf %1, %arg3 fastmath<nnan, ninf, nsz, reassoc, contract, afn> : f64

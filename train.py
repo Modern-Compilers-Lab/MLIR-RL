@@ -28,12 +28,12 @@ print_info(f"Config: {cfg}")
 # Set neptune logs if enabled
 neptune_logs = init_neptune(
     tags=['ppo'] + cfg.tags,
-    mode='sync' if cfg.logging else 'debug'
+    mode='debug' if cfg.debug else 'sync'
 )
 print_success("Neptune initialized")
 
 # Set environments
-env = Env()
+env = Env(log_schedule=cfg.debug)
 eval_env = Env(
     tmp_file=env.tmp_file,
     log_schedule=True,
@@ -77,10 +77,10 @@ for step in trange(cfg.nb_iterations, desc='Main loop'):
             device,
         )
 
-        if cfg.logging:
+        if not cfg.debug:
             neptune_logs["params"].upload_files(['models/ppo_model.pt'])
 
 
 # Stop logs if enabled
-if cfg.logging:
+if not cfg.debug:
     neptune_logs.stop()
