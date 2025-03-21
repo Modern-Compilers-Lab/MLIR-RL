@@ -24,8 +24,8 @@ class Config(metaclass=Singleton):
     """The method used for interchange action"""
     interchange_distribution: Literal['binomial', 'normal']
     """The distribution used for continuous interchange action"""
-    use_exploration: bool
-    """Flag to enable using the mean of the interchange distribution instead of the sampled value (only in case of continuous interchange)"""
+    exploration: Literal['entropy', 'epsilon', 'curiosity']
+    """The exploration method"""
     use_bindings: bool
     """Flag to enable using python bindings for execution, if False, the execution will be done using the command line. Default is False."""
     use_vectorizer: bool
@@ -66,6 +66,14 @@ class Config(metaclass=Singleton):
     """Value coefficient"""
     entropy_coef: float
     """Entropy coefficient"""
+    reward_scale: float
+    """Reward scale"""
+    intrinsic_reward_integration: float
+    """Intrinsic reward integration"""
+    forward_weight: float
+    """Forward weight"""
+    curiosity_coef: float
+    """Curiosity weight"""
     lr: float
     """Learning rate"""
     truncate: int
@@ -91,7 +99,7 @@ class Config(metaclass=Singleton):
         self.num_transformations = 6
         self.vect_size_limit = 512
         self.init_action_mask = [False, True, False, False, False, False]
-        self.use_exploration = False
+        self.exploration = "entropy"
         self.interchange_mode = "enumerate"
         self.interchange_distribution = "binomial"
         self.use_bindings = False
@@ -114,6 +122,10 @@ class Config(metaclass=Singleton):
         self.ppo_batch_size = 4
         self.value_coef = 0.5
         self.entropy_coef = 0.01
+        self.reward_scale = 0.01
+        self.intrinsic_reward_integration = 0.01
+        self.forward_weight = 0.2
+        self.curiosity_coef = 1
         self.lr = 0.001
         self.truncate = 5
         self.json_file = ""
@@ -137,7 +149,7 @@ class Config(metaclass=Singleton):
         self.init_action_mask = config["init_action_mask"]
         self.interchange_mode = config["interchange_mode"]
         self.interchange_distribution = config["interchange_distribution"]
-        self.use_exploration = config["use_exploration"]
+        self.exploration = config["exploration"]
         self.use_bindings = config["use_bindings"]
         self.use_vectorizer = config["use_vectorizer"]
         self.update_op_features = config["update_op_features"]
@@ -158,6 +170,10 @@ class Config(metaclass=Singleton):
         self.ppo_batch_size = config["ppo_batch_size"]
         self.value_coef = config["value_coef"]
         self.entropy_coef = config["entropy_coef"]
+        self.reward_scale = config["reward_scale"]
+        self.intrinsic_reward_integration = config["intrinsic_reward_integration"]
+        self.forward_weight = config["forward_weight"]
+        self.curiosity_coef = config["curiosity_coef"]
         self.lr = config["lr"]
         self.truncate = config["truncate"]
         self.json_file = config["json_file"]
@@ -184,7 +200,7 @@ class Config(metaclass=Singleton):
             "init_action_mask": self.init_action_mask,
             "interchange_mode": self.interchange_mode,
             "interchange_distribution": self.interchange_distribution,
-            "use_exploration": self.use_exploration,
+            "exploration": self.exploration,
             "use_bindings": self.use_bindings,
             "use_vectorizer": self.use_vectorizer,
             "update_op_features": self.update_op_features,
@@ -205,6 +221,10 @@ class Config(metaclass=Singleton):
             "ppo_batch_size": self.ppo_batch_size,
             "value_coef": self.value_coef,
             "entropy_coef": self.entropy_coef,
+            "reward_scale": self.reward_scale,
+            "intrinsic_reward_integration": self.intrinsic_reward_integration,
+            "forward_weight": self.forward_weight,
+            "curiosity_coef": self.curiosity_coef,
             "lr": self.lr,
             "truncate": self.truncate,
             "json_file": self.json_file,

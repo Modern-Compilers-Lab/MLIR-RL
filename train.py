@@ -36,7 +36,6 @@ print_success("Neptune initialized")
 env = Env(log_schedule=cfg.debug)
 eval_env = Env(
     tmp_file=env.tmp_file,
-    log_schedule=True,
     inference_env=True,
 )
 print_success("Environments initialized")

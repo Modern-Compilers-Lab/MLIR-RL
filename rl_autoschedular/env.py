@@ -17,7 +17,7 @@ from rl_autoschedular.transforms import (
     is_vectorizable
 )
 from rl_autoschedular.evaluation import evaluate_code
-from utils.log import print_error, print_success
+from utils.log import print_error
 from tqdm import tqdm
 import numpy as np
 import torch
@@ -35,12 +35,10 @@ class Env:
     """Lists for each benchmark the benchmark's name and its features."""
     tmp_file: str
     """The temporary file to store the intermediate representations."""
-    log_schedule: bool
-    """Flag to log the schedule of the operations."""
     inference_env: bool
     """Flag to indicate if the environment is used for inference or training."""
 
-    def __init__(self, tmp_file: Optional[str] = None, log_schedule: bool = False, inference_env: bool = False):
+    def __init__(self, tmp_file: Optional[str] = None, inference_env: bool = False):
         """Initialize the environment.
 
         Args:
@@ -49,7 +47,6 @@ class Env:
         # Generate a random file to be used in order to apply the transformations and evaluate the code
         # This is done in order to enable having multiple experiments at the same time, by letting each
         # experiment use a separate unique file to read and write intermediate representations
-        self.log_schedule = log_schedule
         self.inference_env = inference_env
         if tmp_file is None:
             random_str = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
@@ -118,7 +115,7 @@ class Env:
 
         return self.__init_op_state(benchmark_data, -1)
 
-    def step(self, state: OperationState, raw_action: tuple[str, Optional[Union[list[int], int]]]) -> tuple[OperationState, torch.Tensor, float, bool, Optional[float], bool]:
+    def step(self, state: OperationState, raw_action: tuple[str, Optional[Union[list[int], int]]]) -> tuple[OperationState, torch.Tensor, float, bool, Optional[float]]:
         """Take a step in the environment.
 
         Args:
@@ -129,9 +126,8 @@ class Env:
             OperationState: The new state.
             Tensor: The observation vector of the new state.
             float: The reward of the action.
-            bool: A flag indicating if the episode is done.
-            Optional[float]: The speedup (if the operation is executed successfully) for loggin purposes.
-            bool: A flag indicating if the benchmark is done.
+            bool: A flag indicating if the operation is done.
+            Optional[float]: The speedup (if the operation is executed successfully) for logging purposes.
         """
         bench_data = self.benchmarks_data[self.bench_index]
 
@@ -147,8 +143,7 @@ class Env:
         if not trans_succeeded:
             print_error("Transformation Failed:", transformation, parameters)
             reward = self.__action_reward(trans_succeeded)
-            next_state, next_obs, bench_done = self.__get_next_op_state(next_state)
-            return next_state, next_obs, reward, True, 1.0, bench_done
+            return next_state, self.__get_obs(next_state), reward, True, 1.0
 
         # Register the new code (transformation succeeded)
         next_state.transformed_code = new_transformed_code
@@ -176,20 +171,55 @@ class Env:
             reward = self.__action_reward(trans_succeeded, exec_succeeded, new_exec_time, next_state.exec_time)
             speedup = (bench_data.root_exec_time / new_exec_time) if new_exec_time is not None else 1.0
 
-            # Save the schedule in case we need to log it afterwards
-            if self.log_schedule:
-                state_history = next_state.transformation_history.copy()
+            # Update the state infos to reflect the execution
+            self.__update_state_exec_infos(next_state, new_exec_time)
 
-            next_state, next_obs, bench_done = self.__get_next_op_state(next_state, new_exec_time)
-
-            # Log the schedule if the benchmark is done
-            if self.log_schedule and bench_done:
-                print_success(f"Schedule: {state_history} - {speedup}")
-
-            return next_state, next_obs, reward, True, speedup, bench_done
+            return next_state, self.__get_obs(next_state), reward, True, speedup
 
         # If the episode is not done, return the updated state with a reward of 0
-        return next_state, self.__get_obs(next_state), 0.0, False, None, False
+        return next_state, self.__get_obs(next_state), 0.0, False, None
+
+    def get_next_op_state(self, state: OperationState) -> tuple[OperationState, torch.Tensor, bool]:
+        """Get the state that represents the next operation (can be from another benchmark).
+
+        Args:
+            state (OperationState): The current state.
+
+        Returns:
+            OperationState: The next state.
+            torch.Tensor: The observation vector of the next state.
+            bool: Flag indicating if the benchmark is done.
+        """
+        bench_data = self.benchmarks_data[self.bench_index]
+        operation_idx = bench_data.operation_tags.index(state.operation_tag)
+
+        # Reset to another benchmark if the current benchmark is done (reached first operation)
+        if operation_idx == 0:
+            return *self.reset(), True
+
+        # Build a new state that points to the next operation
+        new_op_tag = bench_data.operation_tags[operation_idx - 1]
+        new_op_features = bench_data.operations[new_op_tag]
+        new_op_type = self.__get_operation_type(new_op_features.raw_operation)
+        new_action_mask = self.__init_action_mask(new_op_features)
+        new_actions = self.__init_action_history()
+        next_state = OperationState(
+            bench_name=state.bench_name,
+            operation_tag=new_op_tag,  # New operation tag
+            operation_type=new_op_type,  # New operation type
+            operation_features=new_op_features,  # New operation features
+            validated_code=state.validated_code,
+            transformed_code=state.transformed_code,
+            actions=new_actions,  # Empty actions history
+            action_mask=new_action_mask,  # New action mask
+            step_count=0,  # Reset step count
+            exec_time=state.exec_time,
+            transformation_history=state.transformation_history,
+            interchange_permutation=[],  # Reset interchange permutation
+            tmp_file=self.tmp_file,
+        )
+
+        return next_state, self.__get_obs(next_state), False
 
     def __get_operation_type(self, raw_operation: str) -> OperationType:
         """Get the operation type from the raw operation string.
@@ -286,60 +316,6 @@ class Env:
 
         return state, self.__get_obs(state)
 
-    def __get_next_op_state(self, state: OperationState, new_exec_time: Optional[float] = None) -> tuple[OperationState, torch.Tensor, bool]:
-        """Get the state that represents the next operation (can be from another benchmark).
-
-        Args:
-            state (OperationState): The current state.
-
-        Returns:
-            OperationState: The next state.
-            torch.Tensor: The observation vector of the next state.
-            bool: Flag indicating if the benchmark is done.
-        """
-        bench_data = self.benchmarks_data[self.bench_index]
-        operation_idx = bench_data.operation_tags.index(state.operation_tag)
-
-        # Reset to another benchmark if the current benchmark is done (reached first operation)
-        if operation_idx == 0:
-            return *self.reset(), True
-
-        # Keep new code and execution time only if the new code is valid
-        keep_new = new_exec_time is not None
-
-        # Get the last validated history
-        last_op_idx = state.last_op_history_index()
-        if last_op_idx is None:
-            # It means there are no loose transformations (without 'done' at the end)
-            validated_history = state.transformation_history
-        else:
-            # Get all transformations up until the last 'done'
-            validated_history = state.transformation_history[:last_op_idx]
-
-        # Build a new state that points to the next operation
-        new_op_tag = bench_data.operation_tags[operation_idx - 1]
-        new_op_features = bench_data.operations[new_op_tag]
-        new_op_type = self.__get_operation_type(new_op_features.raw_operation)
-        new_action_mask = self.__init_action_mask(new_op_features)
-        new_actions = self.__init_action_history()
-        next_state = OperationState(
-            bench_name=state.bench_name,
-            operation_tag=new_op_tag,  # New operation tag
-            operation_type=new_op_type,  # New operation type
-            operation_features=new_op_features,  # New operation features
-            validated_code=state.transformed_code if keep_new else state.validated_code,  # New code if keep new. Same code if not.
-            transformed_code=state.transformed_code if keep_new else state.validated_code,  # Same code if keep new. Old code if not.
-            actions=new_actions,  # Empty actions history
-            action_mask=new_action_mask,  # New action mask
-            step_count=0,  # Reset step count
-            exec_time=new_exec_time if keep_new else state.exec_time,  # New execution time if keep new. Same execution time if not.
-            transformation_history=state.transformation_history + [('done', [operation_idx])] if keep_new else validated_history,  # Same history (with done) if keep new. Validated history if not.
-            interchange_permutation=[],  # Reset interchange permutation
-            tmp_file=self.tmp_file,
-        )
-
-        return next_state, self.__get_obs(next_state), False
-
     def __init_action_mask(self, operation_features: OperationFeatures) -> np.ndarray:
         """Initialize the action mask.
 
@@ -427,7 +403,7 @@ class Env:
             case 'tiling':
                 new_action_mask[:N] = [False, False, False, True, False, False]
             case 'interchange':
-                if len(parameters) > 0 and len(parameters) < num_loops:
+                if 0 < len(parameters) < num_loops:
                     # In case of incomplete interchange, prevent any other action, and prevent repeating a loop
                     new_action_mask[:N] = [False, False, False, True, False, False]
                     for param in parameters:
@@ -700,6 +676,7 @@ class Env:
         x = parameter
         n = num_loops
         if x >= math.factorial(n):
+            print_error(f"Invalid interchange parameter: {x}")
             x = math.factorial(n) - 1
 
         # Convert x to factorial number
@@ -914,3 +891,30 @@ class Env:
 
         # Update the step count
         state.step_count += 1
+
+    def __update_state_exec_infos(self, state: OperationState, new_exec_time: Optional[int]):
+        """Update the state execution infos after evaluating the code.
+
+        Args:
+            state (OperationState): The current state.
+            new_exec_time (Optional[int]): The new execution time.
+        """
+        # Keep new code and execution time only if the new code is valid
+        keep_new = new_exec_time is not None
+
+        # Get the last validated history
+        last_op_idx = state.last_op_history_index()
+        if last_op_idx is None:
+            # It means there are no loose transformations (without 'done' at the end)
+            validated_history = state.transformation_history
+        else:
+            # Get all transformations up until the last 'done'
+            validated_history = state.transformation_history[:last_op_idx]
+
+        if keep_new:
+            state.validated_code = state.transformed_code
+            state.exec_time = new_exec_time
+            state.transformation_history += [('done', [])]
+        else:
+            state.transformed_code = state.validated_code
+            state.transformation_history = validated_history
