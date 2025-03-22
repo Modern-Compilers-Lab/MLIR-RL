@@ -155,7 +155,8 @@ def extract_op_features_from_affine_code(raw_operation: str, tmp_file_path: str)
         op_count=op_count,
         load_data=load_data,
         store_data=store_data,
-        nested_loops=nested_loops
+        nested_loops=nested_loops,
+        vectorizable=True
     )
 
 
@@ -444,7 +445,7 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
     ops_tags = []
     operations = {}
     for operation_block in operations_blocks:
-        raw_operation, rest = operation_block.split("#START_NESTED_LOOPS")
+        raw_operation, rest = operation_block.split("#START_VECTORIZABLE")
         operation_type = __get_operation_type(raw_operation)
         if operation_type is None:
             continue
@@ -453,6 +454,10 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
         op_count = {}
         load_data: list[list[str]] = []
         store_data: list[str] = []
+
+        vectorizable_str, rest = rest.split("#START_NESTED_LOOPS")
+        assert vectorizable_str.strip() in ["true", "false"], f"Vectorizable string is not valid: {vectorizable_str}"
+        vectorizable = vectorizable_str.strip() == "true"
 
         nested_loops_str, rest = rest.split("#START_LOAD_DATA")
         loop_args = []
@@ -497,7 +502,8 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
             op_count=op_count,
             load_data=load_data,
             store_data=store_data,
-            nested_loops=nested_loops
+            nested_loops=nested_loops,
+            vectorizable=vectorizable
         )
 
     return BenchmarkFeatures(

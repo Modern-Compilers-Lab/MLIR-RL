@@ -40,6 +40,8 @@ class OperationFeatures:
     """List of store accesses where each store is represented by the list of access arguments."""
     nested_loops: list[NestedLoopFeatures]
     """List of nested loops where each loop is represented by the NestedLoopFeatures dataclass."""
+    vectorizable: bool
+    """Flag to indicate if the operation is vectorizable."""
 
     def copy(self):
         """Copy the current OperationFeatures object."""
@@ -49,7 +51,8 @@ class OperationFeatures:
             self.op_count.copy(),
             [load.copy() for load in self.load_data],
             self.store_data.copy(),
-            [loop.copy() for loop in self.nested_loops]
+            [loop.copy() for loop in self.nested_loops],
+            self.vectorizable
         )
 
 

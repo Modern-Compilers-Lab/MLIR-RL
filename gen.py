@@ -120,7 +120,8 @@ def gen_features() -> OperationFeatures:
         op_count=op_count,
         load_data=load_data,
         store_data=store_data,
-        nested_loops=nested_loops
+        nested_loops=nested_loops,
+        vectorizable=True
     )
 
 

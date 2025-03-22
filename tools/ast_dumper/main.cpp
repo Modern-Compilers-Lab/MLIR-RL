@@ -38,6 +38,7 @@
 #include <optional>
 #include "mlir/Dialect/Transform/Interfaces/TransformInterfaces.h"
 #include "mlir/Dialect/Linalg/TransformOps/LinalgTransformOps.h"
+#include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/IR/AsmState.h"
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/MLIRContext.h"
@@ -149,6 +150,13 @@ int main(int argc, char **argv)
       llvm::outs() << "#START_OPERATION" << "\n";
       // printer << linalgOp; std::cout << "\n";
       llvm::outs() << linalgOp << "\n";
+
+      llvm::outs() << "#START_VECTORIZABLE" << "\n";
+      if (failed(linalg::vectorizeOpPrecondition(linalgOp))) {
+        llvm::outs() << "false" << "\n";
+      } else {
+        llvm::outs() << "true" << "\n";
+      }
 
       llvm::outs() << "#START_NESTED_LOOPS" << "\n";
       llvm::SmallVector<int64_t, 4U> loop_ranges = linalgOp.getStaticLoopRanges();

@@ -482,7 +482,7 @@ def apply_transformation(state: OperationState, code: str, transformation: str, 
         new_code = transform_dialect_interchange(code, state.operation_tag, parameters, tmp_file)
     elif transformation == 'vectorization':
         if not is_vectorizable(state.operation_features):
-            raise Exception("Too large to vectorize")
+            raise Exception("Operation is not vectorizable")
 
         if use_vectorizer:
             new_code = transform_dialect_vectorise_with_vectorizer(code, state.operation_tag, tmp_file)
@@ -657,6 +657,9 @@ def is_vectorizable(operation_features: OperationFeatures) -> bool:
     Returns:
         bool: Whether the operation is vectorizable or not.
     """
+    if not operation_features.vectorizable:
+        return False
+
     op_iter_space = 1
     for nested_loop in operation_features.nested_loops:
         op_iter_space *= nested_loop.upper_bound
