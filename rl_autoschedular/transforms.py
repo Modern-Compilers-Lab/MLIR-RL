@@ -5,7 +5,6 @@ from typing import Optional
 from utils.log import print_error
 from rl_autoschedular import config as cfg
 from rl_autoschedular.state import OperationState, OperationFeatures
-from rl_autoschedular.observation import get_up_to_date_operation_features
 import multiprocessing
 
 
@@ -468,10 +467,6 @@ def apply_transformation(state: OperationState, code: str, transformation: str, 
     Returns:
         str: The code after applying the transformation.
     """
-    # Operation features are needed for parallelization and vectorization
-    if transformation in ['parallelization', 'vectorization']:
-        operation_features = get_up_to_date_operation_features(state)
-
     tmp_file = state.tmp_file
 
     code = code.strip()
@@ -479,8 +474,8 @@ def apply_transformation(state: OperationState, code: str, transformation: str, 
     if transformation == 'tiling':
         new_code = transform_dialect_tile(code, state.operation_tag, parameters, tmp_file)
     elif transformation == 'parallelization':
-        parallel_params = [0 if operation_features.nested_loops[i].iterator_type == "reduction" else parameters[i] for i in range(len(parameters))]
-        tiling_params = [parameters[i] if operation_features.nested_loops[i].iterator_type == "reduction" else 0 for i in range(len(parameters))]
+        parallel_params = [0 if state.operation_features.nested_loops[i].iterator_type == "reduction" else parameters[i] for i in range(len(parameters))]
+        tiling_params = [parameters[i] if state.operation_features.nested_loops[i].iterator_type == "reduction" else 0 for i in range(len(parameters))]
         new_code = transform_dialect_TP(code, state.operation_tag, parallel_params, tmp_file)
         new_code = transform_dialect_tile(new_code, state.operation_tag, tiling_params, tmp_file)
     elif transformation == 'interchange':
@@ -488,7 +483,7 @@ def apply_transformation(state: OperationState, code: str, transformation: str, 
     elif transformation == 'img2col':
         new_code = transform_dialect_img2col(code, state.operation_tag, tmp_file)
     elif transformation == 'vectorization':
-        if not is_vectorizable(operation_features):
+        if not is_vectorizable(state.operation_features):
             if in_inference or not cfg.punish_vector:
                 raise Exception("Too large to vectorize")
             else:

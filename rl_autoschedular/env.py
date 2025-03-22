@@ -9,7 +9,6 @@ from rl_autoschedular.observation import (
     extract_bench_features_from_code,
     build_op_features_vector,
     update_operation_features,
-    get_up_to_date_operation_features,
 )
 from rl_autoschedular.transforms import (
     apply_transformation,
@@ -580,13 +579,10 @@ class Env:
 
         # Sellect the tiling candidates for each loop
         if action_name in ['tiling', 'parallelization']:
-            # Get updated features
-            operation_features = get_up_to_date_operation_features(state)
-
             # Get loop upper bounds
             candidates = [
                 [0] + self.__get_tiling_candidates(loop.upper_bound, loop.iterator_type, action_name == 'parallelization')
-                for loop in operation_features.nested_loops
+                for loop in state.operation_features.nested_loops
             ]
 
         if action_name == 'interchange':
@@ -903,19 +899,15 @@ class Env:
         # Erase saved interchange permutation (Not needed anymore)
         state.interchange_permutation = []
 
-        # Get updated operation features if:
-        # - The transformation is img2col (necessary)
-        # - The config says so
-        if cfg.update_op_features or transformation == 'img2col':
-            state.operation_features = update_operation_features(state, transformation, parameters)
+        # Get updated operation features
+        state.operation_features = update_operation_features(state, transformation, parameters)
 
         # Register the action in the history
         state.actions = self.__update_action_history(state, transformation, parameters)
         state.transformation_history.append((transformation, parameters))
 
         # Verify if vectorization is feasible after the transformation
-        up_to_date_op_features = get_up_to_date_operation_features(state)
-        state.action_mask = self.__ensure_feasible_vectorization(state.action_mask, up_to_date_op_features)
+        state.action_mask = self.__ensure_feasible_vectorization(state.action_mask, state.operation_features)
 
         # Update the step count
         state.step_count += 1

@@ -30,8 +30,6 @@ class Config(metaclass=Singleton):
     """Flag to enable using python bindings for execution, if False, the execution will be done using the command line. Default is False."""
     use_vectorizer: bool
     """Flag to enable using the vectorizer C++ program for vectorization, if False, vectorization is done using transform dialect directly. Default is False."""
-    update_op_features: bool
-    """Flag to enable updating the operation features between steps"""
     reverse_history: bool
     """Flag to indicate if the history should be reversed or not"""
     new_architecture: bool
@@ -106,7 +104,6 @@ class Config(metaclass=Singleton):
         self.interchange_distribution = "binomial"
         self.use_bindings = False
         self.use_vectorizer = False
-        self.update_op_features = False
         self.reverse_history = True
         self.new_architecture = False
         self.normalize_bounds = True
@@ -155,7 +152,6 @@ class Config(metaclass=Singleton):
         self.exploration = config["exploration"]
         self.use_bindings = config["use_bindings"]
         self.use_vectorizer = config["use_vectorizer"]
-        self.update_op_features = config["update_op_features"]
         self.reverse_history = config["reverse_history"]
         self.new_architecture = config["new_architecture"]
         self.normalize_bounds = config["normalize_bounds"]
@@ -207,7 +203,6 @@ class Config(metaclass=Singleton):
             "exploration": self.exploration,
             "use_bindings": self.use_bindings,
             "use_vectorizer": self.use_vectorizer,
-            "update_op_features": self.update_op_features,
             "reverse_history": self.reverse_history,
             "new_architecture": self.new_architecture,
             "normalize_bounds": self.normalize_bounds,

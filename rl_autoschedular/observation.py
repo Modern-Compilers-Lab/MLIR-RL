@@ -239,53 +239,53 @@ def update_operation_features(state: OperationState, transformation: str, parame
     return new_operation_features
 
 
-def update_operation_features_from_scratch(state: OperationState) -> OperationFeatures:
-    """Update the operation features iteratively from scratch.
+# def update_operation_features_from_scratch(state: OperationState) -> OperationFeatures:
+#     """Update the operation features iteratively from scratch.
 
-    Notes:
-        Should only be used when operation features haven't been updated before.
-        i.e: cfg.update_op_features = False
+#     Notes:
+#         Should only be used when operation features haven't been updated before.
+#         i.e: cfg.update_op_features = False
 
-    Args:
-        state (OperationState): The current state.
+#     Args:
+#         state (OperationState): The current state.
 
-    Returns:
-        OperationFeatures: The updated operation features.
-    """
-    assert not cfg.update_op_features
+#     Returns:
+#         OperationFeatures: The updated operation features.
+#     """
+#     assert not cfg.update_op_features
 
-    state_copy = state.copy()
+#     state_copy = state.copy()
 
-    # Get the path to traverse
-    path_start = state_copy.last_op_history_index()
-    if path_start is None:
-        return state_copy.operation_features
-    path = state_copy.transformation_history[path_start:]
+#     # Get the path to traverse
+#     path_start = state_copy.last_op_history_index()
+#     if path_start is None:
+#         return state_copy.operation_features
+#     path = state_copy.transformation_history[path_start:]
 
-    # Update the operation features iteratively
-    for transformation, parameters in path:
-        if transformation == 'img2col':
-            # Ignore img2col because it's guaranteed to be already updated
-            continue
-        state_copy.operation_features = update_operation_features(state_copy, transformation, parameters)
+#     # Update the operation features iteratively
+#     for transformation, parameters in path:
+#         if transformation == 'img2col':
+#             # Ignore img2col because it's guaranteed to be already updated
+#             continue
+#         state_copy.operation_features = update_operation_features(state_copy, transformation, parameters)
 
-    return state_copy.operation_features
+#     return state_copy.operation_features
 
 
-def get_up_to_date_operation_features(state: OperationState) -> OperationFeatures:
-    """Get the up-to-date operation features.
+# def get_up_to_date_operation_features(state: OperationState) -> OperationFeatures:
+#     """Get the up-to-date operation features.
 
-    Args:
-        state (OperationState): The current state.
+#     Args:
+#         state (OperationState): The current state.
 
-    Returns:
-        OperationFeatures: The up-to-date operation features.
-    """
-    if cfg.update_op_features:
-        # Features already updated
-        return state.operation_features
+#     Returns:
+#         OperationFeatures: The up-to-date operation features.
+#     """
+#     if cfg.update_op_features:
+#         # Features already updated
+#         return state.operation_features
 
-    return update_operation_features_from_scratch(state)
+#     return update_operation_features_from_scratch(state)
 
 
 # ================================================ Private functions ================================================
