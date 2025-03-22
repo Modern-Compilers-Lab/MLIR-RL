@@ -1,10 +1,10 @@
 import torch
-import neptune
 from typing import Optional, Union
 from rl_autoschedular.env import Env
 from rl_autoschedular.model import HiearchyModel as Model
 from rl_autoschedular.state import OperationState
 from rl_autoschedular import config as cfg
+from rl_autoschedular import file_logger as fl
 from dataclasses import dataclass
 from utils.log import print_info, print_error, print_success
 from tqdm import trange
@@ -72,7 +72,7 @@ class Trajectory:
         )
 
 
-def collect_trajectory(model: Model, env: Env, step: int, neptune_logs: neptune.Run, device: torch.device = torch.device('cpu')):
+def collect_trajectory(model: Model, env: Env, step: int, device: torch.device = torch.device('cpu')):
     """Collect a trajectory using the model and the environment.
 
     Args:
@@ -157,14 +157,14 @@ def collect_trajectory(model: Model, env: Env, step: int, neptune_logs: neptune.
             obs = next_obs
         log_final_speedups.append(speedup)
 
-    neptune_logs['train/entropy'].extend(log_entropy, wait=True)
-    neptune_logs['train/reward'].extend(log_rewards, wait=True)
-    neptune_logs['train/speedup'].extend(log_speedups, wait=True)
-    neptune_logs['train/final_speedup'].extend(log_final_speedups, wait=True)
+    fl['train/entropy'].extend(log_entropy)
+    fl['train/reward'].extend(log_rewards)
+    fl['train/speedup'].extend(log_speedups)
+    fl['train/final_speedup'].extend(log_final_speedups)
     for op_type, speedups in log_op_speedups.items():
-        neptune_logs[f'train/{op_type}_speedup'].extend(speedups, wait=True)
+        fl[f'train/{op_type}_speedup'].extend(speedups)
     if cfg.exploration == 'curiosity':
-        neptune_logs['train/intrinsic_reward'].extend(log_intrinsic_rewards, wait=True)
+        fl['train/intrinsic_reward'].extend(log_intrinsic_rewards)
 
     stored_obs_tensor = torch.concatenate(stored_obs)
     stored_value_tensor = torch.concatenate(stored_value)
@@ -342,7 +342,7 @@ def compute_returns(done: torch.Tensor, rewards: torch.Tensor, gamma: float = 0.
     return returns
 
 
-def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Optimizer, neptune_logs: neptune.Run, device: torch.device = torch.device('cpu')):
+def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Optimizer, device: torch.device = torch.device('cpu')):
     """Update the model using PPO.
 
     Args:
@@ -453,17 +453,17 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
             elif cfg.exploration == 'entropy':
                 log_entropy_loss.append(entropy_loss.item())
 
-    neptune_logs['train_ppo/policy_loss'].extend(log_policy_loss, wait=True)
-    neptune_logs['train_ppo/value_loss'].extend(log_value_loss, wait=True)
-    # neptune_logs['train_ppo/clip_factor'].extend(log_clip_frac, wait=True)
-    neptune_logs['train_ppo/approx_kl'].extend(log_approx_kl, wait=True)
+    fl['train_ppo/policy_loss'].extend(log_policy_loss)
+    fl['train_ppo/value_loss'].extend(log_value_loss)
+    # fl['train_ppo/clip_factor'].extend(log_clip_frac)
+    fl['train_ppo/approx_kl'].extend(log_approx_kl)
     if cfg.exploration == 'curiosity':
-        neptune_logs['train_ppo/curiosity_loss'].extend(log_curiosity_loss, wait=True)
+        fl['train_ppo/curiosity_loss'].extend(log_curiosity_loss)
     elif cfg.exploration == 'entropy':
-        neptune_logs['train_ppo/entropy_loss'].extend(log_entropy_loss, wait=True)
+        fl['train_ppo/entropy_loss'].extend(log_entropy_loss)
 
 
-def evaluate_benchmark(model: Model, env: Env, neptune_logs: neptune.Run, device: torch.device = torch.device('cpu')):
+def evaluate_benchmark(model: Model, env: Env, device: torch.device = torch.device('cpu')):
     """Evaluate the benchmark using the model.
 
     Args:
@@ -521,11 +521,11 @@ def evaluate_benchmark(model: Model, env: Env, neptune_logs: neptune.Run, device
         speedup_values.append(speedup)
 
     if len(speedup_values) > 0:
-        neptune_logs['eval/average_speedup'].append(sum(speedup_values) / len(speedup_values), wait=True)
+        fl['eval/average_speedup'].append(sum(speedup_values) / len(speedup_values))
 
-    neptune_logs['eval/entropy'].extend(log_entropy, wait=True)
-    neptune_logs['eval/reward'].extend(log_reward, wait=True)
-    neptune_logs['eval/cumulative_reward'].extend(log_cumulative_reward, wait=True)
-    neptune_logs['eval/final_speedup'].extend(log_final_speedup, wait=True)
+    fl['eval/entropy'].extend(log_entropy)
+    fl['eval/reward'].extend(log_reward)
+    fl['eval/cumulative_reward'].extend(log_cumulative_reward)
+    fl['eval/final_speedup'].extend(log_final_speedup)
     for op_type, speedups in log_op_speedups.items():
-        neptune_logs[f'eval/{op_type}_speedup'].extend(speedups, wait=True)
+        fl[f'eval/{op_type}_speedup'].extend(speedups)

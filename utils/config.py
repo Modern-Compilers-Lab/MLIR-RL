@@ -84,6 +84,8 @@ class Config(metaclass=Singleton):
     """Flag to enable debug mode"""
     exec_data_file: str
     """Path to the file containing the execution data"""
+    results_dir: str
+    """Path to the results directory"""
 
     loaded: bool
     """Flag to check if the config was already loaded from JSON file or not"""
@@ -129,6 +131,7 @@ class Config(metaclass=Singleton):
         self.tags = []
         self.debug = False
         self.exec_data_file = ""
+        self.results_dir = "results"
         self.loaded = False
 
     def load_from_json(self):
@@ -176,6 +179,7 @@ class Config(metaclass=Singleton):
         self.tags = config["tags"]
         self.debug = config["debug"]
         self.exec_data_file = config["exec_data_file"]
+        self.results_dir = config["results_dir"]
         # Check the configuration values
         assert self.data_format in ["json", "mlir"], "Invalid data format. Should be 'json' or 'mlir'."
         assert self.optimization_mode in ["last", "all"], "Invalid optimization mode. Should be 'last' or 'all'."
@@ -225,7 +229,8 @@ class Config(metaclass=Singleton):
             "json_file": self.json_file,
             "tags": self.tags,
             "debug": self.debug,
-            "exec_data_file": self.exec_data_file
+            "exec_data_file": self.exec_data_file,
+            "results_dir": self.results_dir
         }
 
     def __str__(self):
