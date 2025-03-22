@@ -116,6 +116,7 @@ def gen_features() -> OperationFeatures:
 
     return OperationFeatures(
         raw_operation='',
+        operation_type='generic',
         op_count=op_count,
         load_data=load_data,
         store_data=store_data,

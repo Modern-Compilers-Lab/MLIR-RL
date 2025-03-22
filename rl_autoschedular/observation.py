@@ -5,7 +5,7 @@ import os
 from copy import copy
 import subprocess
 from rl_autoschedular import config as cfg
-from rl_autoschedular.state import OperationFeatures, NestedLoopFeatures, BenchmarkFeatures, OperationState
+from rl_autoschedular.state import OperationFeatures, NestedLoopFeatures, BenchmarkFeatures, OperationState, OperationType
 
 
 # ================================================ Public functions ================================================
@@ -81,6 +81,7 @@ def extract_op_features_from_affine_code(raw_operation: str, tmp_file_path: str)
         OperationFeatures: operation features contained in the raw operation
     """
     # Get code as affine loops
+    operation_type = __get_operation_type(raw_operation)
     wrapped_operation = __function_wrapper(raw_operation)
     loops = __lower_linalg_to_loops(wrapped_operation, tmp_file_path)
     lines = loops.split('\n') if loops else []
@@ -150,6 +151,7 @@ def extract_op_features_from_affine_code(raw_operation: str, tmp_file_path: str)
 
     return OperationFeatures(
         raw_operation=raw_operation,
+        operation_type=operation_type,
         op_count=op_count,
         load_data=load_data,
         store_data=store_data,
@@ -228,11 +230,6 @@ def update_operation_features(state: OperationState, transformation: str, parame
         case 'interchange':
             for i, j in enumerate(parameters):
                 new_operation_features.nested_loops[i] = state.operation_features.nested_loops[j]
-        case 'img2col':
-            # Get the matmul operation that now represents the convolution and wrap it in a funciton wrapper
-            # Note: Empty code and exec time 0 is used because we only need operation features
-            new_bench_data = extract_bench_features_from_code("", state.transformed_code, 0)
-            new_operation_features = new_bench_data.operations[new_bench_data.operation_tags[-1]]
         case _:
             raise ValueError(f"Invalid transformation: {transformation}")
 
@@ -447,12 +444,15 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
     ops_tags = []
     operations = {}
     for operation_block in operations_blocks:
+        raw_operation, rest = operation_block.split("#START_NESTED_LOOPS")
+        operation_type = __get_operation_type(raw_operation)
+        if operation_type is None:
+            continue
+
         nested_loops = []
         op_count = {}
         load_data: list[list[str]] = []
         store_data: list[str] = []
-
-        operation, rest = operation_block.split("#START_NESTED_LOOPS")
 
         nested_loops_str, rest = rest.split("#START_LOAD_DATA")
         loop_args = []
@@ -492,7 +492,8 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
         operation_tag = rest.strip().split("\n")[0]
         ops_tags.append(operation_tag)
         operations[operation_tag] = OperationFeatures(
-            raw_operation=operation,
+            raw_operation=raw_operation,
+            operation_type=operation_type,
             op_count=op_count,
             load_data=load_data,
             store_data=store_data,
@@ -506,3 +507,26 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
         operations=operations,
         root_exec_time=root_execution_time,
     )
+
+
+def __get_operation_type(raw_operation: str) -> Optional[OperationType]:
+    """Get the operation type from the raw operation string.
+
+    Args:
+        raw_operation (str): The raw operation string.
+
+    Returns:
+        str: The operation type.
+    """
+    if 'linalg.matmul' in raw_operation:
+        return 'matmul'
+    elif 'linalg.conv' in raw_operation:
+        return 'conv_2d'
+    elif 'pooling' in raw_operation:
+        return 'pooling'
+    elif 'linalg.add' in raw_operation:
+        return 'add'
+    elif 'linalg.generic' in raw_operation:
+        return 'generic'
+    else:
+        return None

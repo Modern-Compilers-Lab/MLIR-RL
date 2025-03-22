@@ -707,7 +707,6 @@ def transformation_to_int(transformation: str) -> int:
         'tiling': 2,
         'interchange': 3,
         'vectorization': 4,
-        'img2col': 5,
     }[transformation]
 
 
@@ -726,7 +725,6 @@ def int_to_transformation(transformation: int) -> str:
         2: 'tiling',
         3: 'interchange',
         4: 'vectorization',
-        5: 'img2col',
     }[transformation]
 
 

@@ -480,15 +480,13 @@ def apply_transformation(state: OperationState, code: str, transformation: str, 
         new_code = transform_dialect_tile(new_code, state.operation_tag, tiling_params, tmp_file)
     elif transformation == 'interchange':
         new_code = transform_dialect_interchange(code, state.operation_tag, parameters, tmp_file)
-    elif transformation == 'img2col':
-        new_code = transform_dialect_img2col(code, state.operation_tag, tmp_file)
     elif transformation == 'vectorization':
         if not is_vectorizable(state.operation_features):
             raise Exception("Too large to vectorize")
 
         if use_vectorizer:
             new_code = transform_dialect_vectorise_with_vectorizer(code, state.operation_tag, tmp_file)
-        elif state.operation_type == 'conv_2d' and (i := state.last_op_history_index()) is not None and state.transformation_history[i][0] == 'img2col':
+        elif state.operation_features.operation_type == 'conv_2d':
             new_code = transform_dialect_vectorise_img2col(code, state.operation_tag, tmp_file)
         else:
             new_code = transform_dialect_vectorise(code, state.operation_tag, tmp_file)

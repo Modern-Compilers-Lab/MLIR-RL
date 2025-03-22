@@ -3,6 +3,9 @@ from typing import Literal, Optional
 import numpy as np
 
 
+OperationType = Literal["generic", "matmul", "conv_2d", "pooling", "add"]
+
+
 @dataclass
 class NestedLoopFeatures:
     """Dataclass to store the nested loops features data."""
@@ -27,6 +30,8 @@ class OperationFeatures:
     """Dataclass to store the operation features data."""
     raw_operation: str
     """The raw operation string without wrapping or transformations."""
+    operation_type: OperationType
+    """The type of the operation (generic, matmul, conv2d, ...)."""
     op_count: dict[str, int]
     """Number of arithmetic operations in the operation."""
     load_data: list[list[str]]
@@ -40,6 +45,7 @@ class OperationFeatures:
         """Copy the current OperationFeatures object."""
         return OperationFeatures(
             self.raw_operation,
+            self.operation_type,
             self.op_count.copy(),
             [load.copy() for load in self.load_data],
             self.store_data.copy(),
@@ -62,17 +68,12 @@ class BenchmarkFeatures:
     """Execution time of the benchmark in nanoseconds without any transformation."""
 
 
-OperationType = Literal["generic", "matmul", "conv_2d", "pooling", "add"]
-
-
 @dataclass
 class OperationState:
     bench_name: str
     """The benchmark's name."""
     operation_tag: str
     """Tag used to identify the operation in the MLIR code."""
-    operation_type: OperationType
-    """The type of the operation (generic, matmul, conv2d, ...)."""
     operation_features: OperationFeatures
     """Features of the operation."""
     validated_code: str
@@ -99,7 +100,6 @@ class OperationState:
         return OperationState(
             self.bench_name,
             self.operation_tag,
-            self.operation_type,
             self.operation_features.copy(),
             self.validated_code,
             self.transformed_code,

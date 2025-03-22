@@ -12,7 +12,7 @@ from rl_autoschedular.observation import (
 )
 from rl_autoschedular.transforms import (
     apply_transformation,
-    apply_conv2d_decomposition,
+    transform_dialect_img2col,
     is_vectorizable
 )
 from rl_autoschedular.evaluation import evaluate_code
@@ -68,11 +68,11 @@ class Env:
             with open(cfg.json_file, "r") as file:
                 json_data = json.load(file)
             operation_filter = [
-                'linalg.matmul',
+                # 'linalg.matmul',
                 'linalg.conv_2d',
                 # 'pooling',
                 # 'linalg.generic',
-                'linalg.add',
+                # 'linalg.add',
             ]
             json_data = {op: details for op, details in json_data.items() if any([s in op for s in operation_filter])}
             json_data: list[tuple[str, dict]] = [(details['operation'], details) for _, details in json_data.items()]
@@ -83,13 +83,22 @@ class Env:
                 # Get full MLIR code and execution time
                 code = details["transform_wrapped_operation"]
                 root_exec_time = details["execution_time"]
+
+                # Apply img2col transformation to conv2d operations
+                if 'linalg.conv_2d' in bench_name:
+                    benchmark_data = extract_bench_features_from_code(bench_name, code, int(root_exec_time))
+                    code = transform_dialect_img2col(benchmark_data.code, benchmark_data.operation_tags[-1], tmp_file)
+                    if not code:
+                        print_error(f"Error while applying img2col transformation to {bench_name}")
+
                 # Build benchmark features
                 benchmark_data = extract_bench_features_from_code(bench_name, code, int(root_exec_time))
                 if cfg.optimization_mode == "last":
                     last_op_tag = benchmark_data.operation_tags[-1]
                     benchmark_data.operation_tags = [last_op_tag]
                     benchmark_data.operations = {last_op_tag: benchmark_data.operations[last_op_tag]}
-                    assert any([s in benchmark_data.operations[last_op_tag].raw_operation for s in operation_filter])
+                    if 'linalg.conv_2d' in bench_name:
+                        benchmark_data.operations[last_op_tag].operation_type = 'conv_2d'
                 self.benchmarks_data.append(benchmark_data)
 
     def reset(self, idx: Optional[int] = None) -> tuple[OperationState, torch.Tensor]:
@@ -210,13 +219,11 @@ class Env:
         # Build a new state that points to the next operation
         new_op_tag = bench_data.operation_tags[operation_idx - 1]
         new_op_features = bench_data.operations[new_op_tag]
-        new_op_type = self.__get_operation_type(new_op_features.raw_operation)
         new_action_mask = self.__init_action_mask(new_op_features)
         new_actions = self.__init_action_history()
         next_state = OperationState(
             bench_name=state.bench_name,
             operation_tag=new_op_tag,  # New operation tag
-            operation_type=new_op_type,  # New operation type
             operation_features=new_op_features,  # New operation features
             validated_code=state.validated_code,
             transformed_code=state.transformed_code,
@@ -244,28 +251,6 @@ class Env:
         operation_idx = bench_data.operation_tags.index(state.operation_tag)
 
         return operation_idx == 0
-
-    def __get_operation_type(self, raw_operation: str) -> OperationType:
-        """Get the operation type from the raw operation string.
-
-        Args:
-            raw_operation (str): The raw operation string.
-
-        Returns:
-            str: The operation type.
-        """
-        if 'linalg.matmul' in raw_operation:
-            return 'matmul'
-        elif 'linalg.conv' in raw_operation:
-            return 'conv_2d'
-        elif 'pooling' in raw_operation:
-            return 'pooling'
-        elif 'linalg.add' in raw_operation:
-            return 'add'
-        elif 'linalg.generic' in raw_operation:
-            return 'generic'
-        else:
-            raise ValueError(f"Unknown operation type: {raw_operation}")
 
     def __get_op_type_vector(self, op_type: OperationType):
         """Convert the operation type to an integer.
@@ -313,9 +298,6 @@ class Env:
         operation_tag = bench_data.operation_tags[operation_idx]
         operation_features = bench_data.operations[operation_tag]
 
-        # Get operation type
-        operation_type = self.__get_operation_type(operation_features.raw_operation)
-
         # Build action mask
         action_mask = self.__init_action_mask(operation_features)
 
@@ -325,7 +307,6 @@ class Env:
         state = OperationState(
             bench_name=bench_data.bench_name,
             operation_tag=operation_tag,
-            operation_type=operation_type,
             operation_features=operation_features.copy(),
             validated_code=bench_data.code,
             transformed_code=bench_data.code,
@@ -345,7 +326,7 @@ class Env:
 
         Notes:
             Action mask (NUM_TRANSFORMATIONS + L + L + interchange_mask):
-                Transformations: no_transform, TP, T, I, vect, img2col
+                Transformations: no_transform, TP, T, I, vect
                 TP: L loops
                 T : L loops
                 interchange_mask: 3 * L - 6 | L | 0
@@ -356,7 +337,6 @@ class Env:
         Returns:
             np.ndarray: The initialized action mask.
         """
-        operation_type = self.__get_operation_type(operation_features.raw_operation)
         num_loops = len(operation_features.nested_loops)
 
         L = cfg.max_num_loops
@@ -375,10 +355,7 @@ class Env:
                 interchange_mask = 0
 
         action_mask = np.ones((cfg.num_transformations + 2 * L + interchange_mask), dtype=bool)
-        if operation_type == 'conv_2d':
-            action_mask[:cfg.num_transformations] = [False, False, False, False, False, True]
-        else:
-            action_mask[:cfg.num_transformations] = cfg.init_action_mask
+        action_mask[:cfg.num_transformations] = cfg.init_action_mask
         action_mask[TP_BEGIN + num_loops:T_BEGIN] = False
         action_mask[T_BEGIN + num_loops:I_BEGIN_1C] = False
 
@@ -420,20 +397,18 @@ class Env:
             new_action_mask[I_BEGIN:I_BEGIN + num_loops] = True
 
         match transformation:
-            case 'img2col':
-                new_action_mask[:N] = cfg.init_action_mask
             case 'parallelization':
-                new_action_mask[:N] = [not cfg.force_vector, False, False, False, True, False]
+                new_action_mask[:N] = [not cfg.force_vector, False, False, False, True]
             case 'tiling':
-                new_action_mask[:N] = [False, False, False, True, False, False]
+                new_action_mask[:N] = [False, False, False, True, False]
             case 'interchange':
                 if 0 < len(parameters) < num_loops:
                     # In case of incomplete interchange, prevent any other action, and prevent repeating a loop
-                    new_action_mask[:N] = [False, False, False, True, False, False]
+                    new_action_mask[:N] = [False, False, False, True, False]
                     for param in parameters:
                         new_action_mask[I_BEGIN + param] = False
                 else:
-                    new_action_mask[:N] = [False, True, False, False, False, False]
+                    new_action_mask[:N] = [False, True, False, False, False]
 
         if num_loops == 1 and cfg.interchange_mode == 'enumerate':
             # If we have only one loop -> Allow the first candidate which will be the identity permutation
@@ -500,7 +475,7 @@ class Env:
         """
         new_actions = state.actions.copy()
         num_loops = len(state.operation_features.nested_loops)
-        if len(parameters) < num_loops or transformation in ['no_transformation', 'vectorization', 'img2col']:
+        if len(parameters) < num_loops or transformation in ['no_transformation', 'vectorization']:
             return new_actions
         if cfg.reverse_history:
             assert state.step_count < state.actions.shape[2]
@@ -530,7 +505,7 @@ class Env:
         Returns:
             np.ndarray: observation vector of the state.
         """
-        op_type_vector = self.__get_op_type_vector(state.operation_type)
+        op_type_vector = self.__get_op_type_vector(state.operation_features.operation_type)
         op_features_vector = build_op_features_vector(state.operation_features)
         if cfg.interchange_mode == 'pointers':
             interchange_perm_vector = self.__get_interchange_perm_vector(state)
@@ -594,9 +569,6 @@ class Env:
                     parameters = self.__decode_interchange_parameter(parameter, num_loops)
                     assert len(parameters) == num_loops
             return ('interchange', parameters)
-
-        elif action_name == 'img2col':
-            return ('img2col', [0])
 
         elif action_name == 'tiling':
             tiling_parameters = []
@@ -735,7 +707,7 @@ class Env:
         num_loops = len(state.operation_features.nested_loops)
         transformed_code: Optional[str] = None
         match transformation:
-            case 'parallelization' | 'tiling' | 'img2col':
+            case 'parallelization' | 'tiling':
                 # Apply the transformation and get the new code
                 try:
                     transformed_code = apply_transformation(
@@ -766,36 +738,7 @@ class Env:
                     transformed_code = state.transformed_code
 
             case 'no_transformation' | 'vectorization':
-                # For convolution, before vectorization, we need to first apply another tiling in order to decompose it to 1d convolution
-                if (state.operation_type == 'conv_2d'):
-                    second_interchange_parameters = None
-                    if ('conv_2d_nhwc_hwcf' in state.operation_features.raw_operation):
-                        second_interchange_parameters = parameters.copy()
-                        second_interchange_parameters[1] = 1
-                        second_interchange_parameters[4] = 1
-                    elif ('conv_2d_nchw_fchw' in state.operation_features.raw_operation):
-                        second_interchange_parameters = parameters.copy()
-                        second_interchange_parameters[2] = 1
-                        second_interchange_parameters[5] = 1
-                    elif ('pooling' in state.operation_features.raw_operation):
-                        second_interchange_parameters = [0] * 6
-                        second_interchange_parameters[2] = 1
-                        second_interchange_parameters[4] = 1
-                    if second_interchange_parameters is not None:
-                        try:
-                            transformed_code = apply_transformation(
-                                state=state,
-                                code=state.transformed_code,
-                                transformation='tiling',
-                                parameters=second_interchange_parameters,
-                            )
-
-                            transformed_code = apply_conv2d_decomposition(transformed_code, state.operation_tag, self.tmp_file)
-                        except Exception as e:
-                            print_error(f"Error while applying the transformation: {e}")
-                            return '', False
-
-                if state.operation_type == 'pooling':
+                if state.operation_features.operation_type == 'pooling':
                     # Force no transformation on pooling operations
                     transformation = 'no_transformation'
                     transformed_code = state.transformed_code
@@ -862,7 +805,6 @@ class Env:
 
         Notes: Updated fields are:
             - operation_features (to reflect the transformation)
-            - operation_type (only in case of conv2d+img2col)
             - actions (to register the transformation for the next input)
             - transformation_history
             - action_mask

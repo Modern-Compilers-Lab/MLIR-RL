@@ -149,9 +149,9 @@ def collect_trajectory(model: Model, env: Env, step: int, device: torch.device =
                 log_intrinsic_rewards.append(intrinsic_reward)
             if speedup is not None:
                 log_speedups.append(speedup)
-                if state.operation_type not in log_op_speedups:
-                    log_op_speedups[state.operation_type] = []
-                log_op_speedups[state.operation_type].append(speedup)
+                if state.operation_features.operation_type not in log_op_speedups:
+                    log_op_speedups[state.operation_features.operation_type] = []
+                log_op_speedups[state.operation_features.operation_type].append(speedup)
 
             state = next_state
             obs = next_obs
@@ -502,9 +502,9 @@ def evaluate_benchmark(model: Model, env: Env, device: torch.device = torch.devi
                 cumulative_reward += reward
                 log_reward.append(reward)
             if speedup is not None:
-                if state.operation_type not in log_op_speedups:
-                    log_op_speedups[state.operation_type] = []
-                log_op_speedups[state.operation_type].append(speedup)
+                if state.operation_features.operation_type not in log_op_speedups:
+                    log_op_speedups[state.operation_features.operation_type] = []
+                log_op_speedups[state.operation_features.operation_type].append(speedup)
 
             if op_done:
                 transformation_history = next_state.transformation_history.copy()
