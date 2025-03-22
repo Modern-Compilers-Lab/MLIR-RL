@@ -22,5 +22,4 @@ eval "$(conda shell.bash hook)"
 conda activate testenv
 
 # Execute the code
-export NEPTUNE_PROJECT=PFE-NYUAD/mlir-rl
 python $SCRATCH/MLIR-RL/neptune_sync.py

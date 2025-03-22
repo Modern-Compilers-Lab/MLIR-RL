@@ -68,11 +68,11 @@ class Env:
             with open(cfg.json_file, "r") as file:
                 json_data = json.load(file)
             operation_filter = [
-                # 'linalg.matmul',
+                'linalg.matmul',
                 'linalg.conv_2d',
                 # 'pooling',
                 # 'linalg.generic',
-                # 'linalg.add',
+                'linalg.add',
             ]
             json_data = {op: details for op, details in json_data.items() if any([s in op for s in operation_filter])}
             json_data: list[tuple[str, dict]] = [(details['operation'], details) for _, details in json_data.items()]
