@@ -34,10 +34,7 @@ print_success("Neptune initialized")
 
 # Set environments
 env = Env()
-eval_env = Env(
-    tmp_file=env.tmp_file,
-    inference_env=True,
-)
+eval_env = Env(tmp_file=env.tmp_file)
 print_success("Environments initialized")
 
 # Set model

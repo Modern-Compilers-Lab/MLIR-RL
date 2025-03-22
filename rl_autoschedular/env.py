@@ -34,10 +34,8 @@ class Env:
     """Lists for each benchmark the benchmark's name and its features."""
     tmp_file: str
     """The temporary file to store the intermediate representations."""
-    inference_env: bool
-    """Flag to indicate if the environment is used for inference or training."""
 
-    def __init__(self, tmp_file: Optional[str] = None, inference_env: bool = False):
+    def __init__(self, tmp_file: Optional[str] = None):
         """Initialize the environment.
 
         Args:
@@ -46,7 +44,6 @@ class Env:
         # Generate a random file to be used in order to apply the transformations and evaluate the code
         # This is done in order to enable having multiple experiments at the same time, by letting each
         # experiment use a separate unique file to read and write intermediate representations
-        self.inference_env = inference_env
         if tmp_file is None:
             random_str = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
             tmp_file = f"tmp-debug/{random_str}.mlir" if cfg.debug else f"tmp/{random_str}.mlir"
@@ -456,10 +453,8 @@ class Env:
         """
         new_action_mask = action_mask.copy()
 
-        # Nothing to do, If:
-        # - Vectorization is already disabled
-        # - It's a training env and we want to punish the agent for unfeasible vectorization
-        if (not new_action_mask[4]) or (not self.inference_env and cfg.punish_vector):
+        # Nothing to do, If Vectorization is already disabled
+        if not new_action_mask[4]:
             return new_action_mask
 
         # Check if vectorization is feasible
@@ -748,7 +743,6 @@ class Env:
                         code=state.transformed_code,
                         transformation=transformation,
                         parameters=parameters,
-                        in_inference=self.inference_env,
                     )
                 except Exception as e:
                     print_error(f"Error while applying the transformation: {e}")
@@ -763,7 +757,6 @@ class Env:
                             code=state.transformed_code,
                             transformation=transformation,
                             parameters=parameters,
-                            in_inference=self.inference_env,
                         )
                     except Exception as e:
                         print_error(f"Error while applying the transformation: {e}")
@@ -795,7 +788,6 @@ class Env:
                                 code=state.transformed_code,
                                 transformation='tiling',
                                 parameters=second_interchange_parameters,
-                                in_inference=self.inference_env,
                             )
 
                             transformed_code = apply_conv2d_decomposition(transformed_code, state.operation_tag, self.tmp_file)
@@ -815,7 +807,6 @@ class Env:
                             code=state.transformed_code,
                             transformation=transformation,
                             parameters=parameters,
-                            in_inference=self.inference_env,
                         )
                     except Exception as e:
                         print_error(f"Error while applying the transformation: {e}")
