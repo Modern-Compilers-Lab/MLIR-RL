@@ -44,6 +44,8 @@ class Config(metaclass=Singleton):
     """Flag to force vectorization"""
     punish_vector: bool
     """Flag to punish lack of vectorization"""
+    sparse_reward: bool
+    """Flag to enable sparse reward"""
     activation: Literal["relu", "tanh"]
     """The activation function to use in the network"""
     data_format: Literal["json", "mlir"]
@@ -111,6 +113,7 @@ class Config(metaclass=Singleton):
         self.mul_log_p = False
         self.force_vector = True
         self.punish_vector = False
+        self.sparse_reward = True
         self.activation = "relu"
         self.data_format = "json"
         self.optimization_mode = "last"
@@ -159,6 +162,7 @@ class Config(metaclass=Singleton):
         self.mul_log_p = config["mul_log_p"]
         self.force_vector = config["force_vector"]
         self.punish_vector = config["punish_vector"]
+        self.sparse_reward = config["sparse_reward"]
         self.activation = config["activation"]
         self.data_format = config["data_format"]
         self.optimization_mode = config["optimization_mode"]
@@ -210,6 +214,7 @@ class Config(metaclass=Singleton):
             "mul_log_p": self.mul_log_p,
             "force_vector": self.force_vector,
             "punish_vector": self.punish_vector,
+            "sparse_reward": self.sparse_reward,
             "activation": self.activation,
             "data_format": self.data_format,
             "optimization_mode": self.optimization_mode,

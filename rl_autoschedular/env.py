@@ -177,7 +177,15 @@ class Env:
 
         # Next state and reward will take into consideration whether execution succeeded or not
         # i.e: if execution failed: punish the agent, reset the code, and mark the operation as done
-        reward = self.__action_reward(trans_succeeded, exec_succeeded, new_exec_time, next_state.exec_time)
+        if cfg.sparse_reward:
+            # Sparse reward: reward is given only if the benchmark is done
+            # and it's calculated compared to the root execution time
+            if self.__bench_is_done(next_state):
+                reward = self.__action_reward(trans_succeeded, exec_succeeded, new_exec_time, bench_data.root_exec_time)
+            else:
+                reward = 0.0
+        else:
+            reward = self.__action_reward(trans_succeeded, exec_succeeded, new_exec_time, next_state.exec_time)
         speedup = (bench_data.root_exec_time / new_exec_time) if new_exec_time is not None else 1.0
 
         # Update the state infos to reflect the execution
@@ -226,6 +234,20 @@ class Env:
         )
 
         return next_state, self.__get_obs(next_state), False
+
+    def __bench_is_done(self, state: OperationState) -> bool:
+        """Check if the benchmark is done.
+
+        Args:
+            state (OperationState): The current state.
+
+        Returns:
+            bool: A flag indicating if the benchmark is done.
+        """
+        bench_data = self.benchmarks_data[self.bench_index]
+        operation_idx = bench_data.operation_tags.index(state.operation_tag)
+
+        return operation_idx == 0
 
     def __get_operation_type(self, raw_operation: str) -> OperationType:
         """Get the operation type from the raw operation string.
