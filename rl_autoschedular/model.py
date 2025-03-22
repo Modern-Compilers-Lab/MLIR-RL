@@ -615,12 +615,16 @@ class InverseModel(nn.Module):
         Returns:
             torch.Tensor: The inverse model loss.
         """
+        L = cfg.max_num_loops
+        TS = cfg.num_tile_sizes
+        batch_size = len(actions)
+
         transformation_index, parallelization_index, tiling_index, interchange_index = raw_actions_to_indices(actions)
         transformation_logits_hat, parallelization_logits_hat, tiling_logits_hat, interchange_logits_hat = action_logits
 
         transformation_loss = self.disc_loss(transformation_logits_hat, transformation_index)
-        parallelization_loss = self.disc_loss(parallelization_logits_hat, parallelization_index).sum(-1)
-        tiling_loss = self.disc_loss(tiling_logits_hat, tiling_index).sum(-1)
+        parallelization_loss = self.disc_loss(parallelization_logits_hat.reshape(batch_size * L, TS + 1), parallelization_index.flatten()).reshape(batch_size, L).sum(-1)
+        tiling_loss = self.disc_loss(tiling_logits_hat.reshape(batch_size * L, TS + 1), tiling_index.flatten()).reshape(batch_size, L).sum(-1)
         if cfg.interchange_mode == 'continuous':
             interchange_loss = self.cont_loss(interchange_logits_hat.squeeze(-1), interchange_index.float())
         else:

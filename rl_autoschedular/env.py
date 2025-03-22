@@ -17,7 +17,7 @@ from rl_autoschedular.transforms import (
     is_vectorizable
 )
 from rl_autoschedular.evaluation import evaluate_code
-from utils.log import print_error
+from utils.log import print_error, print_info
 from tqdm import tqdm
 import numpy as np
 import torch
@@ -138,11 +138,12 @@ class Env:
         transformation, parameters = self.__process_action(raw_action, next_state)
 
         # Attempt to apply the transformation to the code
-        # - If the transformation fails: punish the agent, reset the code, and move on to another operation
+        # - If the transformation fails: punish the agent, reset the code, and mark the operation as done
         new_transformed_code, trans_succeeded = self.__handle_transformation(transformation, parameters, state)
         if not trans_succeeded:
             print_error("Transformation Failed:", transformation, parameters)
             reward = self.__action_reward(trans_succeeded)
+            self.__remove_invalid_trans(next_state)
             return next_state, self.__get_obs(next_state), reward, True, 1.0
 
         # Register the new code (transformation succeeded)
@@ -151,33 +152,38 @@ class Env:
         # Update the state infos to reflect the transformation
         self.__update_state_infos(next_state, transformation, parameters)
 
-        # Evaluate the produced code and move on to another operation, if:
+        # The operation is done if:
         # - The transformation is no_transformation or vectorization
         # - Maximum number of steps is reached
-        if transformation in ['no_transformation', 'vectorization'] or next_state.step_count == cfg.truncate:
-            try:
-                new_exec_time, exec_succeeded = evaluate_code(next_state, bench_data)
-                if isinstance(exec_succeeded, Exception):
-                    raise exec_succeeded
-                if not exec_succeeded or new_exec_time is None:
-                    raise Exception("Execution failed")
-            except Exception as e:
-                print_error(f"Error while evaluating the code: {e}")
-                exec_succeeded = False
-                new_exec_time = None
+        op_done = transformation in ['no_transformation', 'vectorization'] or next_state.step_count == cfg.truncate
 
-            # Next state and reward will take into consideration whether execution succeeded or not
-            # i.e: if execution failed: punish the agent, reset the code, and move on to another operation
-            reward = self.__action_reward(trans_succeeded, exec_succeeded, new_exec_time, next_state.exec_time)
-            speedup = (bench_data.root_exec_time / new_exec_time) if new_exec_time is not None else 1.0
+        # If the operation is not done, return the updated state with a reward of 0
+        if not op_done:
+            return next_state, self.__get_obs(next_state), 0.0, False, None
 
-            # Update the state infos to reflect the execution
-            self.__update_state_exec_infos(next_state, new_exec_time)
+        # Evaluate the code (since the operation is done)
+        try:
+            new_exec_time, exec_succeeded = evaluate_code(next_state, bench_data)
+            if isinstance(exec_succeeded, Exception):
+                raise exec_succeeded
+            if not exec_succeeded or new_exec_time is None:
+                raise Exception("Execution failed")
+        except Exception as e:
+            print_error(f"Error while evaluating the code: {e}")
+            print_info("Bench:", next_state.bench_name)
+            print_info("Transformations:", next_state.transformation_history)
+            exec_succeeded = False
+            new_exec_time = None
 
-            return next_state, self.__get_obs(next_state), reward, True, speedup
+        # Next state and reward will take into consideration whether execution succeeded or not
+        # i.e: if execution failed: punish the agent, reset the code, and mark the operation as done
+        reward = self.__action_reward(trans_succeeded, exec_succeeded, new_exec_time, next_state.exec_time)
+        speedup = (bench_data.root_exec_time / new_exec_time) if new_exec_time is not None else 1.0
 
-        # If the episode is not done, return the updated state with a reward of 0
-        return next_state, self.__get_obs(next_state), 0.0, False, None
+        # Update the state infos to reflect the execution
+        self.__update_state_exec_infos(next_state, new_exec_time)
+
+        return next_state, self.__get_obs(next_state), reward, True, speedup
 
     def get_next_op_state(self, state: OperationState) -> tuple[OperationState, torch.Tensor, bool]:
         """Get the state that represents the next operation (can be from another benchmark).
@@ -899,9 +905,29 @@ class Env:
             state (OperationState): The current state.
             new_exec_time (Optional[int]): The new execution time.
         """
-        # Keep new code and execution time only if the new code is valid
-        keep_new = new_exec_time is not None
+        # If the execution failed, reset the transformation sequence
+        if new_exec_time is None:
+            self.__remove_invalid_trans(state)
+            return
 
+        bench_data = self.benchmarks_data[self.bench_index]
+        operation_idx = bench_data.operation_tags.index(state.operation_tag)
+
+        # Mark the code as validated
+        state.validated_code = state.transformed_code
+
+        # Update the execution time
+        state.exec_time = new_exec_time
+
+        # Seal the transformation sequence
+        state.transformation_history += [('done', [operation_idx])]
+
+    def __remove_invalid_trans(self, state: OperationState):
+        """Remove the latest invalid transformations and reset the transformation sequence.
+
+        Args:
+            state (OperationState): The current state.
+        """
         # Get the last validated history
         last_op_idx = state.last_op_history_index()
         if last_op_idx is None:
@@ -911,10 +937,8 @@ class Env:
             # Get all transformations up until the last 'done'
             validated_history = state.transformation_history[:last_op_idx]
 
-        if keep_new:
-            state.validated_code = state.transformed_code
-            state.exec_time = new_exec_time
-            state.transformation_history += [('done', [])]
-        else:
-            state.transformed_code = state.validated_code
-            state.transformation_history = validated_history
+        # Reset the code to the last validated code
+        state.transformed_code = state.validated_code
+
+        # Reset the transformation sequence
+        state.transformation_history = validated_history

@@ -33,7 +33,7 @@ neptune_logs = init_neptune(
 print_success("Neptune initialized")
 
 # Set environments
-env = Env(log_schedule=cfg.debug)
+env = Env()
 eval_env = Env(
     tmp_file=env.tmp_file,
     inference_env=True,

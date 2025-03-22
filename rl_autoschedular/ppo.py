@@ -104,13 +104,20 @@ def collect_trajectory(model: Model, env: Env, step: int, neptune_logs: neptune.
     log_final_speedups: list[float] = []
     log_op_speedups: dict[str, list[float]] = {}
 
+    if cfg.exploration == 'epsilon':
+        ratio = step / cfg.nb_iterations
+        init_eps = 0.5
+        final_eps = 0.001
+        eps = final_eps + (init_eps - final_eps) * (1 - ratio)
+    else:
+        eps = None
+
     traj_trange = trange(cfg.bench_count, desc='Trajectory')
-    for i in traj_trange:
-        traj_trange.set_postfix({'bench': state.bench_name})
+    for _ in traj_trange:
+        traj_trange.set_postfix({'eps': eps, 'bench': state.bench_name})
         bench_done = False
         while not bench_done:
             num_loops = len(state.operation_features.nested_loops)
-            eps = 0.1 if cfg.exploration == 'epsilon' else None
             action_index, action_log_p, value, entropy = model.sample(obs, [num_loops], eps=eps)
 
             assert len(action_index) == 1
@@ -152,11 +159,12 @@ def collect_trajectory(model: Model, env: Env, step: int, neptune_logs: neptune.
 
     neptune_logs['train/entropy'].extend(log_entropy, wait=True)
     neptune_logs['train/reward'].extend(log_rewards, wait=True)
-    neptune_logs['train/intrinsic_reward'].extend(log_intrinsic_rewards, wait=True)
     neptune_logs['train/speedup'].extend(log_speedups, wait=True)
     neptune_logs['train/final_speedup'].extend(log_final_speedups, wait=True)
     for op_type, speedups in log_op_speedups.items():
         neptune_logs[f'train/{op_type}_speedup'].extend(speedups, wait=True)
+    if cfg.exploration == 'curiosity':
+        neptune_logs['train/intrinsic_reward'].extend(log_intrinsic_rewards, wait=True)
 
     stored_obs_tensor = torch.concatenate(stored_obs)
     stored_value_tensor = torch.concatenate(stored_value)
@@ -487,10 +495,10 @@ def evaluate_benchmark(model: Model, env: Env, neptune_logs: neptune.Run, device
 
             # Apply the action and get the next state
             assert len(action) == 1
-            next_state, next_obs, reward, terminated, speedup = env.step(state, action[0])
+            next_state, next_obs, reward, op_done, speedup = env.step(state, action[0])
 
             log_entropy.append(entropy.item())
-            if terminated:
+            if op_done:
                 cumulative_reward += reward
                 log_reward.append(reward)
             if speedup is not None:
@@ -498,10 +506,11 @@ def evaluate_benchmark(model: Model, env: Env, neptune_logs: neptune.Run, device
                     log_op_speedups[state.operation_type] = []
                 log_op_speedups[state.operation_type].append(speedup)
 
-            transformation_history = next_state.transformation_history.copy()
-            next_state, next_obs, bench_done = env.get_next_op_state(next_state)
-            if bench_done:
-                print_success(f"Schedule: {transformation_history} - {speedup}")
+            if op_done:
+                transformation_history = next_state.transformation_history.copy()
+                next_state, next_obs, bench_done = env.get_next_op_state(next_state)
+                if bench_done:
+                    print_success(f"Schedule: {transformation_history} - {speedup}")
 
             state = next_state
             obs = next_obs
