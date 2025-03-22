@@ -24,7 +24,7 @@ class Config(metaclass=Singleton):
     """The method used for interchange action"""
     interchange_distribution: Literal['binomial', 'normal']
     """The distribution used for continuous interchange action"""
-    exploration: Literal['entropy', 'epsilon', 'curiosity']
+    exploration: list[Literal['entropy', 'epsilon', 'curiosity']]
     """The exploration method"""
     use_bindings: bool
     """Flag to enable using python bindings for execution, if False, the execution will be done using the command line. Default is False."""
@@ -99,7 +99,7 @@ class Config(metaclass=Singleton):
         self.num_transformations = 5
         self.vect_size_limit = 512
         self.init_action_mask = [False, True, False, False, False, False]
-        self.exploration = "entropy"
+        self.exploration = ["entropy"]
         self.interchange_mode = "enumerate"
         self.interchange_distribution = "binomial"
         self.use_bindings = False

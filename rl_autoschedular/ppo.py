@@ -104,7 +104,7 @@ def collect_trajectory(model: Model, env: Env, step: int, device: torch.device =
     log_final_speedups: list[float] = []
     log_op_speedups: dict[str, list[float]] = {}
 
-    if cfg.exploration == 'epsilon':
+    if 'epsilon' in cfg.exploration:
         ratio = step / cfg.nb_iterations
         init_eps = 0.5
         final_eps = 0.001
@@ -124,7 +124,7 @@ def collect_trajectory(model: Model, env: Env, step: int, device: torch.device =
             next_state, next_obs, reward, op_done, speedup = env.step(state, action_index[0])
             next_value = model.value_model(next_obs)
 
-            if cfg.exploration == 'curiosity':
+            if 'curiosity' in cfg.exploration:
                 next_state_latent, next_state_latent_hat, _ = model.icm_model(obs, next_obs, action_index)
                 intrinsic_reward = cfg.reward_scale * model.icm_model.forward_model.loss(next_state_latent, next_state_latent_hat).item()
                 reward = (1 - cfg.intrinsic_reward_integration) * reward + cfg.intrinsic_reward_integration * intrinsic_reward
@@ -145,7 +145,7 @@ def collect_trajectory(model: Model, env: Env, step: int, device: torch.device =
 
             log_entropy.append(entropy.item())
             log_rewards.append(reward)
-            if cfg.exploration == 'curiosity':
+            if 'curiosity' in cfg.exploration:
                 log_intrinsic_rewards.append(intrinsic_reward)
             if speedup is not None:
                 log_speedups.append(speedup)
@@ -163,7 +163,7 @@ def collect_trajectory(model: Model, env: Env, step: int, device: torch.device =
     fl['train/final_speedup'].extend(log_final_speedups)
     for op_type, speedups in log_op_speedups.items():
         fl[f'train/{op_type}_speedup'].extend(speedups)
-    if cfg.exploration == 'curiosity':
+    if 'curiosity' in cfg.exploration:
         fl['train/intrinsic_reward'].extend(log_intrinsic_rewards)
 
     stored_obs_tensor = torch.concatenate(stored_obs)
@@ -418,11 +418,11 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
                 value_loss = model.value_model.loss(new_values, values, returns)
 
                 loss = policy_loss + cfg.value_coef * value_loss
-                if cfg.exploration == 'curiosity':
+                if 'curiosity' in cfg.exploration:
                     next_states_latent, next_states_latent_hat, action_logits = model.icm_model(obs, next_obs, actions)
                     curiosity_loss = model.icm_model.loss(next_states_latent, next_states_latent_hat, action_logits, actions)
                     loss += cfg.curiosity_coef * curiosity_loss
-                elif cfg.exploration == 'entropy':
+                if 'entropy' in cfg.exploration:
                     entropy_loss = -entropy.mean()
                     loss += cfg.entropy_coef * entropy_loss
 
@@ -448,18 +448,18 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
             log_value_loss.append(value_loss.item())
             # log_clip_frac.append(clip_frac.item())
             log_approx_kl.append(approx_kl.item())
-            if cfg.exploration == 'curiosity':
+            if 'curiosity' in cfg.exploration:
                 log_curiosity_loss.append(curiosity_loss.item())
-            elif cfg.exploration == 'entropy':
+            if 'entropy' in cfg.exploration:
                 log_entropy_loss.append(entropy_loss.item())
 
     fl['train_ppo/policy_loss'].extend(log_policy_loss)
     fl['train_ppo/value_loss'].extend(log_value_loss)
     # fl['train_ppo/clip_factor'].extend(log_clip_frac)
     fl['train_ppo/approx_kl'].extend(log_approx_kl)
-    if cfg.exploration == 'curiosity':
+    if 'curiosity' in cfg.exploration:
         fl['train_ppo/curiosity_loss'].extend(log_curiosity_loss)
-    elif cfg.exploration == 'entropy':
+    if 'entropy' in cfg.exploration:
         fl['train_ppo/entropy_loss'].extend(log_entropy_loss)
 
 

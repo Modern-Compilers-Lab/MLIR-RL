@@ -34,7 +34,7 @@ class HiearchyModel(nn.Module):
         self.policy_model = PolicyModel(self.input_dim, self.action_mask_size)
         self.value_model = ValueModel(self.input_dim, self.action_mask_size)
 
-        if cfg.exploration == 'curiosity':
+        if 'curiosity' in cfg.exploration:
             self.icm_model = ICMModel(self.input_dim, self.action_mask_size)
 
     def __call__(self, obs: torch.Tensor, num_loops: list[int], actions: list[tuple[str, Optional[Union[list[int], int]]]]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
