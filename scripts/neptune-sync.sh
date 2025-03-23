@@ -7,8 +7,6 @@
 #SBATCH -c 4
 #SBATCH --mem=16G
 #SBATCH -t 07-00
-#SBATCH -o /scratch/mt5383/MLIR-RL/logs/neptune-sync.out
-#SBATCH -e /scratch/mt5383/MLIR-RL/logs/neptune-sync.err
 #SBATCH --mail-type=FAIL,TIME_LIMIT
 #SBATCH --mail-user=mt5383@nyu.edu
 
