@@ -19,15 +19,16 @@ from rl_autoschedular.ppo import (
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 device = torch.device("cpu")
 torch.set_grad_enabled(False)
-# torch.autograd.set_detect_anomaly(True)
 torch.set_num_threads(4)
+if cfg.debug:
+    torch.autograd.set_detect_anomaly(True)
 
 print_info(f"Config: {cfg}")
 
 # Set environments
 env = Env()
 eval_env = Env(tmp_file=env.tmp_file)
-print_success("Environments initialized")
+print_success(f"Environments initialized: {env.tmp_file}")
 
 # Set model
 model = Model()

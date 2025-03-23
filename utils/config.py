@@ -62,6 +62,8 @@ class Config(metaclass=Singleton):
     """Batch size for PPO"""
     value_coef: float
     """Value coefficient"""
+    value_alpha: float
+    """Value alpha"""
     entropy_coef: float
     """Entropy coefficient"""
     reward_scale: float
@@ -120,6 +122,7 @@ class Config(metaclass=Singleton):
         self.ppo_epochs = 4
         self.ppo_batch_size = 4
         self.value_coef = 0.5
+        self.value_alpha = 0.0
         self.entropy_coef = 0.01
         self.reward_scale = 0.01
         self.intrinsic_reward_integration = 0.01
@@ -168,6 +171,7 @@ class Config(metaclass=Singleton):
         self.ppo_epochs = config["ppo_epochs"]
         self.ppo_batch_size = config["ppo_batch_size"]
         self.value_coef = config["value_coef"]
+        self.value_alpha = config["value_alpha"]
         self.entropy_coef = config["entropy_coef"]
         self.reward_scale = config["reward_scale"]
         self.intrinsic_reward_integration = config["intrinsic_reward_integration"]
@@ -216,6 +220,7 @@ class Config(metaclass=Singleton):
             "bench_count": self.bench_count,
             "nb_iterations": self.nb_iterations,
             "value_epochs": self.value_epochs,
+            "value_alpha": self.value_alpha,
             "ppo_epochs": self.ppo_epochs,
             "ppo_batch_size": self.ppo_batch_size,
             "value_coef": self.value_coef,

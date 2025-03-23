@@ -182,9 +182,6 @@ class HiearchyModel(nn.Module):
         parallelization_log_p = parallelization_dist.log_prob(parallelization_index).sum(-1)
         tiling_log_p = tiling_dist.log_prob(tiling_index).sum(-1)
         interchange_log_p = interchange_dist.log_prob(interchange_index)
-        if isinstance(interchange_dist, Normal):
-            # Ensure that the log probability is not very small
-            interchange_log_p = interchange_log_p.maximum(torch.tensor(-100.0))
 
         # Calculate the total log probability and entropy
         action_log_p = transformation_log_p
@@ -258,8 +255,8 @@ class ValueModel(nn.Module):
             torch.Tensor: The value loss.
         """
         vclip = values + torch.clamp(new_values - values, -0.2, 0.2)
-        vloss1 = (returns - vclip).pow(2)
-        vloss2 = (returns - new_values).pow(2)
+        vloss1 = (returns - vclip).pow(2) * torch.exp(torch.clamp_max(cfg.value_alpha * returns, 50.0))
+        vloss2 = (returns - new_values).pow(2) * torch.exp(torch.clamp_max(cfg.value_alpha * returns, 50.0))
         return 0.5 * torch.max(vloss1, vloss2).mean()
 
 
@@ -386,7 +383,7 @@ class PolicyModel(nn.Module):
         Returns:
             torch.Tensor: The policy loss.
         """
-        ratios = torch.exp(new_actions_log_p - actions_log_p)
+        ratios = torch.exp(torch.clamp(new_actions_log_p - actions_log_p, -50.0, 50.0))
         surr1 = ratios * advantages
         surr2 = torch.clamp(ratios, 1 - 0.2, 1 + 0.2) * advantages
         return - torch.min(surr1, surr2).mean()
