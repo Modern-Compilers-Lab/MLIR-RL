@@ -102,8 +102,8 @@ class HiearchyModel(nn.Module):
 
         if cfg.interchange_mode == 'continuous':
             # Clamp interchange index to [0, num_loops! - 1]
-            total_count = torch.tensor([math.factorial(loops) for loops in num_loops], dtype=torch.float64)
-            interchange_index = interchange_index.clamp(torch.zeros_like(total_count), total_count - 1)
+            total_count = torch.tensor([math.factorial(loops) for loops in num_loops], dtype=torch.int64)
+            interchange_index = interchange_index.clamp(torch.zeros_like(total_count, dtype=torch.int64), total_count - 1)
 
         # Get raw actions from indices
         actions = indices_to_raw_actions(transformation_index, parallelization_index, tiling_index, interchange_index, num_loops)
