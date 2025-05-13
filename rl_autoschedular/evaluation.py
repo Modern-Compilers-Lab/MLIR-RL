@@ -40,10 +40,7 @@ def evaluate_code(state: OperationState, bench_data: BenchmarkFeatures) -> tuple
         return cache_exec_time, True
     print_alert('Cache miss')
 
-    if cfg.use_bindings:
-        real_exec_time, success = evaluate_code_with_bindings(state.transformed_code)
-    else:
-        real_exec_time, success = evaluate_code_with_cmd(state.transformed_code, state.tmp_file)
+    real_exec_time, success = evaluate_code_with_bindings(state.transformed_code)
 
     if success and real_exec_time is not None:
         __update_execution_cache(state.bench_name, code_cache_key, real_exec_time, tmp_exec_file)

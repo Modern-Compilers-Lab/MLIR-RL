@@ -26,10 +26,6 @@ class Config(metaclass=Singleton):
     """The distribution used for continuous interchange action"""
     exploration: list[Literal['entropy', 'epsilon', 'curiosity']]
     """The exploration method"""
-    use_bindings: bool
-    """Flag to enable using python bindings for execution, if False, the execution will be done using the command line. Default is False."""
-    use_vectorizer: bool
-    """Flag to enable using the vectorizer C++ program for vectorization, if False, vectorization is done using transform dialect directly. Default is False."""
     reverse_history: bool
     """Flag to indicate if the history should be reversed or not"""
     new_architecture: bool
@@ -44,10 +40,6 @@ class Config(metaclass=Singleton):
     """Flag to enable sparse reward"""
     activation: Literal["relu", "tanh"]
     """The activation function to use in the network"""
-    data_format: Literal["json", "mlir"]
-    """The format of the data, can be either "json" or "mlir". "json" mode reads json files containing benchmark features, "mlir" mode reads mlir code files directly and extract features from it using AST dumper. Default is "json"."""
-    optimization_mode: Literal["last", "all"]
-    """The optimization mode to use, "last" will optimize only the last operation, "all" will optimize all operations in the code. Default is "last"."""
     benchmarks_folder_path: str
     """Path to the benchmarks folder. Can be empty if optimization mode is set to "last"."""
     bench_count: int
@@ -60,6 +52,8 @@ class Config(metaclass=Singleton):
     """Batch size for PPO"""
     value_epochs: int
     """Number of epochs for value update"""
+    value_batch_size: int
+    """Batch size for value update"""
     value_coef: float
     """Value coefficient"""
     value_alpha: float
@@ -79,7 +73,7 @@ class Config(metaclass=Singleton):
     truncate: int
     """Maximum number of steps in the schedule"""
     json_file: str
-    """Path to the JSON file containing the benchmarks code or features."""
+    """Path to the JSON file containing the benchmarks execution times."""
     tags: list[str]
     """List of tags to add to the neptune experiment"""
     debug: bool
@@ -104,8 +98,6 @@ class Config(metaclass=Singleton):
         self.exploration = ["entropy"]
         self.interchange_mode = "enumerate"
         self.interchange_distribution = "binomial"
-        self.use_bindings = False
-        self.use_vectorizer = False
         self.reverse_history = True
         self.new_architecture = False
         self.normalize_bounds = True
@@ -113,14 +105,13 @@ class Config(metaclass=Singleton):
         self.force_vector = True
         self.sparse_reward = True
         self.activation = "relu"
-        self.data_format = "json"
-        self.optimization_mode = "last"
         self.benchmarks_folder_path = ""
         self.bench_count = 20
         self.nb_iterations = 10000
         self.ppo_epochs = 4
         self.ppo_batch_size = 4
         self.value_epochs = 32
+        self.value_batch_size = 32
         self.value_coef = 0.5
         self.value_alpha = 0.0
         self.entropy_coef = 0.01
@@ -153,8 +144,6 @@ class Config(metaclass=Singleton):
         self.interchange_mode = config["interchange_mode"]
         self.interchange_distribution = config["interchange_distribution"]
         self.exploration = config["exploration"]
-        self.use_bindings = config["use_bindings"]
-        self.use_vectorizer = config["use_vectorizer"]
         self.reverse_history = config["reverse_history"]
         self.new_architecture = config["new_architecture"]
         self.normalize_bounds = config["normalize_bounds"]
@@ -162,14 +151,13 @@ class Config(metaclass=Singleton):
         self.force_vector = config["force_vector"]
         self.sparse_reward = config["sparse_reward"]
         self.activation = config["activation"]
-        self.data_format = config["data_format"]
-        self.optimization_mode = config["optimization_mode"]
         self.benchmarks_folder_path = config["benchmarks_folder_path"]
         self.bench_count = config["bench_count"]
         self.nb_iterations = config["nb_iterations"]
         self.ppo_epochs = config["ppo_epochs"]
         self.ppo_batch_size = config["ppo_batch_size"]
         self.value_epochs = config["value_epochs"]
+        self.value_batch_size = config["value_batch_size"]
         self.value_coef = config["value_coef"]
         self.value_alpha = config["value_alpha"]
         self.entropy_coef = config["entropy_coef"]
@@ -184,11 +172,6 @@ class Config(metaclass=Singleton):
         self.debug = config["debug"]
         self.exec_data_file = config["exec_data_file"]
         self.results_dir = config["results_dir"]
-        # Check the configuration values
-        assert self.data_format in ["json", "mlir"], "Invalid data format. Should be 'json' or 'mlir'."
-        assert self.optimization_mode in ["last", "all"], "Invalid optimization mode. Should be 'last' or 'all'."
-        assert len(self.benchmarks_folder_path) > 0 or self.data_format == "json", "Benchmark folder path should be set if data_format is 'mlir'."
-        assert self.data_format != "json" or not self.use_bindings, "The specific case of using python bindings with JSON data format is not implemented yet."
         # Set loaded flag
         self.loaded = True
 
@@ -205,8 +188,6 @@ class Config(metaclass=Singleton):
             "interchange_mode": self.interchange_mode,
             "interchange_distribution": self.interchange_distribution,
             "exploration": self.exploration,
-            "use_bindings": self.use_bindings,
-            "use_vectorizer": self.use_vectorizer,
             "reverse_history": self.reverse_history,
             "new_architecture": self.new_architecture,
             "normalize_bounds": self.normalize_bounds,
@@ -214,8 +195,6 @@ class Config(metaclass=Singleton):
             "force_vector": self.force_vector,
             "sparse_reward": self.sparse_reward,
             "activation": self.activation,
-            "data_format": self.data_format,
-            "optimization_mode": self.optimization_mode,
             "benchmarks_folder_path": self.benchmarks_folder_path,
             "bench_count": self.bench_count,
             "nb_iterations": self.nb_iterations,
@@ -223,6 +202,7 @@ class Config(metaclass=Singleton):
             "ppo_epochs": self.ppo_epochs,
             "ppo_batch_size": self.ppo_batch_size,
             "value_epochs": self.value_epochs,
+            "value_batch_size": self.value_batch_size,
             "value_coef": self.value_coef,
             "entropy_coef": self.entropy_coef,
             "reward_scale": self.reward_scale,

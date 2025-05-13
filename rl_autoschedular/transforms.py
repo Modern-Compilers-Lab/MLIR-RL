@@ -453,16 +453,14 @@ module attributes {{transform.with_named_sequence}} {{
     return result
 
 
-def apply_transformation(state: OperationState, code: str, transformation: str, parameters: list, use_vectorizer: bool = cfg.use_vectorizer) -> str:
+def apply_transformation(state: OperationState, code: str, transformation: str, parameters: list) -> str:
     """Apply the specified transformation to the given code.
 
     Args:
         state (OperationState): The operation state.
-        bench_features (BenchmarkFeatures): The benchmark features.
         code (str): The code to apply the transformation to.
         transformation (str): The transformation to apply.
         parameters (list): The parameters of the transformation.
-        use_vectorizer (bool): Whether to use the vectorizer or not.
 
     Returns:
         str: The code after applying the transformation.
@@ -483,13 +481,7 @@ def apply_transformation(state: OperationState, code: str, transformation: str, 
     elif transformation == 'vectorization':
         if not is_vectorizable(state.operation_features):
             raise Exception("Operation is not vectorizable")
-
-        if use_vectorizer:
-            new_code = transform_dialect_vectorise_with_vectorizer(code, state.operation_tag, tmp_file)
-        elif state.operation_features.operation_type == 'conv_2d':
-            new_code = transform_dialect_vectorise_img2col(code, state.operation_tag, tmp_file)
-        else:
-            new_code = transform_dialect_vectorise(code, state.operation_tag, tmp_file)
+        new_code = transform_dialect_vectorise_with_vectorizer(code, state.operation_tag, tmp_file)
     elif transformation == 'no_transformation':
         new_code = code
     else:
@@ -498,40 +490,36 @@ def apply_transformation(state: OperationState, code: str, transformation: str, 
     return new_code
 
 
-def apply_transformation_wrapper(state: OperationState, code: str, transformation: str, parameters: list, use_vectorizer: bool, return_list):
+def apply_transformation_wrapper(state: OperationState, code: str, transformation: str, parameters: list, return_list):
     """Wrapper function to apply the transformation with multiprocessing.
 
     Args:
         state (OperationState): The operation state.
-        bench_features (BenchmarkFeatures): The benchmark features.
         code (str): The code to apply the transformation to.
         transformation (str): The transformation to apply.
         parameters (list): The parameters of the transformation.
         return_list (list): The list to store the result of the transformation.
-        use_vectorizer (bool): Whether to use the vectorizer or not. Default is False.
     """
-    res = apply_transformation(state, code, transformation, parameters, use_vectorizer)
+    res = apply_transformation(state, code, transformation, parameters)
     return_list.append(res)
 
 
-def apply_transformation_with_timeout(state: OperationState, code: str, transformation: str, parameters: list, use_vectorizer: bool = cfg.use_vectorizer, timeout: Optional[float] = 20) -> str:
+def apply_transformation_with_timeout(state: OperationState, code: str, transformation: str, parameters: list, timeout: Optional[float] = 20) -> str:
     """Apply the specified transformation to the given code with a timeout.
 
     Args:
         state (OperationState): The operation state.
-        bench_features (BenchmarkFeatures): The benchmark features.
         code (str): The code to apply the transformation to.
         transformation (str): The transformation to apply.
         parameters (list): The parameters of the transformation.
         timeout (int): The timeout in seconds.
-        use_vectorizer (bool): Whether to use the vectorizer or not.
 
     Returns:
         str: The code after applying the transformation.
     """
     manager = multiprocessing.Manager()
     return_list = manager.list()
-    process = multiprocessing.Process(target=apply_transformation_wrapper, args=(state, code, transformation, parameters, use_vectorizer, return_list))
+    process = multiprocessing.Process(target=apply_transformation_wrapper, args=(state, code, transformation, parameters, return_list))
     process.start()
     process.join(timeout)
 

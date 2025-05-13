@@ -4,16 +4,8 @@ from rl_autoschedular.state import (
     OperationType, NestedLoopFeatures
 )
 from typing import Optional, Union, Literal
-from rl_autoschedular.observation import (
-    extract_bench_features_from_file,
-    extract_bench_features_from_code,
-    build_op_features_vector,
-)
-from rl_autoschedular.transforms import (
-    apply_transformation,
-    transform_dialect_img2col,
-    is_vectorizable
-)
+from rl_autoschedular.observation import extract_bench_features_from_file, build_op_features_vector
+from rl_autoschedular.transforms import apply_transformation, is_vectorizable
 from rl_autoschedular.evaluation import evaluate_code
 from utils.log import print_error, print_info
 from tqdm import tqdm
@@ -53,55 +45,15 @@ class Env:
             file.write("")
         self.tmp_file = tmp_file
 
-        # Get benchmarks data
-        # TODO: Try to unify this process
+        # Load benchmark names and execution times from json file
+        with open(cfg.json_file, "r") as file:
+            benchmarks_json: dict[str, int] = json.load(file)
+        # Build benchmark features
         self.benchmarks_data = []
-        if cfg.data_format == "mlir":
-            # Load execution times from json file
-            with open(cfg.json_file, "r") as file:
-                benchmarks_json: dict[str, int] = json.load(file)
-            # Build benchmark features
-            for bench_name, root_exec_time in tqdm(benchmarks_json.items(), desc="Extracting benchmark features", unit="bench"):
-                bench_file = os.path.join(cfg.benchmarks_folder_path, bench_name + ".mlir")
-                benchmark_data = extract_bench_features_from_file(bench_name, bench_file, root_exec_time)
-                self.benchmarks_data.append(benchmark_data)
-        else:
-            # Load operations data from json file
-            with open(cfg.json_file, "r") as file:
-                json_data = json.load(file)
-            operation_filter = [
-                'linalg.matmul',
-                'linalg.conv_2d',
-                # 'pooling',
-                # 'linalg.generic',
-                'linalg.add',
-            ]
-            json_data = {op: details for op, details in json_data.items() if any([s in op for s in operation_filter])}
-            json_data: list[tuple[str, dict]] = [(details['operation'], details) for _, details in json_data.items()]
-
-            # Get the AST of the MLIR code and give a tag to each linalg operation
-            # The last operation represents the operations that we want to optimize (the first operations are just linalg.fills)
-            for bench_name, details in tqdm(json_data, desc="Extracting benchmark features", unit="bench"):
-                # Get full MLIR code and execution time
-                code = details["transform_wrapped_operation"]
-                root_exec_time = details["execution_time"]
-
-                # Apply img2col transformation to conv2d operations
-                if 'linalg.conv_2d' in bench_name:
-                    benchmark_data = extract_bench_features_from_code(bench_name, code, int(root_exec_time))
-                    code = transform_dialect_img2col(benchmark_data.code, benchmark_data.operation_tags[-1], tmp_file)
-                    if not code:
-                        print_error(f"Error while applying img2col transformation to {bench_name}")
-
-                # Build benchmark features
-                benchmark_data = extract_bench_features_from_code(bench_name, code, int(root_exec_time))
-                if cfg.optimization_mode == "last":
-                    last_op_tag = benchmark_data.operation_tags[-1]
-                    benchmark_data.operation_tags = [last_op_tag]
-                    benchmark_data.operations = {last_op_tag: benchmark_data.operations[last_op_tag]}
-                    if 'linalg.conv_2d' in bench_name:
-                        benchmark_data.operations[last_op_tag].operation_type = 'conv_2d'
-                self.benchmarks_data.append(benchmark_data)
+        for bench_name, root_exec_time in tqdm(benchmarks_json.items(), desc="Extracting benchmark features", unit="bench"):
+            bench_file = os.path.join(cfg.benchmarks_folder_path, bench_name + ".mlir")
+            benchmark_data = extract_bench_features_from_file(bench_name, bench_file, root_exec_time)
+            self.benchmarks_data.append(benchmark_data)
 
     def reset(self, bench_idx: Optional[int] = None, operation_idx: Optional[int] = None) -> tuple[OperationState, torch.Tensor]:
         """Reset the environment.
