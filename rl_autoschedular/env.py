@@ -1,14 +1,13 @@
 from rl_autoschedular import config as cfg
 from rl_autoschedular.state import (
     OperationState, BenchmarkFeatures, OperationFeatures,
-    OperationType
+    OperationType, NestedLoopFeatures
 )
 from typing import Optional, Union, Literal
 from rl_autoschedular.observation import (
     extract_bench_features_from_file,
     extract_bench_features_from_code,
     build_op_features_vector,
-    update_operation_features,
 )
 from rl_autoschedular.transforms import (
     apply_transformation,
@@ -34,6 +33,9 @@ class Env:
     """Lists for each benchmark the benchmark's name and its features."""
     tmp_file: str
     """The temporary file to store the intermediate representations."""
+
+    __bench_index: int
+    """The index of the current benchmark."""
 
     def __init__(self, tmp_file: Optional[str] = None):
         """Initialize the environment.
@@ -101,7 +103,7 @@ class Env:
                         benchmark_data.operations[last_op_tag].operation_type = 'conv_2d'
                 self.benchmarks_data.append(benchmark_data)
 
-    def reset(self, idx: Optional[int] = None) -> tuple[OperationState, torch.Tensor]:
+    def reset(self, bench_idx: Optional[int] = None, operation_idx: Optional[int] = None) -> tuple[OperationState, torch.Tensor]:
         """Reset the environment.
 
         Args:
@@ -112,13 +114,12 @@ class Env:
             torch.Tensor: The observation vector of the initial state.
         """
         # Get the benchmark
-        if idx is not None:
-            self.bench_index = idx
+        if bench_idx is not None:
+            self.__bench_index = bench_idx
         else:
-            self.bench_index = random.randint(0, len(self.benchmarks_data) - 1)
-        benchmark_data = self.benchmarks_data[self.bench_index]
+            self.__bench_index = random.randint(0, len(self.benchmarks_data) - 1)
 
-        return self.__init_op_state(benchmark_data, -1)
+        return self.__init_op_state(-1 if operation_idx is None else operation_idx)
 
     def step(self, state: OperationState, raw_action: tuple[str, Optional[Union[list[int], int]]]) -> tuple[OperationState, torch.Tensor, float, bool, Optional[float]]:
         """Take a step in the environment.
@@ -134,8 +135,6 @@ class Env:
             bool: A flag indicating if the operation is done.
             Optional[float]: The speedup (if the operation is executed successfully) for logging purposes.
         """
-        bench_data = self.benchmarks_data[self.bench_index]
-
         # Copy the current state to introduce the changes throughout the function
         next_state = state.copy()
 
@@ -168,7 +167,7 @@ class Env:
 
         # Evaluate the code (since the operation is done)
         try:
-            new_exec_time, exec_succeeded = evaluate_code(next_state, bench_data)
+            new_exec_time, exec_succeeded = evaluate_code(next_state, self.__current_bench_data)
             if isinstance(exec_succeeded, Exception):
                 raise exec_succeeded
             if not exec_succeeded or new_exec_time is None:
@@ -186,19 +185,19 @@ class Env:
             # Sparse reward: reward is given only if the benchmark is done
             # and it's calculated compared to the root execution time
             if self.__bench_is_done(next_state):
-                reward = self.__action_reward(trans_succeeded, exec_succeeded, new_exec_time, bench_data.root_exec_time)
+                reward = self.__action_reward(trans_succeeded, exec_succeeded, new_exec_time, self.__current_bench_data.root_exec_time)
             else:
                 reward = 0.0
         else:
             reward = self.__action_reward(trans_succeeded, exec_succeeded, new_exec_time, next_state.exec_time)
-        speedup = (bench_data.root_exec_time / new_exec_time) if new_exec_time is not None else 1.0
+        speedup = (self.__current_bench_data.root_exec_time / new_exec_time) if new_exec_time is not None else 1.0
 
         # Update the state infos to reflect the execution
         self.__update_state_exec_infos(next_state, new_exec_time)
 
         return next_state, self.__get_obs(next_state), reward, True, speedup
 
-    def get_next_op_state(self, state: OperationState) -> tuple[OperationState, torch.Tensor, bool]:
+    def get_next_op_state(self, state: OperationState) -> tuple[Optional[OperationState], Optional[torch.Tensor], bool]:
         """Get the state that represents the next operation (can be from another benchmark).
 
         Args:
@@ -209,16 +208,14 @@ class Env:
             torch.Tensor: The observation vector of the next state.
             bool: Flag indicating if the benchmark is done.
         """
-        bench_data = self.benchmarks_data[self.bench_index]
-        operation_idx = bench_data.operation_tags.index(state.operation_tag)
-
         # Reset to another benchmark if the current benchmark is done (reached first operation)
-        if operation_idx == 0:
-            return *self.reset(), True
+        if self.__bench_is_done(state):
+            return None, None, True
 
         # Build a new state that points to the next operation
-        new_op_tag = bench_data.operation_tags[operation_idx - 1]
-        new_op_features = bench_data.operations[new_op_tag]
+        new_op_index = self.__current_op_index(state) - 1
+        new_op_tag = self.__current_bench_data.operation_tags[new_op_index]
+        new_op_features = self.__current_bench_data.operations[new_op_tag]
         new_action_mask = self.__init_action_mask(new_op_features)
         new_actions = self.__init_action_history()
         next_state = OperationState(
@@ -238,6 +235,62 @@ class Env:
 
         return next_state, self.__get_obs(next_state), False
 
+    def __init_op_state(self, operation_idx: int) -> tuple[OperationState, torch.Tensor]:
+        """Create a new operation state.
+
+        Args:
+            operation_idx (int): The operation index.
+
+        Returns:
+            OperationState: The new operation state.
+            torch.Tensor: The observation vector of the new operation state.
+        """
+        operation_tag = self.__current_bench_data.operation_tags[operation_idx]
+        operation_features = self.__current_bench_data.operations[operation_tag]
+
+        # Build action mask
+        action_mask = self.__init_action_mask(operation_features)
+
+        # Create empty action history
+        actions = self.__init_action_history()
+
+        state = OperationState(
+            bench_name=self.__current_bench_data.bench_name,
+            operation_tag=operation_tag,
+            operation_features=operation_features.copy(),
+            validated_code=self.__current_bench_data.code,
+            transformed_code=self.__current_bench_data.code,
+            actions=actions,
+            action_mask=action_mask,
+            step_count=0,
+            exec_time=self.__current_bench_data.root_exec_time,
+            transformation_history=[],
+            interchange_permutation=[],
+            tmp_file=self.tmp_file,
+        )
+
+        return state, self.__get_obs(state)
+
+    @property
+    def __current_bench_data(self) -> BenchmarkFeatures:
+        """Get the current benchmark data.
+
+        Returns:
+            BenchmarkFeatures: The current benchmark data.
+        """
+        return self.benchmarks_data[self.__bench_index]
+
+    def __current_op_index(self, state: OperationState) -> int:
+        """Get the index of the current operation.
+
+        Args:
+            state (OperationState): The current state.
+
+        Returns:
+            int: The index of the current operation.
+        """
+        return self.__current_bench_data.operation_tags.index(state.operation_tag)
+
     def __bench_is_done(self, state: OperationState) -> bool:
         """Check if the benchmark is done.
 
@@ -247,10 +300,7 @@ class Env:
         Returns:
             bool: A flag indicating if the benchmark is done.
         """
-        bench_data = self.benchmarks_data[self.bench_index]
-        operation_idx = bench_data.operation_tags.index(state.operation_tag)
-
-        return operation_idx == 0
+        return self.__current_op_index(state) == 0
 
     def __get_op_type_vector(self, op_type: OperationType):
         """Convert the operation type to an integer.
@@ -270,7 +320,7 @@ class Env:
         ])
 
     def __get_interchange_perm_vector(self, state: OperationState) -> np.ndarray:
-        """Convert the interchange permutation to a vector.
+        """Get the vector representing next interchange level
 
         Args:
             state (OperationState): The current state.
@@ -280,55 +330,19 @@ class Env:
         """
         next_loop = len(state.interchange_permutation)
         assert next_loop < len(state.operation_features.nested_loops)
-        perm_vector = np.zeros(cfg.max_num_loops, dtype=np.bool_)
-        perm_vector[next_loop] = 1
-        return perm_vector
-
-    def __init_op_state(self, bench_data: BenchmarkFeatures, operation_idx: int) -> tuple[OperationState, torch.Tensor]:
-        """Create a new operation state.
-
-        Args:
-            bench_idx (int): The benchmark index.
-            operation_idx (int): The operation index.
-
-        Returns:
-            OperationState: The new operation state.
-            torch.Tensor: The observation vector of the new operation state.
-        """
-        operation_tag = bench_data.operation_tags[operation_idx]
-        operation_features = bench_data.operations[operation_tag]
-
-        # Build action mask
-        action_mask = self.__init_action_mask(operation_features)
-
-        # Create empty action history
-        actions = self.__init_action_history()
-
-        state = OperationState(
-            bench_name=bench_data.bench_name,
-            operation_tag=operation_tag,
-            operation_features=operation_features.copy(),
-            validated_code=bench_data.code,
-            transformed_code=bench_data.code,
-            actions=actions,
-            action_mask=action_mask,
-            step_count=0,
-            exec_time=bench_data.root_exec_time,
-            transformation_history=[],
-            interchange_permutation=[],
-            tmp_file=self.tmp_file,
-        )
-
-        return state, self.__get_obs(state)
+        # perm_vector = np.zeros(cfg.max_num_loops, dtype=np.bool_)
+        # perm_vector[next_loop] = 1
+        # return perm_vector
+        return (np.arange(cfg.max_num_loops) == next_loop).astype(np.bool_)
 
     def __init_action_mask(self, operation_features: OperationFeatures) -> np.ndarray:
         """Initialize the action mask.
 
         Notes:
-            Action mask (NUM_TRANSFORMATIONS + L + L + interchange_mask):
+            Action mask (NUM_TRANSFORMATIONS + L * (TS + 1) + L * (TS + 1) + interchange_mask):
                 Transformations: no_transform, TP, T, I, vect
-                TP: L loops
-                T : L loops
+                TP: L loops * (TS + 1)
+                T : L loops * (TS + 1)
                 interchange_mask: 3 * L - 6 | L | 0
 
         Args:
@@ -340,9 +354,10 @@ class Env:
         num_loops = len(operation_features.nested_loops)
 
         L = cfg.max_num_loops
+        TS = cfg.num_tile_sizes
         TP_BEGIN = cfg.num_transformations
-        T_BEGIN = TP_BEGIN + L
-        I_BEGIN_1C = T_BEGIN + L
+        T_BEGIN = TP_BEGIN + L * (TS + 1)
+        I_BEGIN_1C = T_BEGIN + L * (TS + 1)
         I_BEGIN_2C = I_BEGIN_1C + L - 1
         I_BEGIN_3C = I_BEGIN_2C + L - 2
 
@@ -354,10 +369,10 @@ class Env:
             case 'continuous':
                 interchange_mask = 0
 
-        action_mask = np.ones((cfg.num_transformations + 2 * L + interchange_mask), dtype=bool)
+        action_mask = np.ones((cfg.num_transformations + 2 * L * (TS + 1) + interchange_mask), dtype=bool)
         action_mask[:cfg.num_transformations] = cfg.init_action_mask
-        action_mask[TP_BEGIN + num_loops:T_BEGIN] = False
-        action_mask[T_BEGIN + num_loops:I_BEGIN_1C] = False
+        action_mask[TP_BEGIN:T_BEGIN] = self.__tiling_mask(operation_features.nested_loops, for_parallelization=True)
+        action_mask[T_BEGIN:I_BEGIN_1C] = self.__tiling_mask(operation_features.nested_loops, for_parallelization=False)
 
         if cfg.interchange_mode == 'enumerate':
             action_mask[I_BEGIN_1C + max(num_loops - 1, 0):I_BEGIN_2C] = False
@@ -366,31 +381,35 @@ class Env:
         elif cfg.interchange_mode == 'pointers':
             action_mask[I_BEGIN_1C + num_loops:] = False
 
+        # If we have only one loop -> Allow the first candidate which will be the identity permutation
         if num_loops == 1 and cfg.interchange_mode == 'enumerate':
-            # If we have only one loop -> Allow the first candidate which will be the identity permutation
             action_mask[I_BEGIN_1C] = True
 
         action_mask = self.__ensure_feasible_vectorization(action_mask, operation_features)
 
         return action_mask
 
-    def __update_action_mask(self, action_mask: np.ndarray, transformation: str, parameters: list[int], num_loops: int) -> np.ndarray:
+    def __update_action_mask(self, action_mask: np.ndarray, transformation: str, parameters: list[int], operation_features: OperationFeatures) -> np.ndarray:
         """Update the action mask based on the transformation applied.
 
         Args:
-            state (OperationState): The current state of the environment.
+            action_mask (np.ndarray): The current action mask.
             transformation (str): The transformation applied.
             parameters (list[int]): The parameters of the transformation.
-            num_loops (int): The number of loops in the operation.
+            nested_loops (list[NestedLoopFeatures]): The nested loops features.
 
         Returns:
             np.ndarray: The updated action mask.
         """
+        num_loops = len(operation_features.nested_loops)
         new_action_mask = action_mask.copy()
 
         N = cfg.num_transformations
         L = cfg.max_num_loops
-        I_BEGIN = N + 2 * L
+        TS = cfg.num_tile_sizes
+        TP_BEGIN = N
+        T_BEGIN = TP_BEGIN + L * (TS + 1)
+        I_BEGIN = T_BEGIN + L * (TS + 1)
 
         if cfg.interchange_mode == 'pointers':
             # Reset pointer masking
@@ -410,11 +429,46 @@ class Env:
                 else:
                     new_action_mask[:N] = [False, True, False, False, False]
 
+        # Update tiling masks
+        new_action_mask[TP_BEGIN:T_BEGIN] = self.__tiling_mask(operation_features.nested_loops, for_parallelization=True)
+        new_action_mask[T_BEGIN:I_BEGIN] = self.__tiling_mask(operation_features.nested_loops, for_parallelization=False)
+
+        # If we have only one loop -> Allow the first candidate which will be the identity permutation
         if num_loops == 1 and cfg.interchange_mode == 'enumerate':
-            # If we have only one loop -> Allow the first candidate which will be the identity permutation
             new_action_mask[I_BEGIN] = True
 
+        new_action_mask = self.__ensure_feasible_vectorization(new_action_mask, operation_features)
+
         return new_action_mask
+
+    def __tiling_mask(self, nested_loops: list[NestedLoopFeatures], for_parallelization: bool) -> np.ndarray:
+        """Get the tiling mask for the operation.
+
+        Args:
+            nested_loops (OperationFeatures): The operation features.
+            for_parallelization (bool): A flag indicating if the tiling is for parallelization.
+
+        Returns:
+            np.ndarray: The tiling mask.
+        """
+        L = cfg.max_num_loops
+        TS = cfg.num_tile_sizes
+
+        num_loops = len(nested_loops)
+
+        tile_sizes_counts = [
+            self.__get_tiling_candidates(loop.upper_bound, loop.iterator_type, for_parallelization)[1] + 1
+            for loop in nested_loops
+        ]
+
+        mask = np.ones((L * (TS + 1)), dtype=bool)
+        mask[num_loops * (TS + 1):] = False
+        mask = mask.reshape((L, TS + 1))
+
+        for i, ts_count in enumerate(tile_sizes_counts):
+            mask[i, ts_count:] = False
+
+        return mask.reshape(-1)
 
     def __ensure_feasible_vectorization(self, action_mask: np.ndarray, operation_features: OperationFeatures) -> np.ndarray:
         """Automatically disable unfeasible vectorization if we should to.
@@ -551,7 +605,7 @@ class Env:
         if action_name in ['tiling', 'parallelization']:
             # Get loop upper bounds
             candidates = [
-                [0] + self.__get_tiling_candidates(loop.upper_bound, loop.iterator_type, action_name == 'parallelization')
+                [0] + self.__get_tiling_candidates(loop.upper_bound, loop.iterator_type, action_name == 'parallelization')[0]
                 for loop in state.operation_features.nested_loops
             ]
 
@@ -601,7 +655,7 @@ class Env:
 
         return ('no_transformation', [0])
 
-    def __get_tiling_candidates(self, n: int, iterator: Literal['parallel', 'reduction'], for_parallelization: bool) -> list[int]:
+    def __get_tiling_candidates(self, n: int, iterator: Literal['parallel', 'reduction'], for_parallelization: bool) -> tuple[list[int], int]:
         """Get the tiling candidates for a given loop.
 
         Args:
@@ -611,16 +665,20 @@ class Env:
 
         Returns:
             list[int]: The tiling candidates.
+            int: The number of candidates.
         """
         num_candidates = cfg.num_tile_sizes
 
-        # If there is only one or no iteration, then, no tiling is possible
+        # No tiling is possible if:
+        # - There is only one or no iteration
+        # - The iterator is reduction and the tiling is for parallelization
         if n <= 1 or (iterator == 'reduction' and for_parallelization):
-            return [0] * num_candidates
+            return [0] * num_candidates, 0
 
         # Get the factors of the loop upper bound
         factors = []
         f = 1
+        f_counts = 0
         while len(factors) < num_candidates:
             if f >= n:
                 factors += [0] * (num_candidates - len(factors))
@@ -628,9 +686,10 @@ class Env:
 
             if n % f == 0:
                 factors.append(f)
+                f_counts += 1
             f *= 2
 
-        return factors
+        return factors, f_counts
 
     def __get_interchange_candidates(self, num_loops: int) -> list[list[int]]:
         """Get all 1c 2c 3c possible interchanges for `num_loops`
@@ -788,7 +847,6 @@ class Env:
         Args:
             new (float): The new execution time.
             old (float): The old execution time.
-            a (int): The base of the logarithm. Defaults to 10.
 
         Returns:
             float: The calculated reward.
@@ -820,8 +878,11 @@ class Env:
         """
         num_loops = len(state.operation_features.nested_loops)
 
+        # Get updated operation features
+        state.operation_features = self.__update_operation_features(state.operation_features, transformation, parameters)
+
         # Update the action mask
-        state.action_mask = self.__update_action_mask(state.action_mask, transformation, parameters, num_loops)
+        state.action_mask = self.__update_action_mask(state.action_mask, transformation, parameters, state.operation_features)
 
         # If interchange permutation is not complete
         #  -> Record it in the state, and return
@@ -832,18 +893,44 @@ class Env:
         # Erase saved interchange permutation (Not needed anymore)
         state.interchange_permutation = []
 
-        # Get updated operation features
-        state.operation_features = update_operation_features(state, transformation, parameters)
-
         # Register the action in the history
         state.actions = self.__update_action_history(state, transformation, parameters)
         state.transformation_history.append((transformation, parameters))
 
-        # Verify if vectorization is feasible after the transformation
-        state.action_mask = self.__ensure_feasible_vectorization(state.action_mask, state.operation_features)
-
         # Update the step count
         state.step_count += 1
+
+    def __update_operation_features(self, operation_features: OperationFeatures, transformation: str, parameters: list[int]) -> OperationFeatures:
+        """Update the operation features after applying a transformation.
+
+        Args:
+            operation_features (OperationFeatures): The operation features.
+            transformation (str): The transformation name.
+            parameters (list[int]): The transformation parameters.
+
+        Returns:
+            OperationFeatures: The updated operation features.
+        """
+        new_operation_features = operation_features.copy()
+        num_loops = len(new_operation_features.nested_loops)
+
+        if transformation in ['no_transformation', 'vectorization']:
+            return new_operation_features
+
+        match transformation:
+            case 'parallelization' | 'tiling':
+                for nested_loop, tile_size in zip(new_operation_features.nested_loops, parameters):
+                    if tile_size == 0:
+                        continue
+                    nested_loop.upper_bound = tile_size
+            case 'interchange':
+                if len(parameters) == num_loops:
+                    for i, j in enumerate(parameters):
+                        new_operation_features.nested_loops[i] = operation_features.nested_loops[j]
+            case _:
+                raise ValueError(f"Invalid transformation: {transformation}")
+
+        return new_operation_features
 
     def __update_state_exec_infos(self, state: OperationState, new_exec_time: Optional[int]):
         """Update the state execution infos after evaluating the code.
@@ -857,8 +944,7 @@ class Env:
             self.__remove_invalid_trans(state)
             return
 
-        bench_data = self.benchmarks_data[self.bench_index]
-        operation_idx = bench_data.operation_tags.index(state.operation_tag)
+        operation_idx = self.__current_op_index(state)
 
         # Mark the code as validated
         state.validated_code = state.transformed_code

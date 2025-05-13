@@ -5,7 +5,7 @@ import os
 from copy import copy
 import subprocess
 from rl_autoschedular import config as cfg
-from rl_autoschedular.state import OperationFeatures, NestedLoopFeatures, BenchmarkFeatures, OperationState, OperationType
+from rl_autoschedular.state import OperationFeatures, NestedLoopFeatures, BenchmarkFeatures, OperationType
 
 
 # ================================================ Public functions ================================================
@@ -25,7 +25,7 @@ def build_op_features_vector(op_features: OperationFeatures):
     indices_dim = {arg: i for (i, arg) in enumerate(indices)}
 
     # Nested loop features: (upper/lower bounds, step)
-    nested_loops = np.zeros((cfg.max_num_loops,))
+    nested_loops = np.zeros(cfg.max_num_loops)
     for i, nested_loop in enumerate(op_features.nested_loops):
         if i == cfg.max_num_loops:
             break
@@ -58,10 +58,9 @@ def build_op_features_vector(op_features: OperationFeatures):
             store_access_matrices[m, n] = factor
 
     # Operations count:
-    operations_count = np.array(list(op_features.op_count.values()))
+    operations_count = np.array([op_features.op_count[s] for s in ['+', '-', '*', '/', 'exp']])
 
     # Feature vector:
-    nested_loops = nested_loops.reshape(-1)
     load_access_matrices = load_access_matrices.reshape(-1)
     store_access_matrices = store_access_matrices.reshape(-1)
 
@@ -205,36 +204,6 @@ def extract_bench_features_from_file(bench_name: str, file_path: str, root_execu
     raw_ast_info = result.stdout.decode('utf-8')
 
     return __extract_bench_features_from_ast_result(bench_name, raw_ast_info, root_execution_time)
-
-
-def update_operation_features(state: OperationState, transformation: str, parameters: list[int]) -> OperationFeatures:
-    """Update the operation features after applying a transformation.
-
-    Args:
-        operation_features (OperationFeatures): The operation features.
-        transformation (str): The transformation name.
-        parameters (list[int]): The transformation parameters.
-
-    Returns:
-        OperationFeatures: The updated operation features.
-    """
-    new_operation_features = state.operation_features.copy()
-    if transformation in ['no_transformation', 'vectorization']:
-        return new_operation_features
-
-    match transformation:
-        case 'parallelization' | 'tiling':
-            for nested_loop, tile_size in zip(new_operation_features.nested_loops, parameters):
-                if tile_size == 0:
-                    continue
-                nested_loop.upper_bound = tile_size
-        case 'interchange':
-            for i, j in enumerate(parameters):
-                new_operation_features.nested_loops[i] = state.operation_features.nested_loops[j]
-        case _:
-            raise ValueError(f"Invalid transformation: {transformation}")
-
-    return new_operation_features
 
 
 # def update_operation_features_from_scratch(state: OperationState) -> OperationFeatures:

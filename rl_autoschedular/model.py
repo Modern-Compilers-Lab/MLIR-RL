@@ -16,6 +16,7 @@ class HiearchyModel(nn.Module):
         L = cfg.max_num_loops
         D = cfg.max_num_load_store_dim
         SD = cfg.max_num_stores_loads
+        TS = cfg.num_tile_sizes
 
         match cfg.interchange_mode:
             case 'enumerate':
@@ -29,7 +30,7 @@ class HiearchyModel(nn.Module):
                 interchange_input = 0
 
         self.input_dim = 5 + L + L * D * SD + L * D + 5 + interchange_input + cfg.truncate * 3 * L
-        self.action_mask_size = N + L + L + interchange_mask
+        self.action_mask_size = N + 2 * L * (TS + 1) + interchange_mask
 
         self.policy_model = PolicyModel(self.input_dim, self.action_mask_size)
         self.value_model = ValueModel(self.input_dim, self.action_mask_size)
@@ -89,16 +90,20 @@ class HiearchyModel(nn.Module):
             else:
                 interchange_index = interchange_dist.probs.argmax(-1)
         else:
+            if eps is not None:
+                transformation_eps_dist, parallelization_eps_dist, tiling_eps_dist, interchange_eps_dist = self.__create_uniform_distributions(obs, num_loops)
             if eps is not None and torch.rand(1).item() < eps:
                 # Sample actions uniformly
-                transformation_uni_dist, parallelization_uni_dist, tiling_uni_dist, interchange_uni_dist = self.__create_uniform_distributions(obs, num_loops)
+                transformation_index = transformation_eps_dist.sample()
+                parallelization_index = parallelization_eps_dist.sample()
+                tiling_index = tiling_eps_dist.sample()
+                interchange_index = interchange_eps_dist.sample().long()
             else:
-                transformation_uni_dist, parallelization_uni_dist, tiling_uni_dist, interchange_uni_dist = transformation_dist, parallelization_dist, tiling_dist, interchange_dist
-            # Sample actions
-            transformation_index = transformation_uni_dist.sample()
-            parallelization_index = parallelization_uni_dist.sample()
-            tiling_index = tiling_uni_dist.sample()
-            interchange_index = interchange_uni_dist.sample().long()
+                # Sample actions
+                transformation_index = transformation_dist.sample()
+                parallelization_index = parallelization_dist.sample()
+                tiling_index = tiling_dist.sample()
+                interchange_index = interchange_dist.sample().long()
 
         if cfg.interchange_mode == 'continuous':
             # Clamp interchange index to [0, num_loops! - 1]
@@ -111,7 +116,9 @@ class HiearchyModel(nn.Module):
         # Calculate the log probabilities and entropies
         action_log_p, entropy = self.__calculate_dist_stats(
             [transformation_dist, parallelization_dist, tiling_dist, interchange_dist],
-            [transformation_index, parallelization_index, tiling_index, interchange_index]
+            [transformation_index, parallelization_index, tiling_index, interchange_index],
+            eps_dists=[transformation_eps_dist, parallelization_eps_dist, tiling_eps_dist, interchange_eps_dist] if eps is not None else None,
+            eps=eps
         )
 
         return actions, action_log_p, values, entropy
@@ -157,7 +164,7 @@ class HiearchyModel(nn.Module):
 
         return transformation_dist, parallelization_dist, tiling_dist, interchange_dist
 
-    def __calculate_dist_stats(self, dists: list[Distribution], indices: list[torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
+    def __calculate_dist_stats(self, dists: list[Distribution], indices: list[torch.Tensor], eps_dists: Optional[list[Distribution]] = None, eps: Optional[float] = None) -> tuple[torch.Tensor, torch.Tensor]:
         """Calculate the log probabilities and entropies of the actions.
 
         Args:
@@ -173,6 +180,8 @@ class HiearchyModel(nn.Module):
         Returns:
             tuple[torch.Tensor, torch.Tensor]: The log probabilities and entropies of the
         """
+        assert (eps_dists is None) == (eps is None), 'eps_dists and eps must be both None or both not None.'
+
         transformation_dist, parallelization_dist, tiling_dist, interchange_dist = dists
         transformation_index, parallelization_index, tiling_index, interchange_index = indices
 
@@ -183,25 +192,25 @@ class HiearchyModel(nn.Module):
         tiling_log_p = tiling_dist.log_prob(tiling_index).sum(-1)
         interchange_log_p = interchange_dist.log_prob(interchange_index)
 
-        # Calculate the total log probability and entropy
+        if eps_dists is not None:
+            transformation_eps_dist, parallelization_eps_dist, tiling_eps_dist, interchange_eps_dist = eps_dists
+            transformation_log_p = ((1 - eps) * transformation_log_p.exp() + eps * transformation_eps_dist.log_prob(transformation_index).exp()).log()
+            parallelization_log_p = ((1 - eps) * parallelization_log_p.exp() + eps * parallelization_eps_dist.log_prob(parallelization_index).sum(-1).exp()).log()
+            tiling_log_p = ((1 - eps) * tiling_log_p.exp() + eps * tiling_eps_dist.log_prob(tiling_index).sum(-1).exp()).log()
+            interchange_log_p = ((1 - eps) * interchange_log_p.exp() + eps * interchange_eps_dist.log_prob(interchange_index).exp()).log()
+
+        # Calculate the total log probability
         action_log_p = transformation_log_p
+        action_log_p[transformation_index == 1] += parallelization_log_p[transformation_index == 1]
+        action_log_p[transformation_index == 2] += tiling_log_p[transformation_index == 2]
+        action_log_p[transformation_index == 3] += interchange_log_p[transformation_index == 3]
+
+        # Calculate the entropy
         entropy = transformation_dist.entropy()
-        if cfg.mul_log_p:
-            action_log_p += parallelization_log_p * (transformation_index == 1)
-            action_log_p += tiling_log_p * (transformation_index == 2)
-            action_log_p += interchange_log_p * (transformation_index == 3)
-            entropy += parallelization_dist.entropy().sum(-1) * (transformation_index == 1)
-            entropy += tiling_dist.entropy().sum(-1) * (transformation_index == 2)
-            if not isinstance(interchange_dist, Binomial) or batch_size == 1:
-                entropy += interchange_dist.entropy() * (transformation_index == 3)
-        else:
-            action_log_p[transformation_index == 1] += parallelization_log_p[transformation_index == 1]
-            action_log_p[transformation_index == 2] += tiling_log_p[transformation_index == 2]
-            action_log_p[transformation_index == 3] += interchange_log_p[transformation_index == 3]
-            entropy[transformation_index == 1] += parallelization_dist.entropy().sum(-1)[transformation_index == 1]
-            entropy[transformation_index == 2] += tiling_dist.entropy().sum(-1)[transformation_index == 2]
-            if not isinstance(interchange_dist, Binomial) or batch_size == 1:
-                entropy[transformation_index == 3] += interchange_dist.entropy()[transformation_index == 3]
+        entropy[transformation_index == 1] += parallelization_dist.entropy().sum(-1)[transformation_index == 1]
+        entropy[transformation_index == 2] += tiling_dist.entropy().sum(-1)[transformation_index == 2]
+        if not isinstance(interchange_dist, Binomial) or batch_size == 1:
+            entropy[transformation_index == 3] += interchange_dist.entropy()[transformation_index == 3]
 
         return action_log_p, entropy
 
@@ -620,22 +629,17 @@ class InverseModel(nn.Module):
         transformation_logits_hat, parallelization_logits_hat, tiling_logits_hat, interchange_logits_hat = action_logits
 
         transformation_loss = self.disc_loss(transformation_logits_hat, transformation_index)
-        parallelization_loss = self.disc_loss(parallelization_logits_hat.reshape(batch_size * L, TS + 1), parallelization_index.flatten()).reshape(batch_size, L).sum(-1)
-        tiling_loss = self.disc_loss(tiling_logits_hat.reshape(batch_size * L, TS + 1), tiling_index.flatten()).reshape(batch_size, L).sum(-1)
+        parallelization_loss = self.disc_loss(parallelization_logits_hat.reshape(batch_size * L, TS + 1), parallelization_index.reshape(-1)).reshape(batch_size, L).sum(-1)
+        tiling_loss = self.disc_loss(tiling_logits_hat.reshape(batch_size * L, TS + 1), tiling_index.reshape(-1)).reshape(batch_size, L).sum(-1)
         if cfg.interchange_mode == 'continuous':
             interchange_loss = self.cont_loss(interchange_logits_hat.squeeze(-1), interchange_index.float())
         else:
             interchange_loss = self.disc_loss(interchange_logits_hat, interchange_index)
 
         loss = transformation_loss
-        if cfg.mul_log_p:
-            loss += parallelization_loss * (transformation_index == 1)
-            loss += tiling_loss * (transformation_index == 2)
-            loss += interchange_loss * (transformation_index == 3)
-        else:
-            loss[transformation_index == 1] += parallelization_loss[transformation_index == 1]
-            loss[transformation_index == 2] += tiling_loss[transformation_index == 2]
-            loss[transformation_index == 3] += interchange_loss[transformation_index == 3]
+        loss[transformation_index == 1] += parallelization_loss[transformation_index == 1]
+        loss[transformation_index == 2] += tiling_loss[transformation_index == 2]
+        loss[transformation_index == 3] += interchange_loss[transformation_index == 3]
 
         return loss.mean()
 
@@ -650,17 +654,16 @@ def extract_masks(action_mask: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor
         tuple[Tensor, Tensor, Tensor, Tensor]: The masks for the transformations, parallelizations, tilings, and interchanges.
     """
     batch_size = action_mask.shape[0]
+    N = cfg.num_transformations
     L = cfg.max_num_loops
     TS = cfg.num_tile_sizes
-    TP_BEGIN = cfg.num_transformations
-    T_BEGIN = TP_BEGIN + L
-    I_BEGIN = T_BEGIN + L
+    TP_BEGIN = N
+    T_BEGIN = TP_BEGIN + L * (TS + 1)
+    I_BEGIN = T_BEGIN + L * (TS + 1)
 
-    transform_mask = action_mask[:, :cfg.num_transformations]
-    TP_mask = action_mask[:, TP_BEGIN:T_BEGIN].unsqueeze(-1).broadcast_to(batch_size, L, TS + 1)
-    TP_mask[:, :, 0] = 1  # Never mask "no tiling"
-    T_mask = action_mask[:, T_BEGIN:I_BEGIN].unsqueeze(-1).broadcast_to(batch_size, L, TS + 1)
-    T_mask[:, :, 0] = 1  # Never mask "no tiling"
+    transform_mask = action_mask[:, :N]
+    TP_mask = action_mask[:, TP_BEGIN:T_BEGIN]
+    T_mask = action_mask[:, T_BEGIN:I_BEGIN]
     if cfg.interchange_mode == 'continuous':
         I_mask = torch.ones((batch_size, 1), dtype=torch.bool)
     else:

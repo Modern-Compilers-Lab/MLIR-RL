@@ -84,9 +84,6 @@ def collect_trajectory(model: Model, env: Env, step: int, device: torch.device =
     Returns:
         Trajectory: The collected trajectory.
     """
-
-    state, obs = env.reset()
-
     stored_state: list[OperationState] = []
     stored_action_index: list[tuple[str, Optional[Union[list[int], int]]]] = []
     stored_obs: list[torch.Tensor] = []
@@ -104,16 +101,16 @@ def collect_trajectory(model: Model, env: Env, step: int, device: torch.device =
     log_final_speedups: list[float] = []
     log_op_speedups: dict[str, list[float]] = {}
 
+    eps = None
     if 'epsilon' in cfg.exploration:
         ratio = step / cfg.nb_iterations
         init_eps = 0.5
         final_eps = 0.001
         eps = final_eps + (init_eps - final_eps) * (1 - ratio)
-    else:
-        eps = None
 
     traj_trange = trange(cfg.bench_count, desc='Trajectory')
     for _ in traj_trange:
+        state, obs = env.reset()
         traj_trange.set_postfix({'eps': eps, 'bench': state.bench_name})
         bench_done = False
         while not bench_done:
@@ -255,32 +252,24 @@ def shuffle_ppo_data(stored_action_index: list[tuple[str, Optional[Union[list[in
 
     stored_action_index = [stored_action_index[i] for i in permutation]
     stored_states = [stored_states[i] for i in permutation]
-    shuffled_tensors = [tensor[permutation] for tensor in tensors]
 
-    return stored_action_index, stored_states, *shuffled_tensors
+    return stored_action_index, stored_states, *shuffle_tensors(*tensors, permutation=permutation)
 
 
-def shuffle_value_data(stored_x: torch.Tensor, stored_returns: torch.Tensor):
-    """Shuffle the value data.
+def shuffle_tensors(*tensors: torch.Tensor, permutation: Optional[torch.Tensor] = None):
+    """Shuffle the tensors.
 
     Args:
-        stored_x (torch.Tensor): stored observation vectors.
-        stored_returns (torch.Tensor): stored returns.
+        *tensors (torch.Tensor): The tensors to shuffle.
 
     Returns:
-        torch.Tensor: shuffled observation vectors.
-        torch.Tensor: shuffled returns.
+        tuple[torch.Tensor]: The shuffled tensors.
     """
-
-    permutation = torch.randperm(stored_x.shape[0])
-
-    stored_x = stored_x[permutation]
-    stored_returns = stored_returns[permutation]
-
-    return stored_x, stored_returns
+    permutation = torch.randperm(tensors[0].shape[0]) if permutation is None else permutation
+    return tuple(tensor[permutation] for tensor in tensors)
 
 
-def compute_gae(done: torch.Tensor, rewards: torch.Tensor, values: torch.Tensor, next_values: torch.Tensor, gamma: float = 0.99, lambda_: float = 0.95) -> tuple[torch.Tensor, torch.Tensor]:
+def compute_gae(done: torch.Tensor, rewards: torch.Tensor, values: torch.Tensor, next_values: torch.Tensor, gamma: float = 1, lambda_: float = 0.95) -> tuple[torch.Tensor, torch.Tensor]:
     """Compute the Generalized Advantage Estimation.
 
     Args:
@@ -288,7 +277,7 @@ def compute_gae(done: torch.Tensor, rewards: torch.Tensor, values: torch.Tensor,
         rewards (torch.Tensor): rewards.
         values (torch.Tensor): values.
         next_values (torch.Tensor): values of the next state.
-        gamma (float): discount factor. Defaults to 0.99.
+        gamma (float): discount factor. Defaults to 1.
         lambda_ (float): GAE factor. Defaults to 0.95.
 
     Returns:
@@ -314,14 +303,13 @@ def compute_gae(done: torch.Tensor, rewards: torch.Tensor, values: torch.Tensor,
     return advantages, returns
 
 
-def compute_returns(done: torch.Tensor, rewards: torch.Tensor, gamma: float = 0.99) -> torch.Tensor:
+def compute_returns(done: torch.Tensor, rewards: torch.Tensor, gamma: float = 1) -> torch.Tensor:
     """Compute the returns.
 
     Args:
         done (torch.Tensor): done flags.
         rewards (torch.Tensor): rewards.
-        values (torch.Tensor): values.
-        gamma (float): discount factor. Defaults to 0.99.
+        gamma (float): discount factor. Defaults to 1.
 
     Returns:
         torch.Tensor: returns.
@@ -349,7 +337,6 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
         trajectory (Trajectory): The trajectory to use.
         model (Model): The model to update.
         optimizer (torch.optim.Optimizer): The optimizer to use.
-        neptune_logs (neptune.Run): The neptune run to log to if any. Defaults to None.
         device (torch.device): The device to use. Defaults to torch.device('cpu').
 
     Returns:
@@ -380,7 +367,8 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
         stored_rewards = stored_rewards.reshape(-1)
         stored_done = stored_done.reshape(-1)
 
-        stored_advantages, stored_returns = compute_gae(stored_done, stored_rewards, stored_values, stored_next_values)
+        stored_advantages, _ = compute_gae(stored_done, stored_rewards, stored_values, stored_next_values)
+        stored_returns = compute_returns(stored_done, stored_rewards)
 
         stored_action_index, stored_states, stored_obs, stored_values, stored_next_obs, stored_action_log_p, stored_advantages, stored_returns = shuffle_ppo_data(
             stored_action_index,
@@ -406,18 +394,19 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
             advantages = stored_advantages[i:betch_end]
             returns = stored_returns[i:betch_end]
 
-            # obs = torch.cat([
-
-            if advantages.shape[0] > 1:
+            if cfg.normalize_adv and advantages.shape[0] > 1:
                 advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
             with torch.enable_grad():
                 new_actions_log_p, new_values, entropy = model(obs, [len(state.operation_features.nested_loops) for state in states], actions=actions)
 
                 policy_loss = model.policy_model.loss(new_actions_log_p, actions_log_p, advantages)
-                value_loss = model.value_model.loss(new_values, values, returns)
+                loss = policy_loss
 
-                loss = policy_loss + cfg.value_coef * value_loss
+                if cfg.value_epochs == 0:
+                    value_loss = model.value_model.loss(new_values, values, returns)
+                    loss += cfg.value_coef * value_loss
+
                 if 'curiosity' in cfg.exploration:
                     next_states_latent, next_states_latent_hat, action_logits = model.icm_model(obs, next_obs, actions)
                     curiosity_loss = model.icm_model.loss(next_states_latent, next_states_latent_hat, action_logits, actions)
@@ -441,26 +430,106 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
             ppo_trange.set_postfix({
                 'loss': loss.item(),
                 'policy_loss': policy_loss.item(),
-                'value_loss': value_loss.item(),
+                'value_loss': value_loss.item() if cfg.value_epochs == 0 else None,
                 'approx_kl': approx_kl.item()
             })
             log_policy_loss.append(policy_loss.item())
-            log_value_loss.append(value_loss.item())
             # log_clip_frac.append(clip_frac.item())
             log_approx_kl.append(approx_kl.item())
+            if cfg.value_epochs == 0:
+                log_value_loss.append(value_loss.item())
             if 'curiosity' in cfg.exploration:
                 log_curiosity_loss.append(curiosity_loss.item())
             if 'entropy' in cfg.exploration:
                 log_entropy_loss.append(entropy_loss.item())
 
     fl['train_ppo/policy_loss'].extend(log_policy_loss)
-    fl['train_ppo/value_loss'].extend(log_value_loss)
     # fl['train_ppo/clip_factor'].extend(log_clip_frac)
     fl['train_ppo/approx_kl'].extend(log_approx_kl)
+    if cfg.value_epochs == 0:
+        fl['train_ppo/value_loss'].extend(log_value_loss)
     if 'curiosity' in cfg.exploration:
         fl['train_ppo/curiosity_loss'].extend(log_curiosity_loss)
     if 'entropy' in cfg.exploration:
         fl['train_ppo/entropy_loss'].extend(log_entropy_loss)
+
+
+def value_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Optimizer, device: torch.device = torch.device('cpu')):
+    """Update the value model using the trajectory.
+
+    Args:
+        trajectory (Trajectory): The trajectory to use.
+        model (Model): The model to update.
+        optimizer (torch.optim.Optimizer): The optimizer to use.
+        device (torch.device): The device to use. Defaults to torch.device('cpu').
+    """
+    log_loss: list[float] = []
+
+    value_trange = trange(cfg.value_epochs, desc='Value Epochs')
+    for _ in value_trange:
+        stored_obs = trajectory.obs
+        stored_values = trajectory.values
+        stored_rewards = trajectory.rewards
+        stored_done = trajectory.done
+
+        stored_values = stored_values.reshape(-1)
+        stored_rewards = stored_rewards.reshape(-1)
+        stored_done = stored_done.reshape(-1)
+
+        stored_returns = compute_returns(stored_done, stored_rewards)
+
+        stored_obs, stored_values, stored_returns = shuffle_tensors(stored_obs, stored_values, stored_returns)
+
+        len_trajectory = stored_values.shape[0]
+        for i in range(0, len_trajectory, cfg.ppo_batch_size):
+            betch_end = min(i + cfg.ppo_batch_size, len_trajectory)
+
+            obs = stored_obs[i:betch_end]
+            values = stored_values[i:betch_end]
+            returns = stored_returns[i:betch_end]
+
+            with torch.enable_grad():
+                new_values = model.value_model(obs)
+
+                loss = model.value_model.loss(new_values, values, returns)
+
+            optimizer.zero_grad()
+            try:
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
+                optimizer.step()
+            except Exception as e:
+                print_error(f'Error during Value update: {e}')
+
+            # Logging
+            value_trange.set_postfix({'loss': loss.item()})
+            log_loss.append(loss.item())
+
+    fl['train_value/loss'].extend(log_loss)
+
+
+def update_trajectory_values(trajectory: Trajectory, model: Model, device: torch.device = torch.device('cpu')):
+    """Update the values in the trajectory after fitting the value model.
+
+    Args:
+        trajectory (Trajectory): The trajectory to update.
+        model (Model): The model to use.
+        device (torch.device): The device to use. Defaults to torch.device('cpu').
+    """
+    stored_obs = trajectory.obs
+    stored_next_obs = trajectory.next_obs
+
+    # Update the values in the trajectory
+    stored_values = model.value_model(stored_obs)
+    stored_next_values = model.value_model(stored_next_obs)
+
+    # For logging
+    print_info(f"Old values: {trajectory.values}, New values: {stored_values}")
+    print_info(f"Old next values: {trajectory.next_values}, New next values: {stored_next_values}")
+
+    # Update the trajectory
+    trajectory.values = stored_values
+    trajectory.next_values = stored_next_values
 
 
 def evaluate_benchmark(model: Model, env: Env, device: torch.device = torch.device('cpu')):
@@ -484,7 +553,6 @@ def evaluate_benchmark(model: Model, env: Env, device: torch.device = torch.devi
     for i in range(nbr_benchmarks):
         # Reset the environement with the specific benchmark
         state, obs = env.reset(i)
-        obs = obs.to(device)
         print_info(f'Evaluation ({i}/{nbr_benchmarks}): {state.bench_name}')
 
         bench_done = False

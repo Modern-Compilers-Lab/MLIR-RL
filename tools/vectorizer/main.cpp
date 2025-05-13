@@ -153,8 +153,7 @@ int main(int argc, char **argv)
     IRRewriter rewriter(&context);
     llvm::ArrayRef<int64_t> emptyArrayRef;
     llvm::ArrayRef<bool> boolArrayRef;
-    mlir::LogicalResult vectorized = mlir::linalg::vectorize(rewriter, targetOp, emptyArrayRef,
-                                                            boolArrayRef, false);
+    mlir::LogicalResult vectorized = mlir::linalg::vectorize(rewriter, targetOp);
 
     RewritePatternSet patterns(&context);
 

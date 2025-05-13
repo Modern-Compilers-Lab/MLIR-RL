@@ -12,6 +12,8 @@ from utils.log import print_info, print_success
 from rl_autoschedular.ppo import (
     collect_trajectory,
     ppo_update,
+    value_update,
+    update_trajectory_values,
     evaluate_benchmark
 )
 
@@ -47,6 +49,22 @@ for step in trange(cfg.nb_iterations, desc='Main loop'):
         step,
         device,
     )
+
+    # Fit value model to trajectory rewards
+    if cfg.value_epochs > 0:
+        value_update(
+            trajectory,
+            model,
+            optimizer,
+            device,
+        )
+
+        # Update trajectory values to be used in PPO update
+        update_trajectory_values(
+            trajectory,
+            model,
+            device,
+        )
 
     ppo_update(
         trajectory,

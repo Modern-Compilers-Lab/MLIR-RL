@@ -36,8 +36,8 @@ class Config(metaclass=Singleton):
     """Flag to indicate if the new architecture should be used or not"""
     normalize_bounds: bool
     """Flag to indicate if the upper bounds in the input should be normalized or not"""
-    mul_log_p: bool
-    """Flag to indicate if the log probability should be multiplied by 0 or selected"""
+    normalize_adv: bool
+    """Flag to indicate if the advantages should be normalized or not"""
     force_vector: bool
     """Flag to force vectorization"""
     sparse_reward: bool
@@ -54,12 +54,12 @@ class Config(metaclass=Singleton):
     """Number of batches in a trajectory"""
     nb_iterations: int
     """Number of iterations"""
-    value_epochs: int
-    """Number of epochs for value training"""
     ppo_epochs: int
     """Number of epochs for PPO"""
     ppo_batch_size: int
     """Batch size for PPO"""
+    value_epochs: int
+    """Number of epochs for value update"""
     value_coef: float
     """Value coefficient"""
     value_alpha: float
@@ -109,7 +109,7 @@ class Config(metaclass=Singleton):
         self.reverse_history = True
         self.new_architecture = False
         self.normalize_bounds = True
-        self.mul_log_p = False
+        self.normalize_adv = True
         self.force_vector = True
         self.sparse_reward = True
         self.activation = "relu"
@@ -118,9 +118,9 @@ class Config(metaclass=Singleton):
         self.benchmarks_folder_path = ""
         self.bench_count = 20
         self.nb_iterations = 10000
-        self.value_epochs = 4
         self.ppo_epochs = 4
         self.ppo_batch_size = 4
+        self.value_epochs = 32
         self.value_coef = 0.5
         self.value_alpha = 0.0
         self.entropy_coef = 0.01
@@ -158,7 +158,7 @@ class Config(metaclass=Singleton):
         self.reverse_history = config["reverse_history"]
         self.new_architecture = config["new_architecture"]
         self.normalize_bounds = config["normalize_bounds"]
-        self.mul_log_p = config["mul_log_p"]
+        self.normalize_adv = config["normalize_adv"]
         self.force_vector = config["force_vector"]
         self.sparse_reward = config["sparse_reward"]
         self.activation = config["activation"]
@@ -167,9 +167,9 @@ class Config(metaclass=Singleton):
         self.benchmarks_folder_path = config["benchmarks_folder_path"]
         self.bench_count = config["bench_count"]
         self.nb_iterations = config["nb_iterations"]
-        self.value_epochs = config["value_epochs"]
         self.ppo_epochs = config["ppo_epochs"]
         self.ppo_batch_size = config["ppo_batch_size"]
+        self.value_epochs = config["value_epochs"]
         self.value_coef = config["value_coef"]
         self.value_alpha = config["value_alpha"]
         self.entropy_coef = config["entropy_coef"]
@@ -210,7 +210,7 @@ class Config(metaclass=Singleton):
             "reverse_history": self.reverse_history,
             "new_architecture": self.new_architecture,
             "normalize_bounds": self.normalize_bounds,
-            "mul_log_p": self.mul_log_p,
+            "normalize_adv": self.normalize_adv,
             "force_vector": self.force_vector,
             "sparse_reward": self.sparse_reward,
             "activation": self.activation,
@@ -219,10 +219,10 @@ class Config(metaclass=Singleton):
             "benchmarks_folder_path": self.benchmarks_folder_path,
             "bench_count": self.bench_count,
             "nb_iterations": self.nb_iterations,
-            "value_epochs": self.value_epochs,
             "value_alpha": self.value_alpha,
             "ppo_epochs": self.ppo_epochs,
             "ppo_batch_size": self.ppo_batch_size,
+            "value_epochs": self.value_epochs,
             "value_coef": self.value_coef,
             "entropy_coef": self.entropy_coef,
             "reward_scale": self.reward_scale,
