@@ -416,6 +416,7 @@ class Env:
         mask = np.ones((L * (TS + 1)), dtype=bool)
         mask[num_loops * (TS + 1):] = False
         mask = mask.reshape((L, TS + 1))
+        mask[:, 0] = True
 
         for i, ts_count in enumerate(tile_sizes_counts):
             mask[i, ts_count:] = False

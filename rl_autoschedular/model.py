@@ -662,8 +662,8 @@ def extract_masks(action_mask: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor
     I_BEGIN = T_BEGIN + L * (TS + 1)
 
     transform_mask = action_mask[:, :N]
-    TP_mask = action_mask[:, TP_BEGIN:T_BEGIN]
-    T_mask = action_mask[:, T_BEGIN:I_BEGIN]
+    TP_mask = action_mask[:, TP_BEGIN:T_BEGIN].reshape(batch_size, L, TS + 1)
+    T_mask = action_mask[:, T_BEGIN:I_BEGIN].reshape(batch_size, L, TS + 1)
     if cfg.interchange_mode == 'continuous':
         I_mask = torch.ones((batch_size, 1), dtype=torch.bool)
     else:

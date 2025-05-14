@@ -523,10 +523,6 @@ def update_trajectory_values(trajectory: Trajectory, model: Model, device: torch
     stored_values = model.value_model(stored_obs)
     stored_next_values = model.value_model(stored_next_obs)
 
-    # For logging
-    print_info(f"Old values: {trajectory.values}, New values: {stored_values}")
-    print_info(f"Old next values: {trajectory.next_values}, New next values: {stored_next_values}")
-
     # Update the trajectory
     trajectory.values = stored_values
     trajectory.next_values = stored_next_values
