@@ -28,8 +28,8 @@ if cfg.debug:
 print_info(f"Config: {cfg}")
 
 # Set environments
-env = Env()
-eval_env = Env(tmp_file=env.tmp_file)
+env = Env(is_training=True)
+eval_env = Env(is_training=False, tmp_file=env.tmp_file)
 print_success(f"Environments initialized: {env.tmp_file}")
 
 # Set model

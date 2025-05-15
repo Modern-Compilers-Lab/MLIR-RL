@@ -38,6 +38,8 @@ class Config(metaclass=Singleton):
     """Flag to force vectorization"""
     sparse_reward: bool
     """Flag to enable sparse reward"""
+    split_ops: bool
+    """Flag to enable splitting operations into separate benchmarks"""
     activation: Literal["relu", "tanh"]
     """The activation function to use in the network"""
     benchmarks_folder_path: str
@@ -74,6 +76,8 @@ class Config(metaclass=Singleton):
     """Maximum number of steps in the schedule"""
     json_file: str
     """Path to the JSON file containing the benchmarks execution times."""
+    eval_json_file: str
+    """Path to the JSON file containing the benchmarks execution times for evaluation."""
     tags: list[str]
     """List of tags to add to the neptune experiment"""
     debug: bool
@@ -104,6 +108,7 @@ class Config(metaclass=Singleton):
         self.normalize_adv = True
         self.force_vector = True
         self.sparse_reward = True
+        self.split_ops = False
         self.activation = "relu"
         self.benchmarks_folder_path = ""
         self.bench_count = 20
@@ -122,6 +127,7 @@ class Config(metaclass=Singleton):
         self.lr = 0.001
         self.truncate = 5
         self.json_file = ""
+        self.eval_json_file = ""
         self.tags = []
         self.debug = False
         self.exec_data_file = ""
@@ -150,6 +156,7 @@ class Config(metaclass=Singleton):
         self.normalize_adv = config["normalize_adv"]
         self.force_vector = config["force_vector"]
         self.sparse_reward = config["sparse_reward"]
+        self.split_ops = config["split_ops"]
         self.activation = config["activation"]
         self.benchmarks_folder_path = config["benchmarks_folder_path"]
         self.bench_count = config["bench_count"]
@@ -168,6 +175,7 @@ class Config(metaclass=Singleton):
         self.lr = config["lr"]
         self.truncate = config["truncate"]
         self.json_file = config["json_file"]
+        self.eval_json_file = config["eval_json_file"]
         self.tags = config["tags"]
         self.debug = config["debug"]
         self.exec_data_file = config["exec_data_file"]
@@ -194,6 +202,7 @@ class Config(metaclass=Singleton):
             "normalize_adv": self.normalize_adv,
             "force_vector": self.force_vector,
             "sparse_reward": self.sparse_reward,
+            "split_ops": self.split_ops,
             "activation": self.activation,
             "benchmarks_folder_path": self.benchmarks_folder_path,
             "bench_count": self.bench_count,
@@ -212,6 +221,7 @@ class Config(metaclass=Singleton):
             "lr": self.lr,
             "truncate": self.truncate,
             "json_file": self.json_file,
+            "eval_json_file": self.eval_json_file,
             "tags": self.tags,
             "debug": self.debug,
             "exec_data_file": self.exec_data_file,

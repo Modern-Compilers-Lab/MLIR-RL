@@ -70,6 +70,16 @@ class BenchmarkFeatures:
     root_exec_time: int
     """Execution time of the benchmark in nanoseconds without any transformation."""
 
+    def copy(self):
+        """Copy the current BenchmarkFeatures object."""
+        return BenchmarkFeatures(
+            self.bench_name,
+            self.code,
+            self.operation_tags.copy(),
+            {tag: op.copy() for tag, op in self.operations.items()},
+            self.root_exec_time
+        )
+
 
 @dataclass
 class OperationState:

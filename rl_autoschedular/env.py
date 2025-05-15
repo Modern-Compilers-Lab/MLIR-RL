@@ -25,19 +25,21 @@ class Env:
     """Lists for each benchmark the benchmark's name and its features."""
     tmp_file: str
     """The temporary file to store the intermediate representations."""
+    is_training: bool
+    """Flag indicating if the environment is in training mode or evaluation mode."""
 
     __bench_index: int
     """The index of the current benchmark."""
 
-    def __init__(self, tmp_file: Optional[str] = None):
+    def __init__(self, is_training: bool = True, tmp_file: Optional[str] = None):
         """Initialize the environment.
 
         Args:
             tmp_file (Optional[str]): The temporary file to store the intermediate representations. Defaults to None.
         """
+        self.is_training = is_training
+
         # Generate a random file to be used in order to apply the transformations and evaluate the code
-        # This is done in order to enable having multiple experiments at the same time, by letting each
-        # experiment use a separate unique file to read and write intermediate representations
         if tmp_file is None:
             random_str = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
             tmp_file = f"tmp-debug/{random_str}.mlir" if cfg.debug else f"tmp/{random_str}.mlir"
@@ -46,20 +48,38 @@ class Env:
         self.tmp_file = tmp_file
 
         # Load benchmark names and execution times from json file
-        with open(cfg.json_file, "r") as file:
+        bench_json_file = cfg.json_file
+
+        # If we are in evaluation mode, use the evaluation json file if provided
+        if cfg.eval_json_file and not is_training:
+            bench_json_file = cfg.eval_json_file
+
+        with open(bench_json_file) as file:
             benchmarks_json: dict[str, int] = json.load(file)
+
         # Build benchmark features
         self.benchmarks_data = []
         for bench_name, root_exec_time in tqdm(benchmarks_json.items(), desc="Extracting benchmark features", unit="bench"):
             bench_file = os.path.join(cfg.benchmarks_folder_path, bench_name + ".mlir")
             benchmark_data = extract_bench_features_from_file(bench_name, bench_file, root_exec_time)
-            self.benchmarks_data.append(benchmark_data)
 
-    def reset(self, bench_idx: Optional[int] = None, operation_idx: Optional[int] = None) -> tuple[OperationState, torch.Tensor]:
+            if cfg.split_ops and is_training and len(benchmark_data.operation_tags) > 1:
+                # Split benchmarks with more than one operation into multiple benchmarks
+                for tag in benchmark_data.operation_tags:
+                    # Create a new benchmark data with only the current operation
+                    new_bench_data = benchmark_data.copy()
+                    new_bench_data.bench_name = f"{benchmark_data.bench_name}_{tag}"
+                    new_bench_data.operation_tags = [tag]
+                    new_bench_data.operations = {tag: new_bench_data.operations[tag]}
+                    self.benchmarks_data.append(new_bench_data)
+            else:
+                self.benchmarks_data.append(benchmark_data)
+
+    def reset(self, bench_idx: Optional[int] = None) -> tuple[OperationState, torch.Tensor]:
         """Reset the environment.
 
         Args:
-            idx (Optional[int]): The index of the benchmark to set the environement to. If None, a random benchmark is selected. Defaults to None.
+            bench_idx (Optional[int]): The index of the benchmark to set the environement to. If None, a random benchmark is selected. Defaults to None.
 
         Returns:
             OperationState: The initial state of the environment.
@@ -71,7 +91,7 @@ class Env:
         else:
             self.__bench_index = random.randint(0, len(self.benchmarks_data) - 1)
 
-        return self.__init_op_state(-1 if operation_idx is None else operation_idx)
+        return self.__init_op_state(-1)
 
     def step(self, state: OperationState, raw_action: tuple[str, Optional[Union[list[int], int]]]) -> tuple[OperationState, torch.Tensor, float, bool, Optional[float]]:
         """Take a step in the environment.
