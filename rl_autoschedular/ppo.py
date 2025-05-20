@@ -6,7 +6,7 @@ from rl_autoschedular.state import OperationState
 from rl_autoschedular import config as cfg
 from rl_autoschedular import file_logger as fl
 from dataclasses import dataclass
-from utils.log import print_info, print_error, print_success
+from utils.log import print_error, print_success
 from tqdm import trange
 
 
@@ -481,8 +481,8 @@ def value_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Op
         stored_obs, stored_values, stored_returns = shuffle_tensors(stored_obs, stored_values, stored_returns)
 
         len_trajectory = stored_values.shape[0]
-        for i in range(0, len_trajectory, cfg.ppo_batch_size):
-            betch_end = min(i + cfg.ppo_batch_size, len_trajectory)
+        for i in range(0, len_trajectory, cfg.value_batch_size):
+            betch_end = min(i + cfg.value_batch_size, len_trajectory)
 
             obs = stored_obs[i:betch_end]
             values = stored_values[i:betch_end]
@@ -546,10 +546,10 @@ def evaluate_benchmark(model: Model, env: Env, device: torch.device = torch.devi
 
     speedup_values: list[float] = []
     nbr_benchmarks = len(env.benchmarks_data)
-    for i in range(nbr_benchmarks):
+    eval_trange = trange(nbr_benchmarks, desc='Evaluation')
+    for i in eval_trange:
         # Reset the environement with the specific benchmark
         state, obs = env.reset(i)
-        print_info(f'Evaluation ({i}/{nbr_benchmarks}): {state.bench_name}')
 
         bench_done = False
         cumulative_reward = 0
@@ -571,10 +571,15 @@ def evaluate_benchmark(model: Model, env: Env, device: torch.device = torch.devi
                 log_op_speedups[state.operation_features.operation_type].append(speedup)
 
             if op_done:
+                bench_name = state.bench_name
+                exec_time = next_state.exec_time
                 transformation_history = next_state.transformation_history.copy()
                 next_state, next_obs, bench_done = env.get_next_op_state(next_state)
                 if bench_done:
-                    print_success(f"Schedule: {transformation_history} - {speedup}")
+                    eval_trange.set_postfix({'bench': bench_name, 'speedup': speedup})
+                    print_success(f"Bench: {bench_name}, Schedule: {transformation_history} - {speedup}")
+                    fl[f'eval/exec_time/{bench_name}'].append(exec_time)
+                    fl[f'eval/speedup/{bench_name}'].append(speedup)
 
             state = next_state
             obs = next_obs

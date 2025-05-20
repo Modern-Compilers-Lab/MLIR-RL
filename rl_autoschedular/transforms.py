@@ -298,27 +298,33 @@ def transform_dialect_vectorise(code: str, operation_tag: str, tmp_file_path: st
 
     code = code.strip()
 
-    transform_dialect_code = f"""
-module attributes {{transform.with_named_sequence}} {{
-transform.named_sequence @__transform_main(%variant_op: !transform.any_op {{transform.readonly}})
-{{
+    transform_dialect_code = """
+    module attributes {transform.with_named_sequence} {
+        transform.named_sequence @__transform_main(%variant_op: !transform.any_op {transform.readonly})
+        {
+            %forall_op = transform.structured.match ops{["scf.forall"]}  in %variant_op : (!transform.any_op) -> !transform.any_op
 
-  // %conv_gen_2 = transform.structured.match attributes{{tag = "{operation_tag}"}} in %variant_op : (!transform.any_op) -> !transform.any_op
-  // %forall_op = transform.get_parent_op %conv_gen_2: (!transform.any_op) -> !transform.any_op
+            %original_fill = transform.structured.match ops{["linalg.fill"]} in %variant_op : (!transform.any_op) -> !transform.any_op
+            transform.structured.fuse_into_containing_op %original_fill into %forall_op : (!transform.any_op, !transform.any_op) -> (!transform.any_op, !transform.any_op)
 
-  %forall_op = transform.structured.match ops{{["scf.forall"]}}  in %variant_op : (!transform.any_op) -> !transform.any_op
+            %func = transform.structured.match ops{["func.func"]} in %variant_op: (!transform.any_op) -> !transform.any_op
+            %func_0 = transform.structured.vectorize_children_and_apply_patterns %func {vectorize_padding}: (!transform.any_op) -> (!transform.any_op)
 
+            transform.apply_patterns to %func_0 {
+                transform.apply_patterns.vector.lower_contraction lowering_strategy = "outerproduct"
+                transform.apply_patterns.vector.transfer_permutation_patterns
+                transform.apply_patterns.vector.lower_multi_reduction lowering_strategy = "innerparallel"
+                transform.apply_patterns.vector.split_transfer_full_partial split_transfer_strategy = "vector-transfer"
+                transform.apply_patterns.vector.transfer_to_scf max_transfer_rank = 1 full_unroll = true
+                transform.apply_patterns.vector.lower_transfer max_transfer_rank = 1
+                transform.apply_patterns.vector.lower_shape_cast
+                transform.apply_patterns.vector.lower_transpose lowering_strategy = "shuffle_1d"
+                transform.apply_patterns.canonicalization
+            } : !transform.any_op
 
-  %original_fill = transform.structured.match ops{{["linalg.fill"]}} in %variant_op : (!transform.any_op) -> !transform.any_op
-  transform.structured.fuse_into_containing_op %original_fill into %forall_op : (!transform.any_op, !transform.any_op) -> (!transform.any_op, !transform.any_op)
-
-  %func = transform.structured.match ops{{["func.func"]}} in %variant_op: (!transform.any_op) -> !transform.any_op
-  %func_0 = transform.structured.vectorize_children_and_apply_patterns %func {{vectorize_padding}}: (!transform.any_op) -> (!transform.any_op)
-
-  transform.yield
-}}
-}}
-""".strip()
+            transform.yield
+        }
+    }""".strip()
 
     code = code + '\n' + transform_dialect_code + '\n'
 

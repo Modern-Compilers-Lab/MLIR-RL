@@ -24,6 +24,7 @@ pass_pipeline = """builtin.module(
     convert-vector-to-scf,
     convert-linalg-to-loops,
     buffer-deallocation-pipeline,
+    convert-bufferization-to-memref,
     scf-forall-to-parallel,
     convert-scf-to-openmp,
     expand-strided-metadata,

@@ -64,9 +64,16 @@ def evaluate_code_with_bindings(code: str) -> tuple[Optional[int], Union[Excepti
     pass_pipeline = """builtin.module(
         loop-invariant-code-motion,
         canonicalize,
+        eliminate-empty-tensors,
+        empty-tensor-to-alloc-tensor,
+        one-shot-bufferize{
+            bufferize-function-boundaries
+            function-boundary-type-conversion=identity-layout-map
+        },
         convert-vector-to-scf,
         convert-linalg-to-loops,
         buffer-deallocation-pipeline,
+        convert-bufferization-to-memref,
         scf-forall-to-parallel,
         convert-scf-to-openmp,
         expand-strided-metadata,
@@ -77,6 +84,7 @@ def evaluate_code_with_bindings(code: str) -> tuple[Optional[int], Union[Excepti
         convert-openmp-to-llvm,
         convert-vector-to-llvm,
         convert-math-to-llvm,
+        finalize-memref-to-llvm,
         convert-func-to-llvm,
         convert-index-to-llvm,
         convert-arith-to-llvm,
@@ -173,7 +181,7 @@ def evaluate_code_with_cmd(code: str, tmp_file_path: str) -> tuple[Optional[int]
         Optional[float]: the execution time in seconds.
         bool: the assertion result.
     """
-    command_1 = f"{os.getenv('LLVM_BUILD_PATH')}/bin/mlir-opt -loop-invariant-code-motion -canonicalize -eliminate-empty-tensors -empty-tensor-to-alloc-tensor -one-shot-bufferize='bufferize-function-boundaries function-boundary-type-conversion=identity-layout-map' -convert-vector-to-scf -convert-linalg-to-loops -buffer-deallocation-pipeline -scf-forall-to-parallel -convert-scf-to-openmp -expand-strided-metadata -finalize-memref-to-llvm -convert-scf-to-cf -lower-affine -convert-openmp-to-llvm -convert-vector-to-llvm -convert-math-to-llvm -finalize-memref-to-llvm -convert-func-to-llvm -convert-index-to-llvm -convert-arith-to-llvm -convert-cf-to-llvm -reconcile-unrealized-casts -canonicalize -cse"
+    command_1 = f"{os.getenv('LLVM_BUILD_PATH')}/bin/mlir-opt -loop-invariant-code-motion -canonicalize -eliminate-empty-tensors -empty-tensor-to-alloc-tensor -one-shot-bufferize='bufferize-function-boundaries function-boundary-type-conversion=identity-layout-map' -convert-vector-to-scf -convert-linalg-to-loops -buffer-deallocation-pipeline -convert-bufferization-to-memref -scf-forall-to-parallel -convert-scf-to-openmp -expand-strided-metadata -finalize-memref-to-llvm -convert-scf-to-cf -lower-affine -convert-openmp-to-llvm -convert-vector-to-llvm -convert-math-to-llvm -finalize-memref-to-llvm -convert-func-to-llvm -convert-index-to-llvm -convert-arith-to-llvm -convert-cf-to-llvm -reconcile-unrealized-casts -canonicalize -cse"
     command_2 = f"{os.getenv('LLVM_BUILD_PATH')}/bin/mlir-cpu-runner -e main -entry-point-result=void -shared-libs={os.getenv('LLVM_BUILD_PATH')}/lib/libmlir_runner_utils.so,{os.getenv('LLVM_BUILD_PATH')}/lib/libmlir_c_runner_utils.so,{os.getenv('LLVM_BUILD_PATH')}/lib/libomp.so"
 
     with open(tmp_file_path, "w") as file:

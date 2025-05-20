@@ -11,6 +11,8 @@ from mlir.ir import Context, Module
 from mlir.execution_engine import ExecutionEngine, ctypes
 from mlir.runtime import get_ranked_memref_descriptor
 from mlir.passmanager import PassManager
+from typing import Callable
+from stopit import ThreadingTimeout, TimeoutException
 
 
 def remove_duplicate_args(args, shapes):
@@ -33,6 +35,7 @@ pass_pipeline = """builtin.module(
     convert-vector-to-scf,
     convert-linalg-to-loops,
     buffer-deallocation-pipeline,
+    convert-bufferization-to-memref,
     scf-forall-to-parallel,
     convert-scf-to-openmp,
     expand-strided-metadata,
@@ -43,6 +46,40 @@ pass_pipeline = """builtin.module(
     convert-openmp-to-llvm,
     convert-vector-to-llvm,
     convert-math-to-llvm,
+    convert-func-to-llvm,
+    convert-index-to-llvm,
+    convert-arith-to-llvm,
+    convert-cf-to-llvm,
+
+    reconcile-unrealized-casts,
+    canonicalize,
+    cse
+)"""
+
+tensor_pass_pipeline = """builtin.module(
+    loop-invariant-code-motion,
+    canonicalize,
+    eliminate-empty-tensors,
+    empty-tensor-to-alloc-tensor,
+    one-shot-bufferize{
+        bufferize-function-boundaries
+        function-boundary-type-conversion=identity-layout-map
+    },
+    convert-vector-to-scf,
+    convert-linalg-to-loops,
+    buffer-deallocation-pipeline,
+    convert-bufferization-to-memref,
+    scf-forall-to-parallel,
+    convert-scf-to-openmp,
+    expand-strided-metadata,
+    finalize-memref-to-llvm,
+    convert-scf-to-cf,
+    lower-affine,
+
+    convert-openmp-to-llvm,
+    convert-vector-to-llvm,
+    convert-math-to-llvm,
+    finalize-memref-to-llvm,
     convert-func-to-llvm,
     convert-index-to-llvm,
     convert-arith-to-llvm,
@@ -568,18 +605,23 @@ def depthwise_conv_3d_ndhwc_dhwcm():
 
 
 def pooling_nchw_max():
-    N = choice(BATCH_SIZES)
-    C = choice(CHANNELS)
-    H = choice(HEIGHTS)
-    W = choice(HEIGHTS)
+    matmul_size = 10 ** 9
 
-    dilation = choice(DILATIONS)
-    stride = choice(STRIDES)
+    while matmul_size >= (10 ** 9):
+        N = choice(BATCH_SIZES)
+        C = choice(CHANNELS)
+        H = choice(HEIGHTS)
+        W = H
 
-    K = choice_topped(KERNELS, (min(H, W) - 1) // dilation - 1)
+        dilation = choice(DILATIONS)
+        stride = 2
 
-    H_ = (H - dilation * (K - 1) - 1) // stride + 1
-    W_ = (W - dilation * (K - 1) - 1) // stride + 1
+        K = choice_topped(KERNELS, (min(H, W) - 1) // dilation - 1)
+
+        H_ = (H - dilation * (K - 1) - 1) // stride + 1
+        W_ = (W - dilation * (K - 1) - 1) // stride + 1
+
+        matmul_size = N * C * H_ * W_ * K * K
 
     bench_name = f"pooling_nchw_max_{N}_{C}_{H}_{W}_{K}_{H_}_{W_}"
 
@@ -946,7 +988,7 @@ if __name__ == '__main__':
     STRIDES.extend(config['SHAPES']['STRIDES'])  # Used by operations on images
     SIZES.extend(config['SHAPES']['SIZES'])  # Used on other operations like matmul, add, etc...
 
-    operations_config = {
+    operations_config: dict[str, tuple[Callable[[], tuple[str, str]], int]] = {
         operation_name: (LINALG_OPERATION_GENERATORS[operation_name], amount) for operation_name, amount in config['OPERATIONS'].items() if amount > 0
     }
 
@@ -954,72 +996,105 @@ if __name__ == '__main__':
 
     with open('execution_times.json', 'r') as file:
         execution_times: dict[str, int] = json.load(file)
-    total_count = 0
+
     for operation_name, (generator, amount) in operations_config.items():
         # Iterate the specified number of times ('amount') for the current operation
-        count = 0
         tqdm_iter = trange(amount, desc=operation_name, file=sys.stdout)
-        for i in tqdm_iter:
-            raw_operation, bench_name = generator()  # Generate the raw operation using the provided generator function
-            bench_output = f'../{bench_name}.mlir'
-            if bench_name in execution_times:
-                print('Already exists, Bench:', bench_name, file=sys.stderr)
-                continue
+        for _ in tqdm_iter:
+            generated = False
+            while not generated:
+                raw_operation, bench_name = generator()  # Generate the raw operation using the provided generator function
+                bench_output = f'../{bench_name}.mlir'
+                if bench_name in execution_times:
+                    print('Already exists, Bench:', bench_name, file=sys.stderr)
+                    continue
 
-            args, shapes = extract_args(raw_operation)
-            is_memref = 'memref' in shapes[-1]
-            main_params = [f"%{arg}: {shape}" for arg, shape in zip(args, shapes)]
+                args, shapes = extract_args(raw_operation)
+                is_memref = 'memref' in shapes[-1]
+                is_conv = 'conv' in bench_name
+                main_args = [f"%{arg}" for arg in args]
+                main_params = [f"%{arg}: {shape}" for arg, shape in zip(args, shapes)]
+                out_shape = shapes[-1]
 
-            code = (
-                f'func.func private @nanoTime() -> i64 attributes {{ llvm.emit_c_interface }}\n'
-                f'func.func @main({", ".join(main_params)}) -> i64 attributes {{ llvm.emit_c_interface }} {{\n'
-                f'  %t0 = func.call @nanoTime() : () -> i64\n'
-                f"  {'' if is_memref else '%0 = '}{raw_operation}\n"
-                f'  %t1 = func.call @nanoTime() : () -> i64\n'
-                f'  %t2 = arith.subi %t1, %t0 : i64\n'
-                f'  return %t2 : i64\n'
-                f'}}\n'
-            )
-            if not is_memref:
-                code = transform_img2col(code)
-                args, shapes = extract_main_args(code)
-                assert all('memref' in shape for shape in shapes)
+                if not is_memref and not is_conv:
+                    code = (
+                        f'func.func private @nanoTime() -> i64 attributes {{ llvm.emit_c_interface }}\n'
+                        f'func.func @compute({", ".join(main_params)}) -> ({out_shape}, i64) attributes {{ llvm.emit_c_interface }} {{\n'
+                        f'  %t0 = func.call @nanoTime() : () -> i64\n'
+                        f'  %0 = {raw_operation}\n'
+                        f'  %t1 = func.call @nanoTime() : () -> i64\n'
+                        f'  %t2 = arith.subi %t1, %t0 : i64\n'
+                        f'  return %0, %t2 : {out_shape}, i64\n'
+                        f'}}\n'
+                        f'func.func @main({", ".join(main_params)}) -> i64 attributes {{ llvm.emit_c_interface }} {{\n'
+                        f'  %0, %1 = func.call @compute({", ".join([f"%{arg}" for arg in args])}) : ({", ".join(shapes)}) -> ({out_shape}, i64)\n'
+                        f'  return %1 : i64\n'
+                        f'}}\n'
+                    )
+                else:
+                    code = (
+                        f'func.func private @nanoTime() -> i64 attributes {{ llvm.emit_c_interface }}\n'
+                        f'func.func @main({", ".join(main_params)}) -> i64 attributes {{ llvm.emit_c_interface }} {{\n'
+                        f'  %t0 = func.call @nanoTime() : () -> i64\n'
+                        f"  {'' if is_memref else '%0 = '}{raw_operation}\n"
+                        f'  %t1 = func.call @nanoTime() : () -> i64\n'
+                        f'  %t2 = arith.subi %t1, %t0 : i64\n'
+                        f'  return %t2 : i64\n'
+                        f'}}\n'
+                    )
 
-            with Context():
-                module = Module.parse(code)
-                pm = PassManager.parse(pass_pipeline)
-                pm.run(module.operation)
-            execution_engine = ExecutionEngine(
-                module,
-                shared_libs=os.getenv("MLIR_SHARED_LIBS", "").split(","),
-            )
+                if is_conv:
+                    code = transform_img2col(code)
+                    args, shapes = extract_main_args(code)
+                    assert all('memref' in shape for shape in shapes)
 
-            args_count = len(args)
-            inputs: dict[str, np.ndarray] = {}
-            for i, (arg, shape) in enumerate(zip(args, shapes)):
-                *np_shape, dtype = shape.replace('memref<', '').replace('>', '').split('x')
-                assert dtype == 'f64', f'expects f64, got {dtype}'
-                np_shape = list(map(int, np_shape))
-                inputs[arg] = np.zeros(np_shape)
+                with Context():
+                    module = Module.parse(code)
+                    pm = PassManager.parse(tensor_pass_pipeline)
+                    pm.run(module.operation)
+                execution_engine = ExecutionEngine(
+                    module,
+                    shared_libs=os.getenv("MLIR_SHARED_LIBS", "").split(","),
+                )
 
-            c_args = []
-            for arg_name in args:
-                c_args.append(ctypes.pointer(ctypes.pointer(
-                    get_ranked_memref_descriptor(inputs[arg_name])
-                )))
-            delta_arg = (ctypes.c_int64 * 1)(0)
-            c_args.append(delta_arg)
+                args_count = len(args)
+                inputs: dict[str, np.ndarray] = {}
+                for i, (arg, shape) in enumerate(zip(args, shapes)):
+                    *np_shape, dtype = shape.replace('memref<', '').replace('tensor<', '').replace('>', '').split('x')
+                    assert dtype == 'f64', f'expects f64, got {dtype}'
+                    np_shape = list(map(int, np_shape))
+                    inputs[arg] = np.zeros(np_shape)
 
-            execution_engine.invoke("main", *c_args)
-            execution_engine.invoke("main", *c_args)
+                c_args = []
+                for arg_name in args:
+                    c_args.append(ctypes.pointer(ctypes.pointer(
+                        get_ranked_memref_descriptor(inputs[arg_name])
+                    )))
+                delta_arg = (ctypes.c_int64 * 1)(0)
+                c_args.append(delta_arg)
 
-            exec_time = delta_arg[0]
+                try:
+                    with ThreadingTimeout(5, False) as to_ctx:
+                        execution_engine.invoke("main", *c_args)
+                    execution_engine.invoke("main", *c_args)
+                except Exception as e:
+                    if e is TimeoutException:
+                        print('Timeout, Bench:', bench_name, file=sys.stderr)
+                    else:
+                        print(f"Failed, Bench: {bench_name}, error: {e}", file=sys.stderr)
+                    continue
 
-            with open(bench_output, 'w') as file:
-                file.write(code)
+                exec_time = delta_arg[0]
+                if exec_time >= (1 * 10**9):
+                    continue
 
-            execution_times[bench_name] = exec_time
-            with open('execution_times.json', 'w') as file:
-                json.dump(execution_times, file, indent=4)
+                with open(bench_output, 'w') as file:
+                    file.write(code)
 
-            tqdm_iter.set_postfix({'shape': str(shape), 'time': exec_time})
+                execution_times[bench_name] = exec_time
+                with open('execution_times.json', 'w') as file:
+                    json.dump(execution_times, file, indent=4)
+
+                tqdm_iter.set_postfix({'time': exec_time})
+
+                generated = True
