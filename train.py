@@ -6,6 +6,7 @@ load_dotenv(override=True)
 from rl_autoschedular.env import Env
 from rl_autoschedular.model import HiearchyModel as Model
 import torch
+import os
 from tqdm import trange
 from rl_autoschedular import config as cfg
 from utils.log import print_info, print_success
@@ -74,9 +75,17 @@ for step in trange(cfg.nb_iterations, desc='Main loop'):
     )
 
     if (step + 1) % 5 == 0:
-        print_info('- Evaluating benchmark -')
-        evaluate_benchmark(
-            model,
-            eval_env,
-            device,
+        torch.save(
+            model.state_dict(),
+            os.path.join(
+                env.tmp_file.replace('.mlir', ''),
+                f'model_{step}.pth'
+            )
         )
+
+print_info('- Evaluating benchmark -')
+evaluate_benchmark(
+    model,
+    eval_env,
+    device,
+)

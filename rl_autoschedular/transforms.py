@@ -485,7 +485,30 @@ def apply_transformation(state: OperationState, code: str, transformation: str, 
     elif transformation == 'interchange':
         new_code = transform_dialect_interchange(code, state.operation_tag, parameters, tmp_file)
     elif transformation == 'vectorization':
-        if not is_vectorizable(state.operation_features):
+        is_legal = is_vectorizable(state.operation_features)
+
+        # Decompose pooling operation to make it vectorizable
+        if not is_legal and state.operation_features.operation_type == 'pooling':
+            # Tile the pooling operation for decomposition
+            tile_sizes = []
+            for i in range(len(state.operation_features.nested_loops)):
+                if i in [2, 4]:
+                    tile_sizes.append(1)
+                else:
+                    tile_sizes.append(0)
+            new_code = transform_dialect_tile(code, state.operation_tag, tile_sizes, tmp_file)
+
+            # Apply the decomposition
+            new_code = apply_conv2d_decomposition(new_code, state.operation_tag, tmp_file)
+
+            # Check if the decomposition was successful
+            # and if so, replace the old code
+            if new_code:
+                is_legal = True
+                code = new_code
+
+        # Apply the vectorization if eligible
+        if not is_legal:
             raise Exception("Operation is not vectorizable")
         new_code = transform_dialect_vectorise_with_vectorizer(code, state.operation_tag, tmp_file)
     elif transformation == 'no_transformation':
@@ -554,17 +577,20 @@ def apply_conv2d_decomposition(code: str, operation_tag: str, tmp_file_path: str
     Returns:
         str: The code after applying the transformation.
     """
+    if not code:
+        return code
+
     code = code.strip()
     transform_dialect_code = f"""
-        module attributes {{transform.with_named_sequence}} {{
+    module attributes {{transform.with_named_sequence}} {{
         transform.named_sequence @__transform_main(%arg1: !transform.any_op {{transform.readonly}}) {{
             %conv = transform.structured.match attributes{{tag = "{operation_tag}"}} in %arg1 : (!transform.any_op) -> !transform.any_op
             %decomposed = transform.structured.decompose %conv: (!transform.any_op) -> !transform.any_op
             %decomposed_tag = transform.param.constant "{operation_tag}" -> !transform.any_param
             transform.annotate %decomposed "tag" = %decomposed_tag : !transform.any_op, !transform.any_param
             transform.yield
-            }}
-        }}"""
+        }}
+    }}"""
 
     code = code + '\n' + transform_dialect_code + '\n'
 

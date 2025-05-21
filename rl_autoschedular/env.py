@@ -45,6 +45,7 @@ class Env:
             tmp_file = f"tmp-debug/{random_str}.mlir" if cfg.debug else f"tmp/{random_str}.mlir"
         with open(tmp_file, "w") as file:
             file.write("")
+        os.makedirs(tmp_file.replace(".mlir", ""), exist_ok=True)
         self.tmp_file = tmp_file
 
         # Load benchmark names and execution times from json file
@@ -463,7 +464,7 @@ class Env:
         vectorizable = is_vectorizable(operation_features)
 
         # If vectorization is feasible, nothing to do
-        if vectorizable:
+        if vectorizable or operation_features.operation_type == 'pooling':
             return new_action_mask
 
         # Otherwise, turn vectorization into no_transformation

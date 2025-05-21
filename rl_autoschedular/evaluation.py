@@ -332,8 +332,8 @@ def __create_inputs(code) -> list[np.ndarray]:
 
     inputs: list[np.ndarray] = []
     for shape in main_shapes:
-        assert shape.startswith('memref<'), f'expects memref, got {shape}'
-        *np_shape, dtype = shape.replace('memref<', '').replace('>', '').split('x')
+        assert shape.startswith('memref<') or shape.startswith('tensor<'), f'unexpected shape {shape}'
+        *np_shape, dtype = shape.replace('memref<', '').replace('tensor<', '').replace('>', '').split('x')
         assert dtype[0] in ['f', 'i'] and dtype[1:] in ['32', '64'], f'unexpected dtype {dtype}'
         match dtype[0]:
             case 'f':
