@@ -104,9 +104,8 @@ def collect_trajectory(model: Model, env: Env, step: int, device: torch.device =
     eps = None
     if 'epsilon' in cfg.exploration:
         ratio = step / cfg.nb_iterations
-        init_eps = 0.5
         final_eps = 0.001
-        eps = final_eps + (init_eps - final_eps) * (1 - ratio)
+        eps = final_eps + (cfg.init_epsilon - final_eps) * (1 - ratio)
 
     traj_trange = trange(cfg.bench_count, desc='Trajectory')
     for _ in traj_trange:

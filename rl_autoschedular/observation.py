@@ -429,7 +429,6 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
         vectorizable = vectorizable_str.strip() == "true"
 
         nested_loops_str, rest = rest.split("#START_LOAD_DATA")
-        loop_args = []
         for nested_loop_str in nested_loops_str.strip().split("\n"):
             if not nested_loop_str:
                 continue
@@ -441,19 +440,16 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
                 step=int(step),
                 iterator_type=iter
             ))
-            loop_args.append(arg)
 
         loads_data_str, rest = rest.split("#START_STORE_DATA")
-        for loop_arg in loop_args:
-            loads_data_str = loads_data_str.replace(loop_arg, f'%{loop_arg}')
+        loads_data_str = re.sub(r'd\d+', lambda m: f'%{m.group()}', loads_data_str)
         for load_data_str in loads_data_str.strip().split("\n"):
             if not load_data_str:
                 continue
             load_data.append(load_data_str.split(", "))
 
         store_data_str, rest = rest.split("#START_OP_COUNT")
-        for loop_arg in loop_args:
-            store_data_str = store_data_str.replace(loop_arg, f'%{loop_arg}')
+        store_data_str = re.sub(r'd\d+', lambda m: f'%{m.group()}', store_data_str)
         store_data_list = store_data_str.strip().split("\n")
         assert len(store_data_list) == 1, f"Store data list is not of length 1: {store_data_list}"
         store_data = store_data_list[0].split(", ")

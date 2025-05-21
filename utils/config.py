@@ -26,6 +26,8 @@ class Config(metaclass=Singleton):
     """The distribution used for continuous interchange action"""
     exploration: list[Literal['entropy', 'epsilon', 'curiosity']]
     """The exploration method"""
+    init_epsilon: float
+    """The initial epsilon value for epsilon greedy exploration"""
     reverse_history: bool
     """Flag to indicate if the history should be reversed or not"""
     new_architecture: bool
@@ -100,6 +102,7 @@ class Config(metaclass=Singleton):
         self.vect_size_limit = 512
         self.init_action_mask = [False, True, False, False, False, False]
         self.exploration = ["entropy"]
+        self.init_epsilon = 0.1
         self.interchange_mode = "enumerate"
         self.interchange_distribution = "binomial"
         self.reverse_history = True
@@ -150,6 +153,7 @@ class Config(metaclass=Singleton):
         self.interchange_mode = config["interchange_mode"]
         self.interchange_distribution = config["interchange_distribution"]
         self.exploration = config["exploration"]
+        self.init_epsilon = config["init_epsilon"]
         self.reverse_history = config["reverse_history"]
         self.new_architecture = config["new_architecture"]
         self.normalize_bounds = config["normalize_bounds"]
@@ -196,6 +200,7 @@ class Config(metaclass=Singleton):
             "interchange_mode": self.interchange_mode,
             "interchange_distribution": self.interchange_distribution,
             "exploration": self.exploration,
+            "init_epsilon": self.init_epsilon,
             "reverse_history": self.reverse_history,
             "new_architecture": self.new_architecture,
             "normalize_bounds": self.normalize_bounds,
