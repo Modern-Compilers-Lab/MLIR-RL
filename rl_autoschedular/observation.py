@@ -31,6 +31,21 @@ def build_op_features_vector(op_features: OperationFeatures):
             break
         nested_loops[i] = nested_loop.upper_bound
 
+    # Iterator types
+    iterator_types = np.zeros(cfg.max_num_loops, dtype=np.int8)
+    for i, nested_loop in enumerate(op_features.nested_loops):
+        if i == cfg.max_num_loops:
+            break
+        if nested_loop.iterator_type == 'parallel':
+            iterator_types[i] = 1
+        elif nested_loop.iterator_type == 'reduction':
+            iterator_types[i] = 0
+        else:
+            raise ValueError(f"Unknown iterator type: {nested_loop.iterator_type}")
+
+    # Vectorizable
+    vectorizable = np.array([op_features.vectorizable])
+
     # load access matrices:
     load_data = op_features.load_data
 
@@ -64,7 +79,7 @@ def build_op_features_vector(op_features: OperationFeatures):
     load_access_matrices = load_access_matrices.reshape(-1)
     store_access_matrices = store_access_matrices.reshape(-1)
 
-    feature_vector = np.concatenate((nested_loops, load_access_matrices, store_access_matrices, operations_count))
+    feature_vector = np.concatenate((nested_loops, iterator_types, vectorizable, load_access_matrices, store_access_matrices, operations_count))
 
     return feature_vector
 

@@ -29,7 +29,7 @@ class HiearchyModel(nn.Module):
                 interchange_mask = 0
                 interchange_input = 0
 
-        self.input_dim = 5 + L + L * D * SD + L * D + 5 + interchange_input + cfg.truncate * 3 * L
+        self.input_dim = 5 + L + L + 1 + L * D * SD + L * D + 5 + interchange_input + cfg.truncate * 3 * L
         self.action_mask_size = N + 2 * L * (TS + 1) + interchange_mask
 
         self.policy_model = PolicyModel(self.input_dim, self.action_mask_size)

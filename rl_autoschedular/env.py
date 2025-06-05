@@ -554,7 +554,7 @@ class Env:
 
         # Normalize the upper bounds of the loops
         if cfg.normalize_bounds:
-            obs[5:cfg.max_num_loops + 5] = obs[5:cfg.max_num_loops + 5] / 100
+            obs[5:cfg.max_num_loops + 5] = obs[5:cfg.max_num_loops + 5] / 4096
 
         obs = torch.tensor(obs, dtype=torch.float32)
         obs = obs.unsqueeze(0)
