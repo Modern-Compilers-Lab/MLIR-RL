@@ -35,8 +35,8 @@ def transform_dialect_TP(code: str, operation_tag: str, tiling_sizes: list[int],
     transform_dialect_code = (
         f'\nmodule attributes {{transform.with_named_sequence}} {{\n'
         f'  transform.named_sequence @__transform_main(%arg1: !transform.any_op {{transform.readonly}}) {{\n'
-        f'    %parallel_{operation_tag} = transform.structured.match attributes{{tag = "{operation_tag}"}} in %arg1 : (!transform.any_op) -> !transform.any_op\n'
-        f'    %parallel_tiled_{operation_tag}, %forall_{operation_tag} = transform.structured.tile_using_forall %parallel_{operation_tag} tile_sizes {str(tiling_sizes)} : (!transform.any_op) -> (!transform.any_op, !transform.any_op)\n'
+        f'    %op_{operation_tag} = transform.structured.match attributes{{tag = "{operation_tag}"}} in %arg1 : (!transform.any_op) -> !transform.any_op\n'
+        f'    %op_tiled_{operation_tag}, %forall_{operation_tag} = transform.structured.tile_using_forall %op_{operation_tag} tile_sizes {str(tiling_sizes)} : (!transform.any_op) -> (!transform.any_op, !transform.any_op)\n'
         f'    transform.yield\n'
         f'  }}\n'
         f'}}'
@@ -188,7 +188,7 @@ def transform_dialect_interchange(code: str, operation_tag: str, interchange_lis
 #     return result
 
 
-def transform_dialect_vectorise_img2col(code: str, operation_tag: str, tmp_file_path: str):
+def transform_dialect_vectorize_img2col(code: str, operation_tag: str, tmp_file_path: str):
     """Apply the vectorization transformation with img2col to the specified operation in the given code.
 
     Args:
@@ -282,7 +282,7 @@ transform.named_sequence @__transform_main(%variant_op: !transform.any_op {{tran
     return result
 
 
-def transform_dialect_vectorise(code: str, operation_tag: str, tmp_file_path: str):
+def transform_dialect_vectorize_children(code: str, operation_tag: str, tmp_file_path: str):
     """Apply the vectorization transformation to the specified operation in the given code.
 
     Args:
@@ -342,7 +342,7 @@ def transform_dialect_vectorise(code: str, operation_tag: str, tmp_file_path: st
     return result
 
 
-def transform_dialect_vectorise_with_vectorizer(code: str, operation_tag: str, tmp_file_path: str):
+def transform_dialect_vectorize_with_vectorizer(code: str, operation_tag: str, tmp_file_path: str):
     """Apply the vectorization transformation with vectorizer to the specified operation in the given code.
 
     Args:
@@ -408,6 +408,60 @@ def transform_dialect_vectorise_with_vectorizer(code: str, operation_tag: str, t
         return result
     else:
         return ''
+
+
+def transform_dialect_vectorize(code: str, operation_tag: str, tmp_file_path: str):
+    """Apply the vectorization transformation with vectorizer to the specified operation in the given code.
+
+    Args:
+        code (str): The code to apply the transformation to.
+        operation_tag (str): The tag of the operation to apply the transformation to.
+        tmp_file_path (str): The path to the temporary file to write the code to.
+
+    Returns:
+        str: The code after applying the transformation.
+    """
+    if not code:
+        return code
+
+    code = code.strip()
+
+    transform_dialect_code = f"""
+    module attributes {{transform.with_named_sequence}} {{
+        transform.named_sequence @__transform_main(%variant_op: !transform.any_op {{transform.readonly}}) {{
+            %op_{operation_tag} = transform.structured.match attributes{{tag = "{operation_tag}"}} in %variant_op : (!transform.any_op) -> !transform.any_op
+            transform.structured.vectorize %op_{operation_tag} : !transform.any_op
+
+            %f = transform.structured.match ops{{[\"func.func\"]}} in %variant_op : (!transform.any_op) -> !transform.any_op
+            transform.apply_patterns to %f {{
+                transform.apply_patterns.vector.lower_contraction lowering_strategy = "outerproduct"
+                transform.apply_patterns.vector.transfer_permutation_patterns
+                transform.apply_patterns.vector.lower_multi_reduction lowering_strategy = "innerparallel"
+                transform.apply_patterns.vector.split_transfer_full_partial split_transfer_strategy = "vector-transfer"
+                transform.apply_patterns.vector.transfer_to_scf max_transfer_rank = 1 full_unroll = true
+                transform.apply_patterns.vector.lower_transfer max_transfer_rank = 1
+                transform.apply_patterns.vector.lower_shape_cast
+                transform.apply_patterns.vector.lower_transpose lowering_strategy = "shuffle_1d"
+                transform.apply_patterns.canonicalization
+            }} : !transform.any_op
+            transform.yield
+        }}
+    }}""".strip()
+
+    full_code = code + '\n' + transform_dialect_code + '\n'
+
+    with open(tmp_file_path, "w") as file:
+        file.write(full_code)
+
+    result = os.popen(
+        f"{os.getenv('LLVM_BUILD_PATH')}/bin/mlir-opt {tmp_file_path} -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule",
+    ).read()
+
+    result = result.replace("module {\n", "", 1)
+    result = ''.join(result.rsplit('\n}\n', 1))
+    result = re.sub(r"module attributes \{transform.with_named_sequence\} \{\s+\}", "", result)
+
+    return result
 
 
 def transform_dialect_img2col(code: str, operation_tag: str, tmp_file_path: str):
@@ -510,7 +564,7 @@ def apply_transformation(state: OperationState, code: str, transformation: str, 
         # Apply the vectorization if eligible
         if not is_legal:
             raise Exception("Operation is not vectorizable")
-        new_code = transform_dialect_vectorise_with_vectorizer(code, state.operation_tag, tmp_file)
+        new_code = transform_dialect_vectorize_with_vectorizer(code, state.operation_tag, tmp_file)
     elif transformation == 'no_transformation':
         new_code = code
     else:

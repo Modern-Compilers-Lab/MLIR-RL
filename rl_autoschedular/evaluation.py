@@ -64,13 +64,14 @@ def evaluate_code_with_bindings(code: str) -> tuple[Optional[int], Union[Excepti
     pass_pipeline = """builtin.module(
         loop-invariant-code-motion,
         canonicalize,
+
         eliminate-empty-tensors,
         empty-tensor-to-alloc-tensor,
         one-shot-bufferize{
             bufferize-function-boundaries
             function-boundary-type-conversion=identity-layout-map
         },
-        convert-vector-to-scf,
+
         convert-linalg-to-loops,
         buffer-deallocation-pipeline,
         convert-bufferization-to-memref,
