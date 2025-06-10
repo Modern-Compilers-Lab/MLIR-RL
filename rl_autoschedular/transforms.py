@@ -534,8 +534,8 @@ def apply_transformation(state: OperationState, code: str, transformation: str, 
     elif transformation == 'parallelization':
         parallel_params = [0 if state.operation_features.nested_loops[i].iterator_type == "reduction" else parameters[i] for i in range(len(parameters))]
         tiling_params = [parameters[i] if state.operation_features.nested_loops[i].iterator_type == "reduction" else 0 for i in range(len(parameters))]
-        new_code = transform_dialect_TP(code, state.operation_tag, parallel_params, tmp_file)
-        new_code = transform_dialect_tile(new_code, state.operation_tag, tiling_params, tmp_file)
+        new_code = transform_dialect_tile(code, state.operation_tag, tiling_params, tmp_file)
+        new_code = transform_dialect_TP(new_code, state.operation_tag, parallel_params, tmp_file)
     elif transformation == 'interchange':
         new_code = transform_dialect_interchange(code, state.operation_tag, parameters, tmp_file)
     elif transformation == 'vectorization':

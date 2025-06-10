@@ -645,8 +645,8 @@ class Env:
 
         # No tiling is possible if:
         # - There is only one or no iteration
-        # - The iterator is reduction and the tiling is for parallelization
-        if n <= 1 or (iterator == 'reduction' and for_parallelization):
+        # - The iterator is reduction and the tiling is for parallelization [or (iterator == 'reduction' and for_parallelization)]
+        if n <= 1:
             return [0] * num_candidates, 0
 
         # Get the factors of the loop upper bound
