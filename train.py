@@ -85,9 +85,10 @@ for step in trange(cfg.nb_iterations, desc='Main loop'):
             )
         )
 
-print_info('- Evaluating benchmark -')
-evaluate_benchmark(
-    model,
-    eval_env,
-    device,
-)
+    if (step + 1) % 1000 == 0:
+        print_info('- Evaluating benchmark -')
+        evaluate_benchmark(
+            model,
+            eval_env,
+            device,
+        )
