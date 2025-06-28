@@ -34,8 +34,8 @@ class Config(metaclass=Singleton):
     """Flag to indicate if the new architecture should be used or not"""
     normalize_bounds: bool
     """Flag to indicate if the upper bounds in the input should be normalized or not"""
-    normalize_adv: bool
-    """Flag to indicate if the advantages should be normalized or not"""
+    normalize_adv: Literal['none', 'standard', 'abs-max']
+    """The advantage normalization method"""
     force_vector: bool
     """Flag to force vectorization"""
     sparse_reward: bool
@@ -108,7 +108,7 @@ class Config(metaclass=Singleton):
         self.reverse_history = True
         self.new_architecture = False
         self.normalize_bounds = True
-        self.normalize_adv = True
+        self.normalize_adv = 'standard'
         self.force_vector = True
         self.sparse_reward = True
         self.split_ops = False

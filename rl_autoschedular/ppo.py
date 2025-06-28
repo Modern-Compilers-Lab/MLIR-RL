@@ -348,6 +348,7 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
     log_curiosity_loss: list[float] = []
     # log_clip_frac: list[float] = []
     log_approx_kl: list[float] = []
+    log_clip_factor: list[float] = []
 
     ppo_trange = trange(cfg.ppo_epochs, desc='PPO Epochs')
     for _ in ppo_trange:
@@ -380,6 +381,10 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
             stored_returns
         )
 
+        max_adv = stored_advantages.abs().max()
+        if cfg.normalize_adv == 'abs-max' and max_adv > 0:
+            stored_advantages = stored_advantages / max_adv
+
         len_trajectory = len(stored_action_index)
         for i in range(0, len_trajectory, cfg.ppo_batch_size):
             betch_end = min(i + cfg.ppo_batch_size, len_trajectory)
@@ -393,7 +398,7 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
             advantages = stored_advantages[i:betch_end]
             returns = stored_returns[i:betch_end]
 
-            if cfg.normalize_adv and advantages.shape[0] > 1:
+            if cfg.normalize_adv == 'standard' and advantages.shape[0] > 1:
                 advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
             with torch.enable_grad():
@@ -420,7 +425,7 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
             optimizer.zero_grad()
             try:
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
+                clip_factor = torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
                 optimizer.step()
             except Exception as e:
                 print_error(f'Error during PPO update: {e}')
@@ -429,11 +434,11 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
             ppo_trange.set_postfix({
                 'loss': loss.item(),
                 'policy_loss': policy_loss.item(),
-                'value_loss': value_loss.item() if cfg.value_epochs == 0 else None,
-                'approx_kl': approx_kl.item()
+                'value_loss': value_loss.item() if cfg.value_epochs == 0 else None
             })
             log_policy_loss.append(policy_loss.item())
             # log_clip_frac.append(clip_frac.item())
+            log_clip_factor.append(clip_factor.item())
             log_approx_kl.append(approx_kl.item())
             if cfg.value_epochs == 0:
                 log_value_loss.append(value_loss.item())
@@ -443,7 +448,7 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
                 log_entropy_loss.append(entropy_loss.item())
 
     fl['train_ppo/policy_loss'].extend(log_policy_loss)
-    # fl['train_ppo/clip_factor'].extend(log_clip_frac)
+    fl['train_ppo/clip_factor'].extend(log_clip_factor)
     fl['train_ppo/approx_kl'].extend(log_approx_kl)
     if cfg.value_epochs == 0:
         fl['train_ppo/value_loss'].extend(log_value_loss)
@@ -463,6 +468,7 @@ def value_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Op
         device (torch.device): The device to use. Defaults to torch.device('cpu').
     """
     log_loss: list[float] = []
+    log_clip_factor: list[float] = []
 
     value_trange = trange(cfg.value_epochs, desc='Value Epochs')
     for _ in value_trange:
@@ -495,7 +501,7 @@ def value_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Op
             optimizer.zero_grad()
             try:
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
+                clip_factor = torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
                 optimizer.step()
             except Exception as e:
                 print_error(f'Error during Value update: {e}')
@@ -503,8 +509,10 @@ def value_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Op
             # Logging
             value_trange.set_postfix({'loss': loss.item()})
             log_loss.append(loss.item())
+            log_clip_factor.append(clip_factor.item())
 
     fl['train_value/loss'].extend(log_loss)
+    fl['train_value/clip_factor'].extend(log_clip_factor)
 
 
 def update_trajectory_values(trajectory: Trajectory, model: Model, device: torch.device = torch.device('cpu')):

@@ -136,106 +136,113 @@ int main(int argc, char **argv)
 
   int i = 0;
   ClonedTarget->walk([&](Operation *op){
-    if (linalg::LinalgOp linalgOp = dyn_cast<linalg::LinalgOp>(op)) {
+    linalg::LinalgOp linalgOp = dyn_cast<linalg::LinalgOp>(op);
 
-      std::string tagName;
-      if (!linalgOp->hasAttr("tag")) {
-        tagName = "operation_" + std::to_string(i);
-        mlir::Attribute strAttr = mlir::StringAttr::get(&context, tagName);
-        linalgOp->setAttr("tag", strAttr);
-      } else {
-        tagName = getLinalgOpTag(linalgOp);
-      }
+    // If it is not a LinalgOp, skip
+    if (!linalgOp) return;
 
-      llvm::outs() << "#START_OPERATION" << "\n";
-      // printer << linalgOp; std::cout << "\n";
-      llvm::outs() << linalgOp << "\n";
+    // If iteration space is zero, skip
+    if (linalgOp.getNumLoops() == 0) {
+      return;
+    }
 
-      llvm::outs() << "#START_VECTORIZABLE" << "\n";
-      if (failed(linalg::vectorizeOpPrecondition(linalgOp))) {
-        llvm::outs() << "false" << "\n";
-      } else {
-        llvm::outs() << "true" << "\n";
-      }
+    std::string tagName;
+    if (!linalgOp->hasAttr("tag")) {
+      tagName = "operation_" + std::to_string(i);
+      mlir::Attribute strAttr = mlir::StringAttr::get(&context, tagName);
+      linalgOp->setAttr("tag", strAttr);
+    } else {
+      tagName = getLinalgOpTag(linalgOp);
+    }
 
-      llvm::outs() << "#START_NESTED_LOOPS" << "\n";
-      llvm::SmallVector<int64_t, 4U> loop_ranges = linalgOp.getStaticLoopRanges();
-      llvm::SmallVector<utils::IteratorType> iterator_types = linalgOp.getIteratorTypesArray();
-      for (auto [index, loop_range, iterator_type] : llvm::enumerate(loop_ranges, iterator_types)){
-        llvm::outs() << "d" << index << " " << 0 << " " << loop_range << " " << 1 << " " << iterator_type << "\n";
-      }
-      llvm::outs() << "#START_LOAD_DATA" << "\n";
-      llvm::SmallVector<BlockArgument, 4U> used_operands;
-      bool found_use;
-      for (BlockArgument arg : linalgOp.getBlock()->getArguments()) {
-        found_use = false;
-        linalgOp.getBlock()->walk([&](Operation *nested_op){
-          if (found_use) return;
-          for (OpOperand &operand : nested_op->getOpOperands()) {
-            if (operand.get() == arg) {
-              used_operands.push_back(arg);
-              found_use = true;
-              break;
-            }
+    llvm::outs() << "#START_OPERATION" << "\n";
+    // printer << linalgOp; std::cout << "\n";
+    llvm::outs() << linalgOp << "\n";
+
+    llvm::outs() << "#START_VECTORIZABLE" << "\n";
+    if (failed(linalg::vectorizeOpPrecondition(linalgOp))) {
+      llvm::outs() << "false" << "\n";
+    } else {
+      llvm::outs() << "true" << "\n";
+    }
+
+    llvm::outs() << "#START_NESTED_LOOPS" << "\n";
+    llvm::SmallVector<int64_t> loop_ranges = linalgOp.getStaticLoopRanges();
+    llvm::SmallVector<utils::IteratorType> iterator_types = linalgOp.getIteratorTypesArray();
+    for (auto [index, loop_range, iterator_type] : llvm::enumerate(loop_ranges, iterator_types)){
+      llvm::outs() << "d" << index << " " << 0 << " " << loop_range << " " << 1 << " " << iterator_type << "\n";
+    }
+    llvm::outs() << "#START_LOAD_DATA" << "\n";
+    llvm::SmallVector<BlockArgument> used_operands;
+    bool found_use;
+    for (BlockArgument arg : linalgOp.getBlock()->getArguments()) {
+      found_use = false;
+      linalgOp.getBlock()->walk([&](Operation *nested_op){
+        if (found_use) return;
+        for (OpOperand &operand : nested_op->getOpOperands()) {
+          if (operand.get() == arg) {
+            used_operands.push_back(arg);
+            found_use = true;
+            break;
           }
-        });
-      }
-      for (BlockArgument used_operand : used_operands) {
-        AffineMap operand_map = linalgOp.getMatchingIndexingMap(linalgOp.getMatchingOpOperand(used_operand));
-        uint results_nbr = operand_map.getNumResults();
-        for (auto [index, map_result] : llvm::enumerate(operand_map.getResults())) {
-          map_result.print(llvm::outs());
-          if (index < results_nbr - 1) {
-            llvm::outs() << ", ";
-          } else {
-            llvm::outs() << "\n";
-          }
-        }
-      }
-      llvm::outs() << "#START_STORE_DATA" << "\n";
-      size_t out_args_nbr = linalgOp.getRegionOutputArgs().size();
-      if (out_args_nbr > 1) {
-        throw std::runtime_error("Multiple output arguments are not supported.");
-      }
-      for (BlockArgument out_arg : linalgOp.getRegionOutputArgs()) {
-        AffineMap operand_map = linalgOp.getMatchingIndexingMap(linalgOp.getMatchingOpOperand(out_arg));
-        uint results_nbr = operand_map.getNumResults();
-        for (auto [index, map_result] : llvm::enumerate(operand_map.getResults())) {
-          map_result.print(llvm::outs());
-          if (index < results_nbr - 1) {
-            llvm::outs() << ", ";
-          } else {
-            llvm::outs() << "\n";
-          }
-        }
-      }
-      llvm::outs() << "#START_OP_COUNT" << "\n";
-      int add_count = 0, sub_count = 0, mul_count = 0, div_count = 0, exp_count = 0;
-      linalgOp.walk([&](Operation *nested_op){
-        if (isa<arith::AddFOp>(nested_op)) {
-          add_count += 1;
-        } else if (isa<arith::SubFOp>(nested_op)) {
-          sub_count += 1;
-        } else if (isa<arith::MulFOp>(nested_op)) {
-          mul_count += 1;
-        } else if (isa<arith::DivFOp>(nested_op)) {
-          div_count += 1;
-        } else if (isa<math::ExpOp>(nested_op)) {
-          exp_count += 1;
         }
       });
-      llvm::outs() << "+ " << add_count << "\n";
-      llvm::outs() << "- " << sub_count << "\n";
-      llvm::outs() << "* " << mul_count << "\n";
-      llvm::outs() << "/ " << div_count << "\n";
-      llvm::outs() << "exp " << exp_count << "\n";
-      llvm::outs() << "#START_TAG" << "\n";
-      llvm::outs() << tagName << "\n";
-      llvm::outs() << "#END_OPERATION" << "\n";
-      llvm::outs() << "\n\n\n\n\n" << "\n";
-
-      i += 1;
     }
+    for (BlockArgument used_operand : used_operands) {
+      AffineMap operand_map = linalgOp.getMatchingIndexingMap(linalgOp.getMatchingOpOperand(used_operand));
+      uint results_nbr = operand_map.getNumResults();
+      for (auto [index, map_result] : llvm::enumerate(operand_map.getResults())) {
+        map_result.print(llvm::outs());
+        if (index < results_nbr - 1) {
+          llvm::outs() << ", ";
+        } else {
+          llvm::outs() << "\n";
+        }
+      }
+    }
+    llvm::outs() << "#START_STORE_DATA" << "\n";
+    size_t out_args_nbr = linalgOp.getRegionOutputArgs().size();
+    if (out_args_nbr > 1) {
+      throw std::runtime_error("Multiple output arguments are not supported.");
+    }
+    for (BlockArgument out_arg : linalgOp.getRegionOutputArgs()) {
+      AffineMap operand_map = linalgOp.getMatchingIndexingMap(linalgOp.getMatchingOpOperand(out_arg));
+      uint results_nbr = operand_map.getNumResults();
+      for (auto [index, map_result] : llvm::enumerate(operand_map.getResults())) {
+        map_result.print(llvm::outs());
+        if (index < results_nbr - 1) {
+          llvm::outs() << ", ";
+        } else {
+          llvm::outs() << "\n";
+        }
+      }
+    }
+    llvm::outs() << "#START_OP_COUNT" << "\n";
+    int add_count = 0, sub_count = 0, mul_count = 0, div_count = 0, exp_count = 0;
+    linalgOp.walk([&](Operation *nested_op){
+      if (isa<arith::AddFOp>(nested_op)) {
+        add_count += 1;
+      } else if (isa<arith::SubFOp>(nested_op)) {
+        sub_count += 1;
+      } else if (isa<arith::MulFOp>(nested_op)) {
+        mul_count += 1;
+      } else if (isa<arith::DivFOp>(nested_op)) {
+        div_count += 1;
+      } else if (isa<math::ExpOp>(nested_op)) {
+        exp_count += 1;
+      }
+    });
+    llvm::outs() << "+ " << add_count << "\n";
+    llvm::outs() << "- " << sub_count << "\n";
+    llvm::outs() << "* " << mul_count << "\n";
+    llvm::outs() << "/ " << div_count << "\n";
+    llvm::outs() << "exp " << exp_count << "\n";
+    llvm::outs() << "#START_TAG" << "\n";
+    llvm::outs() << tagName << "\n";
+    llvm::outs() << "#END_OPERATION" << "\n";
+    llvm::outs() << "\n\n\n\n\n" << "\n";
+
+    i += 1;
   });
 
 
@@ -257,17 +264,22 @@ int main(int argc, char **argv)
   // https://github.com/llvm/llvm-project/blob/main/mlir/test/lib/IR/TestPrintDefUse.cpp
   ClonedTarget->walk([&](Operation *op_){
     if (linalg::LinalgOp op = dyn_cast<linalg::LinalgOp>(op_)) {
+      if (!op->hasAttr("tag")) return;
 
       std::string opTagValue = getLinalgOpTag(op);
 
       // Print information about the producer of each of the operands.
       for (mlir::Value operand : op->getOperands()) {
-        if (Operation *producer = operand.getDefiningOp()) {
-          if (linalg::LinalgOp producerLinalgOp = dyn_cast<linalg::LinalgOp>(producer)){
-            std::string producerTagValue = getLinalgOpTag(producerLinalgOp);
-            llvm::outs() << producerTagValue << " --> " << opTagValue << "\n";
-          }
-        }
+        Operation *producer = operand.getDefiningOp();
+        if (!producer) continue;
+
+        linalg::LinalgOp producerLinalgOp = dyn_cast<linalg::LinalgOp>(producer);
+        if (!producerLinalgOp) continue;
+
+        if (!producerLinalgOp->hasAttr("tag")) continue;
+
+        std::string producerTagValue = getLinalgOpTag(producerLinalgOp);
+        llvm::outs() << producerTagValue << " --> " << opTagValue << "\n";
       }
     }
   });

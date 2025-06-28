@@ -1,7 +1,7 @@
 import os
 import re
 import subprocess
-from typing import Optional
+from typing import Optional, Callable
 from utils.log import print_error
 from rl_autoschedular import config as cfg
 from rl_autoschedular.state import OperationState, OperationFeatures
@@ -155,37 +155,6 @@ def transform_dialect_interchange(code: str, operation_tag: str, interchange_lis
     result = re.sub(r"module attributes \{transform.with_named_sequence\} \{\s+\}", "", result)
 
     return result
-
-
-# def transform_dialect_fuse(code, consumer_tag, producer_tag, tmp_file):
-#     code = code.strip()
-
-#     transform_dilaect_code = (
-#         f'\nmodule attributes {{transform.with_named_sequence}} {{\n'
-#         f'  transform.named_sequence @__transform_main(%arg1: !transform.any_op {{transform.readonly}}) {{\n'
-#         f'    %op_{producer_tag} = transform.structured.match attributes{{tag = "{producer_tag}"}} in %arg1 : (!transform.any_op) -> !transform.any_op\n'
-#         f'    %op_{consumer_tag} = transform.structured.match attributes{{tag = "{consumer_tag}"}} in %arg1 : (!transform.any_op) -> !transform.any_op\n'
-#         f'    %forall_op_{consumer_tag} = transform.get_parent_op %op_{consumer_tag}: (!transform.any_op) -> !transform.any_op\n'
-#         f'    transform.structured.fuse_into_containing_op %op_{producer_tag} into %forall_op_{consumer_tag} : (!transform.any_op, !transform.any_op) -> (!transform.any_op, !transform.any_op)\n'
-#         f'    transform.yield\n'
-#         f'  }}\n'
-#         f'}}\n'
-#     )
-
-#     code = code + transform_dilaect_code + '\n'
-
-#     with open(tmp_file, "w") as file:
-#         file.write(code)
-
-#     result = os.popen(
-#         f"{os.getenv('LLVM_BUILD_PATH')}/bin/mlir-opt {tmp_file} -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule",
-#     ).read()
-
-#     result = result.replace("module {\n", "", 1)
-#     result = ''.join(result.rsplit('\n}\n', 1))
-#     result = re.sub(r"module attributes \{transform.with_named_sequence\} \{\s+\}", "", result)
-
-#     return result
 
 
 def transform_dialect_vectorize_img2col(code: str, operation_tag: str, tmp_file_path: str):
@@ -434,6 +403,13 @@ def transform_dialect_vectorize(code: str, operation_tag: str, tmp_file_path: st
 
             %f = transform.structured.match ops{{[\"func.func\"]}} in %variant_op : (!transform.any_op) -> !transform.any_op
             transform.apply_patterns to %f {{
+                transform.apply_patterns.vector.transfer_permutation_patterns
+                transform.apply_patterns.vector.reduction_to_contract
+                transform.apply_patterns.canonicalization
+                transform.apply_patterns.tensor.fold_tensor_subset_ops_into_vector_transfers
+            }} : !transform.any_op
+
+            transform.apply_patterns to %f {{
                 transform.apply_patterns.vector.lower_contraction lowering_strategy = "outerproduct"
                 transform.apply_patterns.vector.transfer_permutation_patterns
                 transform.apply_patterns.vector.lower_multi_reduction lowering_strategy = "innerparallel"
@@ -462,6 +438,28 @@ def transform_dialect_vectorize(code: str, operation_tag: str, tmp_file_path: st
     result = re.sub(r"module attributes \{transform.with_named_sequence\} \{\s+\}", "", result)
 
     return result
+
+
+def transform_dialect_TV(code: str, operation_tag: str, tiling_sizes: list[int], vec_func: Callable[[str, str, str], str], tmp_file_path: str):
+    """Apply the tiling and vectorization transformation to the specified operation in the given code.
+
+    Args:
+        code (str): The code to apply the transformation to.
+        operation_tag (str): The tag of the operation to apply the transformation to.
+        tiling_sizes (list[int]): The tiling sizes to apply.
+        vec_func (Callable[[str, str, str], str]): The vectorization function to apply.
+        tmp_file_path (str): The path to the temporary file to write the code to.
+
+    Returns:
+        str: The code after applying the transformation.
+    """
+    if not code:
+        return code
+
+    code = transform_dialect_tile(code, operation_tag, tiling_sizes, tmp_file_path)
+    code = vec_func(code, operation_tag, tmp_file_path)
+
+    return code
 
 
 def transform_dialect_img2col(code: str, operation_tag: str, tmp_file_path: str):
@@ -564,7 +562,7 @@ def apply_transformation(state: OperationState, code: str, transformation: str, 
         # Apply the vectorization if eligible
         if not is_legal:
             raise Exception("Operation is not vectorizable")
-        new_code = transform_dialect_vectorize_with_vectorizer(code, state.operation_tag, tmp_file)
+        new_code = transform_dialect_vectorize(code, state.operation_tag, tmp_file)
     elif transformation == 'no_transformation':
         new_code = code
     else:

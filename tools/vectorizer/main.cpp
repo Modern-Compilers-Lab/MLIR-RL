@@ -77,6 +77,38 @@ int main(int argc, char **argv)
 {
   std::string inputFilename(argv[1]);
   std::string tagName(argv[2]);
+  std::string vectorSizesStr;
+  if (argc > 3)
+  {
+    vectorSizesStr = argv[3];
+  }
+  // Parse the vector sizes from the string
+  llvm::SmallVector<int64_t> vectorSizes;
+  if (!vectorSizesStr.empty())
+  {
+    if (vectorSizesStr.front() != '[' || vectorSizesStr.back() != ']')
+    {
+      llvm::errs() << "Vector sizes must be enclosed in square brackets, e.g. [4,8,16]\n";
+      return 1;
+    }
+    // Remove the square brackets
+    vectorSizesStr = vectorSizesStr.substr(1, vectorSizesStr.size() - 2);
+    // Split the string by commas and convert each size to an integer
+    std::istringstream ss(vectorSizesStr);
+    std::string size;
+    while (std::getline(ss, size, ','))
+    {
+      try {
+        vectorSizes.push_back(std::stoll(size));
+      } catch (const std::invalid_argument &e) {
+        llvm::errs() << "Invalid vector size: " << size << "\n";
+        return 1;
+      } catch (const std::out_of_range &e) {
+        llvm::errs() << "Vector size out of range: " << size << "\n";
+        return 1;
+      }
+    }
+  }
 
   // Register MLIR command-line options
   mlir::registerAsmPrinterCLOptions();
@@ -151,14 +183,18 @@ int main(int argc, char **argv)
     // mlir::Operation *OpVectParent = targetOp->getParentOp();
     // Vectorize operation
     IRRewriter rewriter(&context);
-    llvm::ArrayRef<int64_t> emptyArrayRef;
-    llvm::ArrayRef<bool> boolArrayRef;
-    mlir::LogicalResult vectorized = mlir::linalg::vectorize(rewriter, targetOp);
+    llvm::SmallVector<bool> scalableVecDims(vectorSizes.size(), false);
+    mlir::LogicalResult vectorized = mlir::linalg::vectorize(
+      rewriter,
+      targetOp,
+      vectorSizes,
+      scalableVecDims
+    );
 
     RewritePatternSet patterns(&context);
 
     // Add vectorization canonicalization and lowering patterns to the set
-    mlir::transform::detail::VectorizeOpGenericAdaptorBase::Properties props;
+    // mlir::transform::detail::VectorizeOpGenericAdaptorBase::Properties props;
 
     // if (!props.getDisableTransferPermutationMapLoweringPatterns())
     mlir::vector::populateVectorTransferPermutationMapLoweringPatterns(patterns);
