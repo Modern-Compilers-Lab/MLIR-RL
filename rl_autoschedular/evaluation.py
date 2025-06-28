@@ -73,6 +73,7 @@ def evaluate_code_with_bindings(code: str) -> tuple[Optional[int], Union[Excepti
         },
 
         convert-linalg-to-loops,
+        canonicalize,
         buffer-deallocation-pipeline,
         convert-bufferization-to-memref,
         scf-forall-to-parallel,
