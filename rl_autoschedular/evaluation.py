@@ -250,13 +250,16 @@ def __check_execution_cache(bench_name: str, cache_key: str, tmp_exec_file: str)
     Returns:
         Optional[int]: the execution time in nanoseconds if the operation is found in the cache, otherwise None.
     """
+    # Start by checking the main execution cache file
     if cfg.exec_data_file:
-        # Start by checking the main execution cache file
-        with open(cfg.exec_data_file, "r") as file:
-            data = json.load(file)
+        try:
+            with open(cfg.exec_data_file, "r") as file:
+                data = json.load(file)
 
-        if bench_name in data and cache_key in data[bench_name]:
-            return int(data[bench_name][cache_key])
+            if bench_name in data and cache_key in data[bench_name]:
+                return int(data[bench_name][cache_key])
+        except Exception:
+            pass
 
     # If no hit in the main cache file, check the temporary cache file
     with open(tmp_exec_file, "r") as file:

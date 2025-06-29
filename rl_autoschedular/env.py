@@ -7,7 +7,7 @@ from typing import Optional, Union, Literal
 from rl_autoschedular.observation import extract_bench_features_from_file, build_op_features_vector
 from rl_autoschedular.transforms import apply_transformation, is_vectorizable
 from rl_autoschedular.evaluation import evaluate_code
-from utils.log import print_error, print_info
+from utils.log import print_error
 from tqdm import tqdm
 import numpy as np
 import torch
@@ -146,9 +146,11 @@ class Env:
             if not exec_succeeded or new_exec_time is None:
                 raise Exception("Execution failed")
         except Exception as e:
-            print_error(f"Error while evaluating the code: {e}")
-            print_info("Bench:", next_state.bench_name)
-            print_info("Transformations:", next_state.transformation_history)
+            print_error(f"\n\nError while evaluating the code: {e}")
+            print_error("Exception type:", type(e).__name__)
+            print_error("Call stack:", e.__traceback__)
+            print_error("Bench:", next_state.bench_name)
+            print_error("Transformations:", next_state.transformation_history)
             exec_succeeded = False
             new_exec_time = None
 
