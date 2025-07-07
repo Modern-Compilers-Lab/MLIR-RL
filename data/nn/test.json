@@ -1,0 +1,1541 @@
+{
+  "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x256x14x14xf32>, tensor<256x256x3x3xf32>) outs (%init: tensor<256x256x12x12xf32>) -> tensor<256x256x12x12xf32>": {
+    "operation": "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x256x14x14xf32>, tensor<256x256x3x3xf32>) outs (%init: tensor<256x256x12x12xf32>) -> tensor<256x256x12x12xf32>",
+    "wrapped_operation": "func.func @func_call(%input: tensor<256x256x14x14xf32>, %filter: tensor<256x256x3x3xf32>, %init: tensor<256x256x12x12xf32>) -> tensor<256x256x12x12xf32> {\n  %ret = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x256x14x14xf32>, tensor<256x256x3x3xf32>) outs (%init: tensor<256x256x12x12xf32>) -> tensor<256x256x12x12xf32>\n  return %ret : tensor<256x256x12x12xf32>\n}",
+    "lowered_operation": "#map = affine_map<(d0, d1) -> (d0 + d1)>\nmodule {\n  func.func @func_call(%arg0: tensor<256x256x14x14xf32>, %arg1: tensor<256x256x3x3xf32>, %arg2: tensor<256x256x12x12xf32>) -> tensor<256x256x12x12xf32> {\n    %0 = bufferization.to_memref %arg1 : memref<256x256x3x3xf32>\n    %1 = bufferization.to_memref %arg0 : memref<256x256x14x14xf32>\n    %2 = bufferization.to_memref %arg2 : memref<256x256x12x12xf32>\n    %alloc = memref.alloc() {alignment = 64 : i64} : memref<256x256x12x12xf32>\n    memref.copy %2, %alloc : memref<256x256x12x12xf32> to memref<256x256x12x12xf32>\n    affine.for %arg3 = 0 to 256 {\n      affine.for %arg4 = 0 to 256 {\n        affine.for %arg5 = 0 to 12 {\n          affine.for %arg6 = 0 to 12 {\n            affine.for %arg7 = 0 to 256 {\n              affine.for %arg8 = 0 to 3 {\n                affine.for %arg9 = 0 to 3 {\n                  %4 = affine.apply #map(%arg5, %arg8)\n                  %5 = affine.apply #map(%arg6, %arg9)\n                  %6 = affine.load %1[%arg3, %arg7, %4, %5] : memref<256x256x14x14xf32>\n                  %7 = affine.load %0[%arg4, %arg7, %arg8, %arg9] : memref<256x256x3x3xf32>\n                  %8 = affine.load %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x256x12x12xf32>\n                  %9 = arith.mulf %6, %7 : f32\n                  %10 = arith.addf %8, %9 : f32\n                  affine.store %10, %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x256x12x12xf32>\n                }\n              }\n            }\n          }\n        }\n      }\n    }\n    %3 = bufferization.to_tensor %alloc : memref<256x256x12x12xf32>\n    return %3 : tensor<256x256x12x12xf32>\n  }\n}\n\n",
+    "transform_wrapped_operation": "module attributes {torch.debug_module_name = \"Net\"} {\nfunc.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\nfunc.func private @printFlops(f64)\nfunc.func private @printI64(i64)\nfunc.func private @printNewline()\nfunc.func private @printMemrefF32(tensor<*xf32>)\n\n\nfunc.func @matmul() -> tensor<256x256x12x12xf32>{\n\n%val = arith.constant 2.00000e+00 : f32\n%zero = arith.constant 0.00000e+00 : f32\n\n%tmp_input = bufferization.alloc_tensor() : tensor<256x256x14x14xf32>\n%input = linalg.fill ins(%val : f32) outs(%tmp_input : tensor<256x256x14x14xf32>) -> tensor<256x256x14x14xf32>\n%tmp_filter = bufferization.alloc_tensor() : tensor<256x256x3x3xf32>\n%filter = linalg.fill ins(%val : f32) outs(%tmp_filter : tensor<256x256x3x3xf32>) -> tensor<256x256x3x3xf32>\n%tmp_init = bufferization.alloc_tensor() : tensor<256x256x12x12xf32>\n%init = linalg.fill ins(%val : f32) outs(%tmp_init : tensor<256x256x12x12xf32>) -> tensor<256x256x12x12xf32>\n\n%t0 = func.call @nanoTime() : () -> (i64)\n\n%return_arg = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x256x14x14xf32>, tensor<256x256x3x3xf32>) outs (%init: tensor<256x256x12x12xf32>) -> tensor<256x256x12x12xf32>\n%t = func.call @nanoTime() : () -> (i64)\n%delta = arith.subi %t, %t0 : i64\n%fp = arith.uitofp %delta : i64 to f64\n// func.call @printFlops(%fp) : (f64) -> ()\nfunc.call @printI64(%delta) : (i64) -> ()\nfunc.call @printNewline() : () -> ()\n\nreturn %return_arg : tensor<256x256x12x12xf32> \n}\n\nfunc.func @main(){\n    %c1 = arith.constant 1: index\n    %c0 = arith.constant 0 : index\n    %n = arith.constant 2: index\n    scf.for %i = %c0 to %n step %c1 {\n    %outputmain = func.call @matmul() : () -> tensor<256x256x12x12xf32>\n    }\n    return\n}\n}\n",
+    "loops_data": {
+      "nested_loops": [
+        [
+          "%arg3",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg4",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg5",
+          0,
+          12,
+          1
+        ],
+        [
+          "%arg6",
+          0,
+          12,
+          1
+        ],
+        [
+          "%arg7",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg8",
+          0,
+          3,
+          1
+        ],
+        [
+          "%arg9",
+          0,
+          3,
+          1
+        ]
+      ],
+      "op_count": {
+        "+": 1,
+        "-": 0,
+        "*": 1,
+        "/": 0,
+        "exp": 0
+      },
+      "load_data": [
+        [
+          "%arg3",
+          "%arg7",
+          "%arg5 + %arg8",
+          "%arg6 + %arg9"
+        ],
+        [
+          "%arg4",
+          "%arg7",
+          "%arg8",
+          "%arg9"
+        ],
+        [
+          "%arg3",
+          "%arg4",
+          "%arg5",
+          "%arg6"
+        ]
+      ],
+      "store_data": []
+    },
+    "execution_time": 82128340267
+  },
+  "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x256x14x14xf32>, tensor<1024x256x1x1xf32>) outs (%init: tensor<256x1024x14x14xf32>) -> tensor<256x1024x14x14xf32>": {
+    "operation": "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x256x14x14xf32>, tensor<1024x256x1x1xf32>) outs (%init: tensor<256x1024x14x14xf32>) -> tensor<256x1024x14x14xf32>",
+    "wrapped_operation": "func.func @func_call(%input: tensor<256x256x14x14xf32>, %filter: tensor<1024x256x1x1xf32>, %init: tensor<256x1024x14x14xf32>) -> tensor<256x1024x14x14xf32> {\n  %ret = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x256x14x14xf32>, tensor<1024x256x1x1xf32>) outs (%init: tensor<256x1024x14x14xf32>) -> tensor<256x1024x14x14xf32>\n  return %ret : tensor<256x1024x14x14xf32>\n}",
+    "lowered_operation": "#map = affine_map<(d0, d1) -> (d0 + d1)>\nmodule {\n  func.func @func_call(%arg0: tensor<256x256x14x14xf32>, %arg1: tensor<1024x256x1x1xf32>, %arg2: tensor<256x1024x14x14xf32>) -> tensor<256x1024x14x14xf32> {\n    %0 = bufferization.to_memref %arg1 : memref<1024x256x1x1xf32>\n    %1 = bufferization.to_memref %arg0 : memref<256x256x14x14xf32>\n    %2 = bufferization.to_memref %arg2 : memref<256x1024x14x14xf32>\n    %alloc = memref.alloc() {alignment = 64 : i64} : memref<256x1024x14x14xf32>\n    memref.copy %2, %alloc : memref<256x1024x14x14xf32> to memref<256x1024x14x14xf32>\n    affine.for %arg3 = 0 to 256 {\n      affine.for %arg4 = 0 to 1024 {\n        affine.for %arg5 = 0 to 14 {\n          affine.for %arg6 = 0 to 14 {\n            affine.for %arg7 = 0 to 256 {\n              affine.for %arg8 = 0 to 1 {\n                affine.for %arg9 = 0 to 1 {\n                  %4 = affine.apply #map(%arg5, %arg8)\n                  %5 = affine.apply #map(%arg6, %arg9)\n                  %6 = affine.load %1[%arg3, %arg7, %4, %5] : memref<256x256x14x14xf32>\n                  %7 = affine.load %0[%arg4, %arg7, %arg8, %arg9] : memref<1024x256x1x1xf32>\n                  %8 = affine.load %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x1024x14x14xf32>\n                  %9 = arith.mulf %6, %7 : f32\n                  %10 = arith.addf %8, %9 : f32\n                  affine.store %10, %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x1024x14x14xf32>\n                }\n              }\n            }\n          }\n        }\n      }\n    }\n    %3 = bufferization.to_tensor %alloc : memref<256x1024x14x14xf32>\n    return %3 : tensor<256x1024x14x14xf32>\n  }\n}\n\n",
+    "transform_wrapped_operation": "module attributes {torch.debug_module_name = \"Net\"} {\nfunc.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\nfunc.func private @printFlops(f64)\nfunc.func private @printI64(i64)\nfunc.func private @printNewline()\nfunc.func private @printMemrefF32(tensor<*xf32>)\n\n\nfunc.func @matmul() -> tensor<256x1024x14x14xf32>{\n\n%val = arith.constant 2.00000e+00 : f32\n%zero = arith.constant 0.00000e+00 : f32\n\n%tmp_input = bufferization.alloc_tensor() : tensor<256x256x14x14xf32>\n%input = linalg.fill ins(%val : f32) outs(%tmp_input : tensor<256x256x14x14xf32>) -> tensor<256x256x14x14xf32>\n%tmp_filter = bufferization.alloc_tensor() : tensor<1024x256x1x1xf32>\n%filter = linalg.fill ins(%val : f32) outs(%tmp_filter : tensor<1024x256x1x1xf32>) -> tensor<1024x256x1x1xf32>\n%tmp_init = bufferization.alloc_tensor() : tensor<256x1024x14x14xf32>\n%init = linalg.fill ins(%val : f32) outs(%tmp_init : tensor<256x1024x14x14xf32>) -> tensor<256x1024x14x14xf32>\n\n%t0 = func.call @nanoTime() : () -> (i64)\n\n%return_arg = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x256x14x14xf32>, tensor<1024x256x1x1xf32>) outs (%init: tensor<256x1024x14x14xf32>) -> tensor<256x1024x14x14xf32>\n%t = func.call @nanoTime() : () -> (i64)\n%delta = arith.subi %t, %t0 : i64\n%fp = arith.uitofp %delta : i64 to f64\n// func.call @printFlops(%fp) : (f64) -> ()\nfunc.call @printI64(%delta) : (i64) -> ()\nfunc.call @printNewline() : () -> ()\n\nreturn %return_arg : tensor<256x1024x14x14xf32> \n}\n\nfunc.func @main(){\n    %c1 = arith.constant 1: index\n    %c0 = arith.constant 0 : index\n    %n = arith.constant 2: index\n    scf.for %i = %c0 to %n step %c1 {\n    %outputmain = func.call @matmul() : () -> tensor<256x1024x14x14xf32>\n    }\n    return\n}\n}\n",
+    "loops_data": {
+      "nested_loops": [
+        [
+          "%arg3",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg4",
+          0,
+          1024,
+          1
+        ],
+        [
+          "%arg5",
+          0,
+          14,
+          1
+        ],
+        [
+          "%arg6",
+          0,
+          14,
+          1
+        ],
+        [
+          "%arg7",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg8",
+          0,
+          1,
+          1
+        ],
+        [
+          "%arg9",
+          0,
+          1,
+          1
+        ]
+      ],
+      "op_count": {
+        "+": 1,
+        "-": 0,
+        "*": 1,
+        "/": 0,
+        "exp": 0
+      },
+      "load_data": [
+        [
+          "%arg3",
+          "%arg7",
+          "%arg5 + %arg8",
+          "%arg6 + %arg9"
+        ],
+        [
+          "%arg4",
+          "%arg7",
+          "%arg8",
+          "%arg9"
+        ],
+        [
+          "%arg3",
+          "%arg4",
+          "%arg5",
+          "%arg6"
+        ]
+      ],
+      "store_data": []
+    },
+    "execution_time": 46687059293
+  },
+  "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x128x28x28xf32>, tensor<128x128x3x3xf32>) outs (%init: tensor<256x128x26x26xf32>) -> tensor<256x128x26x26xf32>": {
+    "operation": "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x128x28x28xf32>, tensor<128x128x3x3xf32>) outs (%init: tensor<256x128x26x26xf32>) -> tensor<256x128x26x26xf32>",
+    "wrapped_operation": "func.func @func_call(%input: tensor<256x128x28x28xf32>, %filter: tensor<128x128x3x3xf32>, %init: tensor<256x128x26x26xf32>) -> tensor<256x128x26x26xf32> {\n  %ret = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x128x28x28xf32>, tensor<128x128x3x3xf32>) outs (%init: tensor<256x128x26x26xf32>) -> tensor<256x128x26x26xf32>\n  return %ret : tensor<256x128x26x26xf32>\n}",
+    "lowered_operation": "#map = affine_map<(d0, d1) -> (d0 + d1)>\nmodule {\n  func.func @func_call(%arg0: tensor<256x128x28x28xf32>, %arg1: tensor<128x128x3x3xf32>, %arg2: tensor<256x128x26x26xf32>) -> tensor<256x128x26x26xf32> {\n    %0 = bufferization.to_memref %arg1 : memref<128x128x3x3xf32>\n    %1 = bufferization.to_memref %arg0 : memref<256x128x28x28xf32>\n    %2 = bufferization.to_memref %arg2 : memref<256x128x26x26xf32>\n    %alloc = memref.alloc() {alignment = 64 : i64} : memref<256x128x26x26xf32>\n    memref.copy %2, %alloc : memref<256x128x26x26xf32> to memref<256x128x26x26xf32>\n    affine.for %arg3 = 0 to 256 {\n      affine.for %arg4 = 0 to 128 {\n        affine.for %arg5 = 0 to 26 {\n          affine.for %arg6 = 0 to 26 {\n            affine.for %arg7 = 0 to 128 {\n              affine.for %arg8 = 0 to 3 {\n                affine.for %arg9 = 0 to 3 {\n                  %4 = affine.apply #map(%arg5, %arg8)\n                  %5 = affine.apply #map(%arg6, %arg9)\n                  %6 = affine.load %1[%arg3, %arg7, %4, %5] : memref<256x128x28x28xf32>\n                  %7 = affine.load %0[%arg4, %arg7, %arg8, %arg9] : memref<128x128x3x3xf32>\n                  %8 = affine.load %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x128x26x26xf32>\n                  %9 = arith.mulf %6, %7 : f32\n                  %10 = arith.addf %8, %9 : f32\n                  affine.store %10, %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x128x26x26xf32>\n                }\n              }\n            }\n          }\n        }\n      }\n    }\n    %3 = bufferization.to_tensor %alloc : memref<256x128x26x26xf32>\n    return %3 : tensor<256x128x26x26xf32>\n  }\n}\n\n",
+    "transform_wrapped_operation": "module attributes {torch.debug_module_name = \"Net\"} {\nfunc.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\nfunc.func private @printFlops(f64)\nfunc.func private @printI64(i64)\nfunc.func private @printNewline()\nfunc.func private @printMemrefF32(tensor<*xf32>)\n\n\nfunc.func @matmul() -> tensor<256x128x26x26xf32>{\n\n%val = arith.constant 2.00000e+00 : f32\n%zero = arith.constant 0.00000e+00 : f32\n\n%tmp_input = bufferization.alloc_tensor() : tensor<256x128x28x28xf32>\n%input = linalg.fill ins(%val : f32) outs(%tmp_input : tensor<256x128x28x28xf32>) -> tensor<256x128x28x28xf32>\n%tmp_filter = bufferization.alloc_tensor() : tensor<128x128x3x3xf32>\n%filter = linalg.fill ins(%val : f32) outs(%tmp_filter : tensor<128x128x3x3xf32>) -> tensor<128x128x3x3xf32>\n%tmp_init = bufferization.alloc_tensor() : tensor<256x128x26x26xf32>\n%init = linalg.fill ins(%val : f32) outs(%tmp_init : tensor<256x128x26x26xf32>) -> tensor<256x128x26x26xf32>\n\n%t0 = func.call @nanoTime() : () -> (i64)\n\n%return_arg = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x128x28x28xf32>, tensor<128x128x3x3xf32>) outs (%init: tensor<256x128x26x26xf32>) -> tensor<256x128x26x26xf32>\n%t = func.call @nanoTime() : () -> (i64)\n%delta = arith.subi %t, %t0 : i64\n%fp = arith.uitofp %delta : i64 to f64\n// func.call @printFlops(%fp) : (f64) -> ()\nfunc.call @printI64(%delta) : (i64) -> ()\nfunc.call @printNewline() : () -> ()\n\nreturn %return_arg : tensor<256x128x26x26xf32> \n}\n\nfunc.func @main(){\n    %c1 = arith.constant 1: index\n    %c0 = arith.constant 0 : index\n    %n = arith.constant 2: index\n    scf.for %i = %c0 to %n step %c1 {\n    %outputmain = func.call @matmul() : () -> tensor<256x128x26x26xf32>\n    }\n    return\n}\n}\n",
+    "loops_data": {
+      "nested_loops": [
+        [
+          "%arg3",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg4",
+          0,
+          128,
+          1
+        ],
+        [
+          "%arg5",
+          0,
+          26,
+          1
+        ],
+        [
+          "%arg6",
+          0,
+          26,
+          1
+        ],
+        [
+          "%arg7",
+          0,
+          128,
+          1
+        ],
+        [
+          "%arg8",
+          0,
+          3,
+          1
+        ],
+        [
+          "%arg9",
+          0,
+          3,
+          1
+        ]
+      ],
+      "op_count": {
+        "+": 1,
+        "-": 0,
+        "*": 1,
+        "/": 0,
+        "exp": 0
+      },
+      "load_data": [
+        [
+          "%arg3",
+          "%arg7",
+          "%arg5 + %arg8",
+          "%arg6 + %arg9"
+        ],
+        [
+          "%arg4",
+          "%arg7",
+          "%arg8",
+          "%arg9"
+        ],
+        [
+          "%arg3",
+          "%arg4",
+          "%arg5",
+          "%arg6"
+        ]
+      ],
+      "store_data": []
+    },
+    "execution_time": 96255232057
+  },
+  "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x128x28x28xf32>, tensor<512x128x1x1xf32>) outs (%init: tensor<256x512x28x28xf32>) -> tensor<256x512x28x28xf32>": {
+    "operation": "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x128x28x28xf32>, tensor<512x128x1x1xf32>) outs (%init: tensor<256x512x28x28xf32>) -> tensor<256x512x28x28xf32>",
+    "wrapped_operation": "func.func @func_call(%input: tensor<256x128x28x28xf32>, %filter: tensor<512x128x1x1xf32>, %init: tensor<256x512x28x28xf32>) -> tensor<256x512x28x28xf32> {\n  %ret = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x128x28x28xf32>, tensor<512x128x1x1xf32>) outs (%init: tensor<256x512x28x28xf32>) -> tensor<256x512x28x28xf32>\n  return %ret : tensor<256x512x28x28xf32>\n}",
+    "lowered_operation": "#map = affine_map<(d0, d1) -> (d0 + d1)>\nmodule {\n  func.func @func_call(%arg0: tensor<256x128x28x28xf32>, %arg1: tensor<512x128x1x1xf32>, %arg2: tensor<256x512x28x28xf32>) -> tensor<256x512x28x28xf32> {\n    %0 = bufferization.to_memref %arg1 : memref<512x128x1x1xf32>\n    %1 = bufferization.to_memref %arg0 : memref<256x128x28x28xf32>\n    %2 = bufferization.to_memref %arg2 : memref<256x512x28x28xf32>\n    %alloc = memref.alloc() {alignment = 64 : i64} : memref<256x512x28x28xf32>\n    memref.copy %2, %alloc : memref<256x512x28x28xf32> to memref<256x512x28x28xf32>\n    affine.for %arg3 = 0 to 256 {\n      affine.for %arg4 = 0 to 512 {\n        affine.for %arg5 = 0 to 28 {\n          affine.for %arg6 = 0 to 28 {\n            affine.for %arg7 = 0 to 128 {\n              affine.for %arg8 = 0 to 1 {\n                affine.for %arg9 = 0 to 1 {\n                  %4 = affine.apply #map(%arg5, %arg8)\n                  %5 = affine.apply #map(%arg6, %arg9)\n                  %6 = affine.load %1[%arg3, %arg7, %4, %5] : memref<256x128x28x28xf32>\n                  %7 = affine.load %0[%arg4, %arg7, %arg8, %arg9] : memref<512x128x1x1xf32>\n                  %8 = affine.load %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x512x28x28xf32>\n                  %9 = arith.mulf %6, %7 : f32\n                  %10 = arith.addf %8, %9 : f32\n                  affine.store %10, %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x512x28x28xf32>\n                }\n              }\n            }\n          }\n        }\n      }\n    }\n    %3 = bufferization.to_tensor %alloc : memref<256x512x28x28xf32>\n    return %3 : tensor<256x512x28x28xf32>\n  }\n}\n\n",
+    "transform_wrapped_operation": "module attributes {torch.debug_module_name = \"Net\"} {\nfunc.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\nfunc.func private @printFlops(f64)\nfunc.func private @printI64(i64)\nfunc.func private @printNewline()\nfunc.func private @printMemrefF32(tensor<*xf32>)\n\n\nfunc.func @matmul() -> tensor<256x512x28x28xf32>{\n\n%val = arith.constant 2.00000e+00 : f32\n%zero = arith.constant 0.00000e+00 : f32\n\n%tmp_input = bufferization.alloc_tensor() : tensor<256x128x28x28xf32>\n%input = linalg.fill ins(%val : f32) outs(%tmp_input : tensor<256x128x28x28xf32>) -> tensor<256x128x28x28xf32>\n%tmp_filter = bufferization.alloc_tensor() : tensor<512x128x1x1xf32>\n%filter = linalg.fill ins(%val : f32) outs(%tmp_filter : tensor<512x128x1x1xf32>) -> tensor<512x128x1x1xf32>\n%tmp_init = bufferization.alloc_tensor() : tensor<256x512x28x28xf32>\n%init = linalg.fill ins(%val : f32) outs(%tmp_init : tensor<256x512x28x28xf32>) -> tensor<256x512x28x28xf32>\n\n%t0 = func.call @nanoTime() : () -> (i64)\n\n%return_arg = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x128x28x28xf32>, tensor<512x128x1x1xf32>) outs (%init: tensor<256x512x28x28xf32>) -> tensor<256x512x28x28xf32>\n%t = func.call @nanoTime() : () -> (i64)\n%delta = arith.subi %t, %t0 : i64\n%fp = arith.uitofp %delta : i64 to f64\n// func.call @printFlops(%fp) : (f64) -> ()\nfunc.call @printI64(%delta) : (i64) -> ()\nfunc.call @printNewline() : () -> ()\n\nreturn %return_arg : tensor<256x512x28x28xf32> \n}\n\nfunc.func @main(){\n    %c1 = arith.constant 1: index\n    %c0 = arith.constant 0 : index\n    %n = arith.constant 2: index\n    scf.for %i = %c0 to %n step %c1 {\n    %outputmain = func.call @matmul() : () -> tensor<256x512x28x28xf32>\n    }\n    return\n}\n}\n",
+    "loops_data": {
+      "nested_loops": [
+        [
+          "%arg3",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg4",
+          0,
+          512,
+          1
+        ],
+        [
+          "%arg5",
+          0,
+          28,
+          1
+        ],
+        [
+          "%arg6",
+          0,
+          28,
+          1
+        ],
+        [
+          "%arg7",
+          0,
+          128,
+          1
+        ],
+        [
+          "%arg8",
+          0,
+          1,
+          1
+        ],
+        [
+          "%arg9",
+          0,
+          1,
+          1
+        ]
+      ],
+      "op_count": {
+        "+": 1,
+        "-": 0,
+        "*": 1,
+        "/": 0,
+        "exp": 0
+      },
+      "load_data": [
+        [
+          "%arg3",
+          "%arg7",
+          "%arg5 + %arg8",
+          "%arg6 + %arg9"
+        ],
+        [
+          "%arg4",
+          "%arg7",
+          "%arg8",
+          "%arg9"
+        ],
+        [
+          "%arg3",
+          "%arg4",
+          "%arg5",
+          "%arg6"
+        ]
+      ],
+      "store_data": []
+    },
+    "execution_time": 44282278285
+  },
+  "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x512x28x28xf32>, tensor<128x512x1x1xf32>) outs (%init: tensor<256x128x28x28xf32>) -> tensor<256x128x28x28xf32>": {
+    "operation": "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x512x28x28xf32>, tensor<128x512x1x1xf32>) outs (%init: tensor<256x128x28x28xf32>) -> tensor<256x128x28x28xf32>",
+    "wrapped_operation": "func.func @func_call(%input: tensor<256x512x28x28xf32>, %filter: tensor<128x512x1x1xf32>, %init: tensor<256x128x28x28xf32>) -> tensor<256x128x28x28xf32> {\n  %ret = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x512x28x28xf32>, tensor<128x512x1x1xf32>) outs (%init: tensor<256x128x28x28xf32>) -> tensor<256x128x28x28xf32>\n  return %ret : tensor<256x128x28x28xf32>\n}",
+    "lowered_operation": "#map = affine_map<(d0, d1) -> (d0 + d1)>\nmodule {\n  func.func @func_call(%arg0: tensor<256x512x28x28xf32>, %arg1: tensor<128x512x1x1xf32>, %arg2: tensor<256x128x28x28xf32>) -> tensor<256x128x28x28xf32> {\n    %0 = bufferization.to_memref %arg1 : memref<128x512x1x1xf32>\n    %1 = bufferization.to_memref %arg0 : memref<256x512x28x28xf32>\n    %2 = bufferization.to_memref %arg2 : memref<256x128x28x28xf32>\n    %alloc = memref.alloc() {alignment = 64 : i64} : memref<256x128x28x28xf32>\n    memref.copy %2, %alloc : memref<256x128x28x28xf32> to memref<256x128x28x28xf32>\n    affine.for %arg3 = 0 to 256 {\n      affine.for %arg4 = 0 to 128 {\n        affine.for %arg5 = 0 to 28 {\n          affine.for %arg6 = 0 to 28 {\n            affine.for %arg7 = 0 to 512 {\n              affine.for %arg8 = 0 to 1 {\n                affine.for %arg9 = 0 to 1 {\n                  %4 = affine.apply #map(%arg5, %arg8)\n                  %5 = affine.apply #map(%arg6, %arg9)\n                  %6 = affine.load %1[%arg3, %arg7, %4, %5] : memref<256x512x28x28xf32>\n                  %7 = affine.load %0[%arg4, %arg7, %arg8, %arg9] : memref<128x512x1x1xf32>\n                  %8 = affine.load %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x128x28x28xf32>\n                  %9 = arith.mulf %6, %7 : f32\n                  %10 = arith.addf %8, %9 : f32\n                  affine.store %10, %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x128x28x28xf32>\n                }\n              }\n            }\n          }\n        }\n      }\n    }\n    %3 = bufferization.to_tensor %alloc : memref<256x128x28x28xf32>\n    return %3 : tensor<256x128x28x28xf32>\n  }\n}\n\n",
+    "transform_wrapped_operation": "module attributes {torch.debug_module_name = \"Net\"} {\nfunc.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\nfunc.func private @printFlops(f64)\nfunc.func private @printI64(i64)\nfunc.func private @printNewline()\nfunc.func private @printMemrefF32(tensor<*xf32>)\n\n\nfunc.func @matmul() -> tensor<256x128x28x28xf32>{\n\n%val = arith.constant 2.00000e+00 : f32\n%zero = arith.constant 0.00000e+00 : f32\n\n%tmp_input = bufferization.alloc_tensor() : tensor<256x512x28x28xf32>\n%input = linalg.fill ins(%val : f32) outs(%tmp_input : tensor<256x512x28x28xf32>) -> tensor<256x512x28x28xf32>\n%tmp_filter = bufferization.alloc_tensor() : tensor<128x512x1x1xf32>\n%filter = linalg.fill ins(%val : f32) outs(%tmp_filter : tensor<128x512x1x1xf32>) -> tensor<128x512x1x1xf32>\n%tmp_init = bufferization.alloc_tensor() : tensor<256x128x28x28xf32>\n%init = linalg.fill ins(%val : f32) outs(%tmp_init : tensor<256x128x28x28xf32>) -> tensor<256x128x28x28xf32>\n\n%t0 = func.call @nanoTime() : () -> (i64)\n\n%return_arg = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x512x28x28xf32>, tensor<128x512x1x1xf32>) outs (%init: tensor<256x128x28x28xf32>) -> tensor<256x128x28x28xf32>\n%t = func.call @nanoTime() : () -> (i64)\n%delta = arith.subi %t, %t0 : i64\n%fp = arith.uitofp %delta : i64 to f64\n// func.call @printFlops(%fp) : (f64) -> ()\nfunc.call @printI64(%delta) : (i64) -> ()\nfunc.call @printNewline() : () -> ()\n\nreturn %return_arg : tensor<256x128x28x28xf32> \n}\n\nfunc.func @main(){\n    %c1 = arith.constant 1: index\n    %c0 = arith.constant 0 : index\n    %n = arith.constant 2: index\n    scf.for %i = %c0 to %n step %c1 {\n    %outputmain = func.call @matmul() : () -> tensor<256x128x28x28xf32>\n    }\n    return\n}\n}\n",
+    "loops_data": {
+      "nested_loops": [
+        [
+          "%arg3",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg4",
+          0,
+          128,
+          1
+        ],
+        [
+          "%arg5",
+          0,
+          28,
+          1
+        ],
+        [
+          "%arg6",
+          0,
+          28,
+          1
+        ],
+        [
+          "%arg7",
+          0,
+          512,
+          1
+        ],
+        [
+          "%arg8",
+          0,
+          1,
+          1
+        ],
+        [
+          "%arg9",
+          0,
+          1,
+          1
+        ]
+      ],
+      "op_count": {
+        "+": 1,
+        "-": 0,
+        "*": 1,
+        "/": 0,
+        "exp": 0
+      },
+      "load_data": [
+        [
+          "%arg3",
+          "%arg7",
+          "%arg5 + %arg8",
+          "%arg6 + %arg9"
+        ],
+        [
+          "%arg4",
+          "%arg7",
+          "%arg8",
+          "%arg9"
+        ],
+        [
+          "%arg3",
+          "%arg4",
+          "%arg5",
+          "%arg6"
+        ]
+      ],
+      "store_data": []
+    },
+    "execution_time": 48666263434
+  },
+  "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x128x14x14xf32>, tensor<32x128x3x3xf32>) outs (%init: tensor<256x32x12x12xf32>) -> tensor<256x32x12x12xf32>": {
+    "operation": "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x128x14x14xf32>, tensor<32x128x3x3xf32>) outs (%init: tensor<256x32x12x12xf32>) -> tensor<256x32x12x12xf32>",
+    "wrapped_operation": "func.func @func_call(%input: tensor<256x128x14x14xf32>, %filter: tensor<32x128x3x3xf32>, %init: tensor<256x32x12x12xf32>) -> tensor<256x32x12x12xf32> {\n  %ret = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x128x14x14xf32>, tensor<32x128x3x3xf32>) outs (%init: tensor<256x32x12x12xf32>) -> tensor<256x32x12x12xf32>\n  return %ret : tensor<256x32x12x12xf32>\n}",
+    "lowered_operation": "#map = affine_map<(d0, d1) -> (d0 + d1)>\nmodule {\n  func.func @func_call(%arg0: tensor<256x128x14x14xf32>, %arg1: tensor<32x128x3x3xf32>, %arg2: tensor<256x32x12x12xf32>) -> tensor<256x32x12x12xf32> {\n    %0 = bufferization.to_memref %arg1 : memref<32x128x3x3xf32>\n    %1 = bufferization.to_memref %arg0 : memref<256x128x14x14xf32>\n    %2 = bufferization.to_memref %arg2 : memref<256x32x12x12xf32>\n    %alloc = memref.alloc() {alignment = 64 : i64} : memref<256x32x12x12xf32>\n    memref.copy %2, %alloc : memref<256x32x12x12xf32> to memref<256x32x12x12xf32>\n    affine.for %arg3 = 0 to 256 {\n      affine.for %arg4 = 0 to 32 {\n        affine.for %arg5 = 0 to 12 {\n          affine.for %arg6 = 0 to 12 {\n            affine.for %arg7 = 0 to 128 {\n              affine.for %arg8 = 0 to 3 {\n                affine.for %arg9 = 0 to 3 {\n                  %4 = affine.apply #map(%arg5, %arg8)\n                  %5 = affine.apply #map(%arg6, %arg9)\n                  %6 = affine.load %1[%arg3, %arg7, %4, %5] : memref<256x128x14x14xf32>\n                  %7 = affine.load %0[%arg4, %arg7, %arg8, %arg9] : memref<32x128x3x3xf32>\n                  %8 = affine.load %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x32x12x12xf32>\n                  %9 = arith.mulf %6, %7 : f32\n                  %10 = arith.addf %8, %9 : f32\n                  affine.store %10, %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x32x12x12xf32>\n                }\n              }\n            }\n          }\n        }\n      }\n    }\n    %3 = bufferization.to_tensor %alloc : memref<256x32x12x12xf32>\n    return %3 : tensor<256x32x12x12xf32>\n  }\n}\n\n",
+    "transform_wrapped_operation": "module attributes {torch.debug_module_name = \"Net\"} {\nfunc.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\nfunc.func private @printFlops(f64)\nfunc.func private @printI64(i64)\nfunc.func private @printNewline()\nfunc.func private @printMemrefF32(tensor<*xf32>)\n\n\nfunc.func @matmul() -> tensor<256x32x12x12xf32>{\n\n%val = arith.constant 2.00000e+00 : f32\n%zero = arith.constant 0.00000e+00 : f32\n\n%tmp_input = bufferization.alloc_tensor() : tensor<256x128x14x14xf32>\n%input = linalg.fill ins(%val : f32) outs(%tmp_input : tensor<256x128x14x14xf32>) -> tensor<256x128x14x14xf32>\n%tmp_filter = bufferization.alloc_tensor() : tensor<32x128x3x3xf32>\n%filter = linalg.fill ins(%val : f32) outs(%tmp_filter : tensor<32x128x3x3xf32>) -> tensor<32x128x3x3xf32>\n%tmp_init = bufferization.alloc_tensor() : tensor<256x32x12x12xf32>\n%init = linalg.fill ins(%val : f32) outs(%tmp_init : tensor<256x32x12x12xf32>) -> tensor<256x32x12x12xf32>\n\n%t0 = func.call @nanoTime() : () -> (i64)\n\n%return_arg = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x128x14x14xf32>, tensor<32x128x3x3xf32>) outs (%init: tensor<256x32x12x12xf32>) -> tensor<256x32x12x12xf32>\n%t = func.call @nanoTime() : () -> (i64)\n%delta = arith.subi %t, %t0 : i64\n%fp = arith.uitofp %delta : i64 to f64\n// func.call @printFlops(%fp) : (f64) -> ()\nfunc.call @printI64(%delta) : (i64) -> ()\nfunc.call @printNewline() : () -> ()\n\nreturn %return_arg : tensor<256x32x12x12xf32> \n}\n\nfunc.func @main(){\n    %c1 = arith.constant 1: index\n    %c0 = arith.constant 0 : index\n    %n = arith.constant 2: index\n    scf.for %i = %c0 to %n step %c1 {\n    %outputmain = func.call @matmul() : () -> tensor<256x32x12x12xf32>\n    }\n    return\n}\n}\n",
+    "loops_data": {
+      "nested_loops": [
+        [
+          "%arg3",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg4",
+          0,
+          32,
+          1
+        ],
+        [
+          "%arg5",
+          0,
+          12,
+          1
+        ],
+        [
+          "%arg6",
+          0,
+          12,
+          1
+        ],
+        [
+          "%arg7",
+          0,
+          128,
+          1
+        ],
+        [
+          "%arg8",
+          0,
+          3,
+          1
+        ],
+        [
+          "%arg9",
+          0,
+          3,
+          1
+        ]
+      ],
+      "op_count": {
+        "+": 1,
+        "-": 0,
+        "*": 1,
+        "/": 0,
+        "exp": 0
+      },
+      "load_data": [
+        [
+          "%arg3",
+          "%arg7",
+          "%arg5 + %arg8",
+          "%arg6 + %arg9"
+        ],
+        [
+          "%arg4",
+          "%arg7",
+          "%arg8",
+          "%arg9"
+        ],
+        [
+          "%arg3",
+          "%arg4",
+          "%arg5",
+          "%arg6"
+        ]
+      ],
+      "store_data": []
+    },
+    "execution_time": 5125335832
+  },
+  "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x128x7x7xf32>, tensor<32x128x3x3xf32>) outs (%init: tensor<256x32x5x5xf32>) -> tensor<256x32x5x5xf32>": {
+    "operation": "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x128x7x7xf32>, tensor<32x128x3x3xf32>) outs (%init: tensor<256x32x5x5xf32>) -> tensor<256x32x5x5xf32>",
+    "wrapped_operation": "func.func @func_call(%input: tensor<256x128x7x7xf32>, %filter: tensor<32x128x3x3xf32>, %init: tensor<256x32x5x5xf32>) -> tensor<256x32x5x5xf32> {\n  %ret = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x128x7x7xf32>, tensor<32x128x3x3xf32>) outs (%init: tensor<256x32x5x5xf32>) -> tensor<256x32x5x5xf32>\n  return %ret : tensor<256x32x5x5xf32>\n}",
+    "lowered_operation": "#map = affine_map<(d0, d1) -> (d0 + d1)>\nmodule {\n  func.func @func_call(%arg0: tensor<256x128x7x7xf32>, %arg1: tensor<32x128x3x3xf32>, %arg2: tensor<256x32x5x5xf32>) -> tensor<256x32x5x5xf32> {\n    %0 = bufferization.to_memref %arg1 : memref<32x128x3x3xf32>\n    %1 = bufferization.to_memref %arg0 : memref<256x128x7x7xf32>\n    %2 = bufferization.to_memref %arg2 : memref<256x32x5x5xf32>\n    %alloc = memref.alloc() {alignment = 64 : i64} : memref<256x32x5x5xf32>\n    memref.copy %2, %alloc : memref<256x32x5x5xf32> to memref<256x32x5x5xf32>\n    affine.for %arg3 = 0 to 256 {\n      affine.for %arg4 = 0 to 32 {\n        affine.for %arg5 = 0 to 5 {\n          affine.for %arg6 = 0 to 5 {\n            affine.for %arg7 = 0 to 128 {\n              affine.for %arg8 = 0 to 3 {\n                affine.for %arg9 = 0 to 3 {\n                  %4 = affine.apply #map(%arg5, %arg8)\n                  %5 = affine.apply #map(%arg6, %arg9)\n                  %6 = affine.load %1[%arg3, %arg7, %4, %5] : memref<256x128x7x7xf32>\n                  %7 = affine.load %0[%arg4, %arg7, %arg8, %arg9] : memref<32x128x3x3xf32>\n                  %8 = affine.load %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x32x5x5xf32>\n                  %9 = arith.mulf %6, %7 : f32\n                  %10 = arith.addf %8, %9 : f32\n                  affine.store %10, %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x32x5x5xf32>\n                }\n              }\n            }\n          }\n        }\n      }\n    }\n    %3 = bufferization.to_tensor %alloc : memref<256x32x5x5xf32>\n    return %3 : tensor<256x32x5x5xf32>\n  }\n}\n\n",
+    "transform_wrapped_operation": "module attributes {torch.debug_module_name = \"Net\"} {\nfunc.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\nfunc.func private @printFlops(f64)\nfunc.func private @printI64(i64)\nfunc.func private @printNewline()\nfunc.func private @printMemrefF32(tensor<*xf32>)\n\n\nfunc.func @matmul() -> tensor<256x32x5x5xf32>{\n\n%val = arith.constant 2.00000e+00 : f32\n%zero = arith.constant 0.00000e+00 : f32\n\n%tmp_input = bufferization.alloc_tensor() : tensor<256x128x7x7xf32>\n%input = linalg.fill ins(%val : f32) outs(%tmp_input : tensor<256x128x7x7xf32>) -> tensor<256x128x7x7xf32>\n%tmp_filter = bufferization.alloc_tensor() : tensor<32x128x3x3xf32>\n%filter = linalg.fill ins(%val : f32) outs(%tmp_filter : tensor<32x128x3x3xf32>) -> tensor<32x128x3x3xf32>\n%tmp_init = bufferization.alloc_tensor() : tensor<256x32x5x5xf32>\n%init = linalg.fill ins(%val : f32) outs(%tmp_init : tensor<256x32x5x5xf32>) -> tensor<256x32x5x5xf32>\n\n%t0 = func.call @nanoTime() : () -> (i64)\n\n%return_arg = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x128x7x7xf32>, tensor<32x128x3x3xf32>) outs (%init: tensor<256x32x5x5xf32>) -> tensor<256x32x5x5xf32>\n%t = func.call @nanoTime() : () -> (i64)\n%delta = arith.subi %t, %t0 : i64\n%fp = arith.uitofp %delta : i64 to f64\n// func.call @printFlops(%fp) : (f64) -> ()\nfunc.call @printI64(%delta) : (i64) -> ()\nfunc.call @printNewline() : () -> ()\n\nreturn %return_arg : tensor<256x32x5x5xf32> \n}\n\nfunc.func @main(){\n    %c1 = arith.constant 1: index\n    %c0 = arith.constant 0 : index\n    %n = arith.constant 2: index\n    scf.for %i = %c0 to %n step %c1 {\n    %outputmain = func.call @matmul() : () -> tensor<256x32x5x5xf32>\n    }\n    return\n}\n}\n",
+    "loops_data": {
+      "nested_loops": [
+        [
+          "%arg3",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg4",
+          0,
+          32,
+          1
+        ],
+        [
+          "%arg5",
+          0,
+          5,
+          1
+        ],
+        [
+          "%arg6",
+          0,
+          5,
+          1
+        ],
+        [
+          "%arg7",
+          0,
+          128,
+          1
+        ],
+        [
+          "%arg8",
+          0,
+          3,
+          1
+        ],
+        [
+          "%arg9",
+          0,
+          3,
+          1
+        ]
+      ],
+      "op_count": {
+        "+": 1,
+        "-": 0,
+        "*": 1,
+        "/": 0,
+        "exp": 0
+      },
+      "load_data": [
+        [
+          "%arg3",
+          "%arg7",
+          "%arg5 + %arg8",
+          "%arg6 + %arg9"
+        ],
+        [
+          "%arg4",
+          "%arg7",
+          "%arg8",
+          "%arg9"
+        ],
+        [
+          "%arg3",
+          "%arg4",
+          "%arg5",
+          "%arg6"
+        ]
+      ],
+      "store_data": []
+    },
+    "execution_time": 888904827
+  },
+  "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x256x16x16xf32>, tensor<256x256x3x3xf32>) outs (%init: tensor<256x256x14x14xf32>) -> tensor<256x256x14x14xf32>": {
+    "operation": "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x256x16x16xf32>, tensor<256x256x3x3xf32>) outs (%init: tensor<256x256x14x14xf32>) -> tensor<256x256x14x14xf32>",
+    "wrapped_operation": "func.func @func_call(%input: tensor<256x256x16x16xf32>, %filter: tensor<256x256x3x3xf32>, %init: tensor<256x256x14x14xf32>) -> tensor<256x256x14x14xf32> {\n  %ret = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x256x16x16xf32>, tensor<256x256x3x3xf32>) outs (%init: tensor<256x256x14x14xf32>) -> tensor<256x256x14x14xf32>\n  return %ret : tensor<256x256x14x14xf32>\n}",
+    "lowered_operation": "#map = affine_map<(d0, d1) -> (d0 + d1)>\nmodule {\n  func.func @func_call(%arg0: tensor<256x256x16x16xf32>, %arg1: tensor<256x256x3x3xf32>, %arg2: tensor<256x256x14x14xf32>) -> tensor<256x256x14x14xf32> {\n    %0 = bufferization.to_memref %arg1 : memref<256x256x3x3xf32>\n    %1 = bufferization.to_memref %arg0 : memref<256x256x16x16xf32>\n    %2 = bufferization.to_memref %arg2 : memref<256x256x14x14xf32>\n    %alloc = memref.alloc() {alignment = 64 : i64} : memref<256x256x14x14xf32>\n    memref.copy %2, %alloc : memref<256x256x14x14xf32> to memref<256x256x14x14xf32>\n    affine.for %arg3 = 0 to 256 {\n      affine.for %arg4 = 0 to 256 {\n        affine.for %arg5 = 0 to 14 {\n          affine.for %arg6 = 0 to 14 {\n            affine.for %arg7 = 0 to 256 {\n              affine.for %arg8 = 0 to 3 {\n                affine.for %arg9 = 0 to 3 {\n                  %4 = affine.apply #map(%arg5, %arg8)\n                  %5 = affine.apply #map(%arg6, %arg9)\n                  %6 = affine.load %1[%arg3, %arg7, %4, %5] : memref<256x256x16x16xf32>\n                  %7 = affine.load %0[%arg4, %arg7, %arg8, %arg9] : memref<256x256x3x3xf32>\n                  %8 = affine.load %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x256x14x14xf32>\n                  %9 = arith.mulf %6, %7 : f32\n                  %10 = arith.addf %8, %9 : f32\n                  affine.store %10, %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x256x14x14xf32>\n                }\n              }\n            }\n          }\n        }\n      }\n    }\n    %3 = bufferization.to_tensor %alloc : memref<256x256x14x14xf32>\n    return %3 : tensor<256x256x14x14xf32>\n  }\n}\n\n",
+    "transform_wrapped_operation": "module attributes {torch.debug_module_name = \"Net\"} {\nfunc.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\nfunc.func private @printFlops(f64)\nfunc.func private @printI64(i64)\nfunc.func private @printNewline()\nfunc.func private @printMemrefF32(tensor<*xf32>)\n\n\nfunc.func @matmul() -> tensor<256x256x14x14xf32>{\n\n%val = arith.constant 2.00000e+00 : f32\n%zero = arith.constant 0.00000e+00 : f32\n\n%tmp_input = bufferization.alloc_tensor() : tensor<256x256x16x16xf32>\n%input = linalg.fill ins(%val : f32) outs(%tmp_input : tensor<256x256x16x16xf32>) -> tensor<256x256x16x16xf32>\n%tmp_filter = bufferization.alloc_tensor() : tensor<256x256x3x3xf32>\n%filter = linalg.fill ins(%val : f32) outs(%tmp_filter : tensor<256x256x3x3xf32>) -> tensor<256x256x3x3xf32>\n%tmp_init = bufferization.alloc_tensor() : tensor<256x256x14x14xf32>\n%init = linalg.fill ins(%val : f32) outs(%tmp_init : tensor<256x256x14x14xf32>) -> tensor<256x256x14x14xf32>\n\n%t0 = func.call @nanoTime() : () -> (i64)\n\n%return_arg = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x256x16x16xf32>, tensor<256x256x3x3xf32>) outs (%init: tensor<256x256x14x14xf32>) -> tensor<256x256x14x14xf32>\n%t = func.call @nanoTime() : () -> (i64)\n%delta = arith.subi %t, %t0 : i64\n%fp = arith.uitofp %delta : i64 to f64\n// func.call @printFlops(%fp) : (f64) -> ()\nfunc.call @printI64(%delta) : (i64) -> ()\nfunc.call @printNewline() : () -> ()\n\nreturn %return_arg : tensor<256x256x14x14xf32> \n}\n\nfunc.func @main(){\n    %c1 = arith.constant 1: index\n    %c0 = arith.constant 0 : index\n    %n = arith.constant 2: index\n    scf.for %i = %c0 to %n step %c1 {\n    %outputmain = func.call @matmul() : () -> tensor<256x256x14x14xf32>\n    }\n    return\n}\n}\n",
+    "loops_data": {
+      "nested_loops": [
+        [
+          "%arg3",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg4",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg5",
+          0,
+          14,
+          1
+        ],
+        [
+          "%arg6",
+          0,
+          14,
+          1
+        ],
+        [
+          "%arg7",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg8",
+          0,
+          3,
+          1
+        ],
+        [
+          "%arg9",
+          0,
+          3,
+          1
+        ]
+      ],
+      "op_count": {
+        "+": 1,
+        "-": 0,
+        "*": 1,
+        "/": 0,
+        "exp": 0
+      },
+      "load_data": [
+        [
+          "%arg3",
+          "%arg7",
+          "%arg5 + %arg8",
+          "%arg6 + %arg9"
+        ],
+        [
+          "%arg4",
+          "%arg7",
+          "%arg8",
+          "%arg9"
+        ],
+        [
+          "%arg3",
+          "%arg4",
+          "%arg5",
+          "%arg6"
+        ]
+      ],
+      "store_data": []
+    },
+    "execution_time": 111931706509
+  },
+  "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x576x14x14xf32>, tensor<576x576x1x1xf32>) outs (%init: tensor<256x576x14x14xf32>) -> tensor<256x576x14x14xf32>": {
+    "operation": "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x576x14x14xf32>, tensor<576x576x1x1xf32>) outs (%init: tensor<256x576x14x14xf32>) -> tensor<256x576x14x14xf32>",
+    "wrapped_operation": "func.func @func_call(%input: tensor<256x576x14x14xf32>, %filter: tensor<576x576x1x1xf32>, %init: tensor<256x576x14x14xf32>) -> tensor<256x576x14x14xf32> {\n  %ret = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x576x14x14xf32>, tensor<576x576x1x1xf32>) outs (%init: tensor<256x576x14x14xf32>) -> tensor<256x576x14x14xf32>\n  return %ret : tensor<256x576x14x14xf32>\n}",
+    "lowered_operation": "#map = affine_map<(d0, d1) -> (d0 + d1)>\nmodule {\n  func.func @func_call(%arg0: tensor<256x576x14x14xf32>, %arg1: tensor<576x576x1x1xf32>, %arg2: tensor<256x576x14x14xf32>) -> tensor<256x576x14x14xf32> {\n    %0 = bufferization.to_memref %arg1 : memref<576x576x1x1xf32>\n    %1 = bufferization.to_memref %arg0 : memref<256x576x14x14xf32>\n    %2 = bufferization.to_memref %arg2 : memref<256x576x14x14xf32>\n    %alloc = memref.alloc() {alignment = 64 : i64} : memref<256x576x14x14xf32>\n    memref.copy %2, %alloc : memref<256x576x14x14xf32> to memref<256x576x14x14xf32>\n    affine.for %arg3 = 0 to 256 {\n      affine.for %arg4 = 0 to 576 {\n        affine.for %arg5 = 0 to 14 {\n          affine.for %arg6 = 0 to 14 {\n            affine.for %arg7 = 0 to 576 {\n              affine.for %arg8 = 0 to 1 {\n                affine.for %arg9 = 0 to 1 {\n                  %4 = affine.apply #map(%arg5, %arg8)\n                  %5 = affine.apply #map(%arg6, %arg9)\n                  %6 = affine.load %1[%arg3, %arg7, %4, %5] : memref<256x576x14x14xf32>\n                  %7 = affine.load %0[%arg4, %arg7, %arg8, %arg9] : memref<576x576x1x1xf32>\n                  %8 = affine.load %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x576x14x14xf32>\n                  %9 = arith.mulf %6, %7 : f32\n                  %10 = arith.addf %8, %9 : f32\n                  affine.store %10, %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x576x14x14xf32>\n                }\n              }\n            }\n          }\n        }\n      }\n    }\n    %3 = bufferization.to_tensor %alloc : memref<256x576x14x14xf32>\n    return %3 : tensor<256x576x14x14xf32>\n  }\n}\n\n",
+    "transform_wrapped_operation": "module attributes {torch.debug_module_name = \"Net\"} {\nfunc.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\nfunc.func private @printFlops(f64)\nfunc.func private @printI64(i64)\nfunc.func private @printNewline()\nfunc.func private @printMemrefF32(tensor<*xf32>)\n\n\nfunc.func @matmul() -> tensor<256x576x14x14xf32>{\n\n%val = arith.constant 2.00000e+00 : f32\n%zero = arith.constant 0.00000e+00 : f32\n\n%tmp_input = bufferization.alloc_tensor() : tensor<256x576x14x14xf32>\n%input = linalg.fill ins(%val : f32) outs(%tmp_input : tensor<256x576x14x14xf32>) -> tensor<256x576x14x14xf32>\n%tmp_filter = bufferization.alloc_tensor() : tensor<576x576x1x1xf32>\n%filter = linalg.fill ins(%val : f32) outs(%tmp_filter : tensor<576x576x1x1xf32>) -> tensor<576x576x1x1xf32>\n%tmp_init = bufferization.alloc_tensor() : tensor<256x576x14x14xf32>\n%init = linalg.fill ins(%val : f32) outs(%tmp_init : tensor<256x576x14x14xf32>) -> tensor<256x576x14x14xf32>\n\n%t0 = func.call @nanoTime() : () -> (i64)\n\n%return_arg = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x576x14x14xf32>, tensor<576x576x1x1xf32>) outs (%init: tensor<256x576x14x14xf32>) -> tensor<256x576x14x14xf32>\n%t = func.call @nanoTime() : () -> (i64)\n%delta = arith.subi %t, %t0 : i64\n%fp = arith.uitofp %delta : i64 to f64\n// func.call @printFlops(%fp) : (f64) -> ()\nfunc.call @printI64(%delta) : (i64) -> ()\nfunc.call @printNewline() : () -> ()\n\nreturn %return_arg : tensor<256x576x14x14xf32> \n}\n\nfunc.func @main(){\n    %c1 = arith.constant 1: index\n    %c0 = arith.constant 0 : index\n    %n = arith.constant 2: index\n    scf.for %i = %c0 to %n step %c1 {\n    %outputmain = func.call @matmul() : () -> tensor<256x576x14x14xf32>\n    }\n    return\n}\n}\n",
+    "loops_data": {
+      "nested_loops": [
+        [
+          "%arg3",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg4",
+          0,
+          576,
+          1
+        ],
+        [
+          "%arg5",
+          0,
+          14,
+          1
+        ],
+        [
+          "%arg6",
+          0,
+          14,
+          1
+        ],
+        [
+          "%arg7",
+          0,
+          576,
+          1
+        ],
+        [
+          "%arg8",
+          0,
+          1,
+          1
+        ],
+        [
+          "%arg9",
+          0,
+          1,
+          1
+        ]
+      ],
+      "op_count": {
+        "+": 1,
+        "-": 0,
+        "*": 1,
+        "/": 0,
+        "exp": 0
+      },
+      "load_data": [
+        [
+          "%arg3",
+          "%arg7",
+          "%arg5 + %arg8",
+          "%arg6 + %arg9"
+        ],
+        [
+          "%arg4",
+          "%arg7",
+          "%arg8",
+          "%arg9"
+        ],
+        [
+          "%arg3",
+          "%arg4",
+          "%arg5",
+          "%arg6"
+        ]
+      ],
+      "store_data": []
+    },
+    "execution_time": 61465330343
+  },
+  "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x128x28x28xf32>, tensor<32x128x3x3xf32>) outs (%init: tensor<256x32x26x26xf32>) -> tensor<256x32x26x26xf32>": {
+    "operation": "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x128x28x28xf32>, tensor<32x128x3x3xf32>) outs (%init: tensor<256x32x26x26xf32>) -> tensor<256x32x26x26xf32>",
+    "wrapped_operation": "func.func @func_call(%input: tensor<256x128x28x28xf32>, %filter: tensor<32x128x3x3xf32>, %init: tensor<256x32x26x26xf32>) -> tensor<256x32x26x26xf32> {\n  %ret = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x128x28x28xf32>, tensor<32x128x3x3xf32>) outs (%init: tensor<256x32x26x26xf32>) -> tensor<256x32x26x26xf32>\n  return %ret : tensor<256x32x26x26xf32>\n}",
+    "lowered_operation": "#map = affine_map<(d0, d1) -> (d0 + d1)>\nmodule {\n  func.func @func_call(%arg0: tensor<256x128x28x28xf32>, %arg1: tensor<32x128x3x3xf32>, %arg2: tensor<256x32x26x26xf32>) -> tensor<256x32x26x26xf32> {\n    %0 = bufferization.to_memref %arg1 : memref<32x128x3x3xf32>\n    %1 = bufferization.to_memref %arg0 : memref<256x128x28x28xf32>\n    %2 = bufferization.to_memref %arg2 : memref<256x32x26x26xf32>\n    %alloc = memref.alloc() {alignment = 64 : i64} : memref<256x32x26x26xf32>\n    memref.copy %2, %alloc : memref<256x32x26x26xf32> to memref<256x32x26x26xf32>\n    affine.for %arg3 = 0 to 256 {\n      affine.for %arg4 = 0 to 32 {\n        affine.for %arg5 = 0 to 26 {\n          affine.for %arg6 = 0 to 26 {\n            affine.for %arg7 = 0 to 128 {\n              affine.for %arg8 = 0 to 3 {\n                affine.for %arg9 = 0 to 3 {\n                  %4 = affine.apply #map(%arg5, %arg8)\n                  %5 = affine.apply #map(%arg6, %arg9)\n                  %6 = affine.load %1[%arg3, %arg7, %4, %5] : memref<256x128x28x28xf32>\n                  %7 = affine.load %0[%arg4, %arg7, %arg8, %arg9] : memref<32x128x3x3xf32>\n                  %8 = affine.load %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x32x26x26xf32>\n                  %9 = arith.mulf %6, %7 : f32\n                  %10 = arith.addf %8, %9 : f32\n                  affine.store %10, %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x32x26x26xf32>\n                }\n              }\n            }\n          }\n        }\n      }\n    }\n    %3 = bufferization.to_tensor %alloc : memref<256x32x26x26xf32>\n    return %3 : tensor<256x32x26x26xf32>\n  }\n}\n\n",
+    "transform_wrapped_operation": "module attributes {torch.debug_module_name = \"Net\"} {\nfunc.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\nfunc.func private @printFlops(f64)\nfunc.func private @printI64(i64)\nfunc.func private @printNewline()\nfunc.func private @printMemrefF32(tensor<*xf32>)\n\n\nfunc.func @matmul() -> tensor<256x32x26x26xf32>{\n\n%val = arith.constant 2.00000e+00 : f32\n%zero = arith.constant 0.00000e+00 : f32\n\n%tmp_input = bufferization.alloc_tensor() : tensor<256x128x28x28xf32>\n%input = linalg.fill ins(%val : f32) outs(%tmp_input : tensor<256x128x28x28xf32>) -> tensor<256x128x28x28xf32>\n%tmp_filter = bufferization.alloc_tensor() : tensor<32x128x3x3xf32>\n%filter = linalg.fill ins(%val : f32) outs(%tmp_filter : tensor<32x128x3x3xf32>) -> tensor<32x128x3x3xf32>\n%tmp_init = bufferization.alloc_tensor() : tensor<256x32x26x26xf32>\n%init = linalg.fill ins(%val : f32) outs(%tmp_init : tensor<256x32x26x26xf32>) -> tensor<256x32x26x26xf32>\n\n%t0 = func.call @nanoTime() : () -> (i64)\n\n%return_arg = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x128x28x28xf32>, tensor<32x128x3x3xf32>) outs (%init: tensor<256x32x26x26xf32>) -> tensor<256x32x26x26xf32>\n%t = func.call @nanoTime() : () -> (i64)\n%delta = arith.subi %t, %t0 : i64\n%fp = arith.uitofp %delta : i64 to f64\n// func.call @printFlops(%fp) : (f64) -> ()\nfunc.call @printI64(%delta) : (i64) -> ()\nfunc.call @printNewline() : () -> ()\n\nreturn %return_arg : tensor<256x32x26x26xf32> \n}\n\nfunc.func @main(){\n    %c1 = arith.constant 1: index\n    %c0 = arith.constant 0 : index\n    %n = arith.constant 2: index\n    scf.for %i = %c0 to %n step %c1 {\n    %outputmain = func.call @matmul() : () -> tensor<256x32x26x26xf32>\n    }\n    return\n}\n}\n",
+    "loops_data": {
+      "nested_loops": [
+        [
+          "%arg3",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg4",
+          0,
+          32,
+          1
+        ],
+        [
+          "%arg5",
+          0,
+          26,
+          1
+        ],
+        [
+          "%arg6",
+          0,
+          26,
+          1
+        ],
+        [
+          "%arg7",
+          0,
+          128,
+          1
+        ],
+        [
+          "%arg8",
+          0,
+          3,
+          1
+        ],
+        [
+          "%arg9",
+          0,
+          3,
+          1
+        ]
+      ],
+      "op_count": {
+        "+": 1,
+        "-": 0,
+        "*": 1,
+        "/": 0,
+        "exp": 0
+      },
+      "load_data": [
+        [
+          "%arg3",
+          "%arg7",
+          "%arg5 + %arg8",
+          "%arg6 + %arg9"
+        ],
+        [
+          "%arg4",
+          "%arg7",
+          "%arg8",
+          "%arg9"
+        ],
+        [
+          "%arg3",
+          "%arg4",
+          "%arg5",
+          "%arg6"
+        ]
+      ],
+      "store_data": []
+    },
+    "execution_time": 24063082695
+  },
+  "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x336x14x14xf32>, tensor<336x336x1x1xf32>) outs (%init: tensor<256x336x14x14xf32>) -> tensor<256x336x14x14xf32>": {
+    "operation": "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x336x14x14xf32>, tensor<336x336x1x1xf32>) outs (%init: tensor<256x336x14x14xf32>) -> tensor<256x336x14x14xf32>",
+    "wrapped_operation": "func.func @func_call(%input: tensor<256x336x14x14xf32>, %filter: tensor<336x336x1x1xf32>, %init: tensor<256x336x14x14xf32>) -> tensor<256x336x14x14xf32> {\n  %ret = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x336x14x14xf32>, tensor<336x336x1x1xf32>) outs (%init: tensor<256x336x14x14xf32>) -> tensor<256x336x14x14xf32>\n  return %ret : tensor<256x336x14x14xf32>\n}",
+    "lowered_operation": "#map = affine_map<(d0, d1) -> (d0 + d1)>\nmodule {\n  func.func @func_call(%arg0: tensor<256x336x14x14xf32>, %arg1: tensor<336x336x1x1xf32>, %arg2: tensor<256x336x14x14xf32>) -> tensor<256x336x14x14xf32> {\n    %0 = bufferization.to_memref %arg1 : memref<336x336x1x1xf32>\n    %1 = bufferization.to_memref %arg0 : memref<256x336x14x14xf32>\n    %2 = bufferization.to_memref %arg2 : memref<256x336x14x14xf32>\n    %alloc = memref.alloc() {alignment = 64 : i64} : memref<256x336x14x14xf32>\n    memref.copy %2, %alloc : memref<256x336x14x14xf32> to memref<256x336x14x14xf32>\n    affine.for %arg3 = 0 to 256 {\n      affine.for %arg4 = 0 to 336 {\n        affine.for %arg5 = 0 to 14 {\n          affine.for %arg6 = 0 to 14 {\n            affine.for %arg7 = 0 to 336 {\n              affine.for %arg8 = 0 to 1 {\n                affine.for %arg9 = 0 to 1 {\n                  %4 = affine.apply #map(%arg5, %arg8)\n                  %5 = affine.apply #map(%arg6, %arg9)\n                  %6 = affine.load %1[%arg3, %arg7, %4, %5] : memref<256x336x14x14xf32>\n                  %7 = affine.load %0[%arg4, %arg7, %arg8, %arg9] : memref<336x336x1x1xf32>\n                  %8 = affine.load %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x336x14x14xf32>\n                  %9 = arith.mulf %6, %7 : f32\n                  %10 = arith.addf %8, %9 : f32\n                  affine.store %10, %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x336x14x14xf32>\n                }\n              }\n            }\n          }\n        }\n      }\n    }\n    %3 = bufferization.to_tensor %alloc : memref<256x336x14x14xf32>\n    return %3 : tensor<256x336x14x14xf32>\n  }\n}\n\n",
+    "transform_wrapped_operation": "module attributes {torch.debug_module_name = \"Net\"} {\nfunc.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\nfunc.func private @printFlops(f64)\nfunc.func private @printI64(i64)\nfunc.func private @printNewline()\nfunc.func private @printMemrefF32(tensor<*xf32>)\n\n\nfunc.func @matmul() -> tensor<256x336x14x14xf32>{\n\n%val = arith.constant 2.00000e+00 : f32\n%zero = arith.constant 0.00000e+00 : f32\n\n%tmp_input = bufferization.alloc_tensor() : tensor<256x336x14x14xf32>\n%input = linalg.fill ins(%val : f32) outs(%tmp_input : tensor<256x336x14x14xf32>) -> tensor<256x336x14x14xf32>\n%tmp_filter = bufferization.alloc_tensor() : tensor<336x336x1x1xf32>\n%filter = linalg.fill ins(%val : f32) outs(%tmp_filter : tensor<336x336x1x1xf32>) -> tensor<336x336x1x1xf32>\n%tmp_init = bufferization.alloc_tensor() : tensor<256x336x14x14xf32>\n%init = linalg.fill ins(%val : f32) outs(%tmp_init : tensor<256x336x14x14xf32>) -> tensor<256x336x14x14xf32>\n\n%t0 = func.call @nanoTime() : () -> (i64)\n\n%return_arg = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x336x14x14xf32>, tensor<336x336x1x1xf32>) outs (%init: tensor<256x336x14x14xf32>) -> tensor<256x336x14x14xf32>\n%t = func.call @nanoTime() : () -> (i64)\n%delta = arith.subi %t, %t0 : i64\n%fp = arith.uitofp %delta : i64 to f64\n// func.call @printFlops(%fp) : (f64) -> ()\nfunc.call @printI64(%delta) : (i64) -> ()\nfunc.call @printNewline() : () -> ()\n\nreturn %return_arg : tensor<256x336x14x14xf32> \n}\n\nfunc.func @main(){\n    %c1 = arith.constant 1: index\n    %c0 = arith.constant 0 : index\n    %n = arith.constant 2: index\n    scf.for %i = %c0 to %n step %c1 {\n    %outputmain = func.call @matmul() : () -> tensor<256x336x14x14xf32>\n    }\n    return\n}\n}\n",
+    "loops_data": {
+      "nested_loops": [
+        [
+          "%arg3",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg4",
+          0,
+          336,
+          1
+        ],
+        [
+          "%arg5",
+          0,
+          14,
+          1
+        ],
+        [
+          "%arg6",
+          0,
+          14,
+          1
+        ],
+        [
+          "%arg7",
+          0,
+          336,
+          1
+        ],
+        [
+          "%arg8",
+          0,
+          1,
+          1
+        ],
+        [
+          "%arg9",
+          0,
+          1,
+          1
+        ]
+      ],
+      "op_count": {
+        "+": 1,
+        "-": 0,
+        "*": 1,
+        "/": 0,
+        "exp": 0
+      },
+      "load_data": [
+        [
+          "%arg3",
+          "%arg7",
+          "%arg5 + %arg8",
+          "%arg6 + %arg9"
+        ],
+        [
+          "%arg4",
+          "%arg7",
+          "%arg8",
+          "%arg9"
+        ],
+        [
+          "%arg3",
+          "%arg4",
+          "%arg5",
+          "%arg6"
+        ]
+      ],
+      "store_data": []
+    },
+    "execution_time": 20466985196
+  },
+  "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x64x56x56xf32>, tensor<64x64x3x3xf32>) outs (%init: tensor<256x64x54x54xf32>) -> tensor<256x64x54x54xf32>": {
+    "operation": "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x64x56x56xf32>, tensor<64x64x3x3xf32>) outs (%init: tensor<256x64x54x54xf32>) -> tensor<256x64x54x54xf32>",
+    "wrapped_operation": "func.func @func_call(%input: tensor<256x64x56x56xf32>, %filter: tensor<64x64x3x3xf32>, %init: tensor<256x64x54x54xf32>) -> tensor<256x64x54x54xf32> {\n  %ret = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x64x56x56xf32>, tensor<64x64x3x3xf32>) outs (%init: tensor<256x64x54x54xf32>) -> tensor<256x64x54x54xf32>\n  return %ret : tensor<256x64x54x54xf32>\n}",
+    "lowered_operation": "#map = affine_map<(d0, d1) -> (d0 + d1)>\nmodule {\n  func.func @func_call(%arg0: tensor<256x64x56x56xf32>, %arg1: tensor<64x64x3x3xf32>, %arg2: tensor<256x64x54x54xf32>) -> tensor<256x64x54x54xf32> {\n    %0 = bufferization.to_memref %arg1 : memref<64x64x3x3xf32>\n    %1 = bufferization.to_memref %arg0 : memref<256x64x56x56xf32>\n    %2 = bufferization.to_memref %arg2 : memref<256x64x54x54xf32>\n    %alloc = memref.alloc() {alignment = 64 : i64} : memref<256x64x54x54xf32>\n    memref.copy %2, %alloc : memref<256x64x54x54xf32> to memref<256x64x54x54xf32>\n    affine.for %arg3 = 0 to 256 {\n      affine.for %arg4 = 0 to 64 {\n        affine.for %arg5 = 0 to 54 {\n          affine.for %arg6 = 0 to 54 {\n            affine.for %arg7 = 0 to 64 {\n              affine.for %arg8 = 0 to 3 {\n                affine.for %arg9 = 0 to 3 {\n                  %4 = affine.apply #map(%arg5, %arg8)\n                  %5 = affine.apply #map(%arg6, %arg9)\n                  %6 = affine.load %1[%arg3, %arg7, %4, %5] : memref<256x64x56x56xf32>\n                  %7 = affine.load %0[%arg4, %arg7, %arg8, %arg9] : memref<64x64x3x3xf32>\n                  %8 = affine.load %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x64x54x54xf32>\n                  %9 = arith.mulf %6, %7 : f32\n                  %10 = arith.addf %8, %9 : f32\n                  affine.store %10, %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x64x54x54xf32>\n                }\n              }\n            }\n          }\n        }\n      }\n    }\n    %3 = bufferization.to_tensor %alloc : memref<256x64x54x54xf32>\n    return %3 : tensor<256x64x54x54xf32>\n  }\n}\n\n",
+    "transform_wrapped_operation": "module attributes {torch.debug_module_name = \"Net\"} {\nfunc.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\nfunc.func private @printFlops(f64)\nfunc.func private @printI64(i64)\nfunc.func private @printNewline()\nfunc.func private @printMemrefF32(tensor<*xf32>)\n\n\nfunc.func @matmul() -> tensor<256x64x54x54xf32>{\n\n%val = arith.constant 2.00000e+00 : f32\n%zero = arith.constant 0.00000e+00 : f32\n\n%tmp_input = bufferization.alloc_tensor() : tensor<256x64x56x56xf32>\n%input = linalg.fill ins(%val : f32) outs(%tmp_input : tensor<256x64x56x56xf32>) -> tensor<256x64x56x56xf32>\n%tmp_filter = bufferization.alloc_tensor() : tensor<64x64x3x3xf32>\n%filter = linalg.fill ins(%val : f32) outs(%tmp_filter : tensor<64x64x3x3xf32>) -> tensor<64x64x3x3xf32>\n%tmp_init = bufferization.alloc_tensor() : tensor<256x64x54x54xf32>\n%init = linalg.fill ins(%val : f32) outs(%tmp_init : tensor<256x64x54x54xf32>) -> tensor<256x64x54x54xf32>\n\n%t0 = func.call @nanoTime() : () -> (i64)\n\n%return_arg = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x64x56x56xf32>, tensor<64x64x3x3xf32>) outs (%init: tensor<256x64x54x54xf32>) -> tensor<256x64x54x54xf32>\n%t = func.call @nanoTime() : () -> (i64)\n%delta = arith.subi %t, %t0 : i64\n%fp = arith.uitofp %delta : i64 to f64\n// func.call @printFlops(%fp) : (f64) -> ()\nfunc.call @printI64(%delta) : (i64) -> ()\nfunc.call @printNewline() : () -> ()\n\nreturn %return_arg : tensor<256x64x54x54xf32> \n}\n\nfunc.func @main(){\n    %c1 = arith.constant 1: index\n    %c0 = arith.constant 0 : index\n    %n = arith.constant 2: index\n    scf.for %i = %c0 to %n step %c1 {\n    %outputmain = func.call @matmul() : () -> tensor<256x64x54x54xf32>\n    }\n    return\n}\n}\n",
+    "loops_data": {
+      "nested_loops": [
+        [
+          "%arg3",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg4",
+          0,
+          64,
+          1
+        ],
+        [
+          "%arg5",
+          0,
+          54,
+          1
+        ],
+        [
+          "%arg6",
+          0,
+          54,
+          1
+        ],
+        [
+          "%arg7",
+          0,
+          64,
+          1
+        ],
+        [
+          "%arg8",
+          0,
+          3,
+          1
+        ],
+        [
+          "%arg9",
+          0,
+          3,
+          1
+        ]
+      ],
+      "op_count": {
+        "+": 1,
+        "-": 0,
+        "*": 1,
+        "/": 0,
+        "exp": 0
+      },
+      "load_data": [
+        [
+          "%arg3",
+          "%arg7",
+          "%arg5 + %arg8",
+          "%arg6 + %arg9"
+        ],
+        [
+          "%arg4",
+          "%arg7",
+          "%arg8",
+          "%arg9"
+        ],
+        [
+          "%arg3",
+          "%arg4",
+          "%arg5",
+          "%arg6"
+        ]
+      ],
+      "store_data": []
+    },
+    "execution_time": 103390065598
+  },
+  "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x448x28x28xf32>, tensor<448x448x1x1xf32>) outs (%init: tensor<256x448x28x28xf32>) -> tensor<256x448x28x28xf32>": {
+    "operation": "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x448x28x28xf32>, tensor<448x448x1x1xf32>) outs (%init: tensor<256x448x28x28xf32>) -> tensor<256x448x28x28xf32>",
+    "wrapped_operation": "func.func @func_call(%input: tensor<256x448x28x28xf32>, %filter: tensor<448x448x1x1xf32>, %init: tensor<256x448x28x28xf32>) -> tensor<256x448x28x28xf32> {\n  %ret = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x448x28x28xf32>, tensor<448x448x1x1xf32>) outs (%init: tensor<256x448x28x28xf32>) -> tensor<256x448x28x28xf32>\n  return %ret : tensor<256x448x28x28xf32>\n}",
+    "lowered_operation": "#map = affine_map<(d0, d1) -> (d0 + d1)>\nmodule {\n  func.func @func_call(%arg0: tensor<256x448x28x28xf32>, %arg1: tensor<448x448x1x1xf32>, %arg2: tensor<256x448x28x28xf32>) -> tensor<256x448x28x28xf32> {\n    %0 = bufferization.to_memref %arg1 : memref<448x448x1x1xf32>\n    %1 = bufferization.to_memref %arg0 : memref<256x448x28x28xf32>\n    %2 = bufferization.to_memref %arg2 : memref<256x448x28x28xf32>\n    %alloc = memref.alloc() {alignment = 64 : i64} : memref<256x448x28x28xf32>\n    memref.copy %2, %alloc : memref<256x448x28x28xf32> to memref<256x448x28x28xf32>\n    affine.for %arg3 = 0 to 256 {\n      affine.for %arg4 = 0 to 448 {\n        affine.for %arg5 = 0 to 28 {\n          affine.for %arg6 = 0 to 28 {\n            affine.for %arg7 = 0 to 448 {\n              affine.for %arg8 = 0 to 1 {\n                affine.for %arg9 = 0 to 1 {\n                  %4 = affine.apply #map(%arg5, %arg8)\n                  %5 = affine.apply #map(%arg6, %arg9)\n                  %6 = affine.load %1[%arg3, %arg7, %4, %5] : memref<256x448x28x28xf32>\n                  %7 = affine.load %0[%arg4, %arg7, %arg8, %arg9] : memref<448x448x1x1xf32>\n                  %8 = affine.load %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x448x28x28xf32>\n                  %9 = arith.mulf %6, %7 : f32\n                  %10 = arith.addf %8, %9 : f32\n                  affine.store %10, %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x448x28x28xf32>\n                }\n              }\n            }\n          }\n        }\n      }\n    }\n    %3 = bufferization.to_tensor %alloc : memref<256x448x28x28xf32>\n    return %3 : tensor<256x448x28x28xf32>\n  }\n}\n\n",
+    "transform_wrapped_operation": "module attributes {torch.debug_module_name = \"Net\"} {\nfunc.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\nfunc.func private @printFlops(f64)\nfunc.func private @printI64(i64)\nfunc.func private @printNewline()\nfunc.func private @printMemrefF32(tensor<*xf32>)\n\n\nfunc.func @matmul() -> tensor<256x448x28x28xf32>{\n\n%val = arith.constant 2.00000e+00 : f32\n%zero = arith.constant 0.00000e+00 : f32\n\n%tmp_input = bufferization.alloc_tensor() : tensor<256x448x28x28xf32>\n%input = linalg.fill ins(%val : f32) outs(%tmp_input : tensor<256x448x28x28xf32>) -> tensor<256x448x28x28xf32>\n%tmp_filter = bufferization.alloc_tensor() : tensor<448x448x1x1xf32>\n%filter = linalg.fill ins(%val : f32) outs(%tmp_filter : tensor<448x448x1x1xf32>) -> tensor<448x448x1x1xf32>\n%tmp_init = bufferization.alloc_tensor() : tensor<256x448x28x28xf32>\n%init = linalg.fill ins(%val : f32) outs(%tmp_init : tensor<256x448x28x28xf32>) -> tensor<256x448x28x28xf32>\n\n%t0 = func.call @nanoTime() : () -> (i64)\n\n%return_arg = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x448x28x28xf32>, tensor<448x448x1x1xf32>) outs (%init: tensor<256x448x28x28xf32>) -> tensor<256x448x28x28xf32>\n%t = func.call @nanoTime() : () -> (i64)\n%delta = arith.subi %t, %t0 : i64\n%fp = arith.uitofp %delta : i64 to f64\n// func.call @printFlops(%fp) : (f64) -> ()\nfunc.call @printI64(%delta) : (i64) -> ()\nfunc.call @printNewline() : () -> ()\n\nreturn %return_arg : tensor<256x448x28x28xf32> \n}\n\nfunc.func @main(){\n    %c1 = arith.constant 1: index\n    %c0 = arith.constant 0 : index\n    %n = arith.constant 2: index\n    scf.for %i = %c0 to %n step %c1 {\n    %outputmain = func.call @matmul() : () -> tensor<256x448x28x28xf32>\n    }\n    return\n}\n}\n",
+    "loops_data": {
+      "nested_loops": [
+        [
+          "%arg3",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg4",
+          0,
+          448,
+          1
+        ],
+        [
+          "%arg5",
+          0,
+          28,
+          1
+        ],
+        [
+          "%arg6",
+          0,
+          28,
+          1
+        ],
+        [
+          "%arg7",
+          0,
+          448,
+          1
+        ],
+        [
+          "%arg8",
+          0,
+          1,
+          1
+        ],
+        [
+          "%arg9",
+          0,
+          1,
+          1
+        ]
+      ],
+      "op_count": {
+        "+": 1,
+        "-": 0,
+        "*": 1,
+        "/": 0,
+        "exp": 0
+      },
+      "load_data": [
+        [
+          "%arg3",
+          "%arg7",
+          "%arg5 + %arg8",
+          "%arg6 + %arg9"
+        ],
+        [
+          "%arg4",
+          "%arg7",
+          "%arg8",
+          "%arg9"
+        ],
+        [
+          "%arg3",
+          "%arg4",
+          "%arg5",
+          "%arg6"
+        ]
+      ],
+      "store_data": []
+    },
+    "execution_time": 148295603736
+  },
+  "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x64x56x56xf32>, tensor<256x64x1x1xf32>) outs (%init: tensor<256x256x56x56xf32>) -> tensor<256x256x56x56xf32>": {
+    "operation": "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x64x56x56xf32>, tensor<256x64x1x1xf32>) outs (%init: tensor<256x256x56x56xf32>) -> tensor<256x256x56x56xf32>",
+    "wrapped_operation": "func.func @func_call(%input: tensor<256x64x56x56xf32>, %filter: tensor<256x64x1x1xf32>, %init: tensor<256x256x56x56xf32>) -> tensor<256x256x56x56xf32> {\n  %ret = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x64x56x56xf32>, tensor<256x64x1x1xf32>) outs (%init: tensor<256x256x56x56xf32>) -> tensor<256x256x56x56xf32>\n  return %ret : tensor<256x256x56x56xf32>\n}",
+    "lowered_operation": "#map = affine_map<(d0, d1) -> (d0 + d1)>\nmodule {\n  func.func @func_call(%arg0: tensor<256x64x56x56xf32>, %arg1: tensor<256x64x1x1xf32>, %arg2: tensor<256x256x56x56xf32>) -> tensor<256x256x56x56xf32> {\n    %0 = bufferization.to_memref %arg1 : memref<256x64x1x1xf32>\n    %1 = bufferization.to_memref %arg0 : memref<256x64x56x56xf32>\n    %2 = bufferization.to_memref %arg2 : memref<256x256x56x56xf32>\n    %alloc = memref.alloc() {alignment = 64 : i64} : memref<256x256x56x56xf32>\n    memref.copy %2, %alloc : memref<256x256x56x56xf32> to memref<256x256x56x56xf32>\n    affine.for %arg3 = 0 to 256 {\n      affine.for %arg4 = 0 to 256 {\n        affine.for %arg5 = 0 to 56 {\n          affine.for %arg6 = 0 to 56 {\n            affine.for %arg7 = 0 to 64 {\n              affine.for %arg8 = 0 to 1 {\n                affine.for %arg9 = 0 to 1 {\n                  %4 = affine.apply #map(%arg5, %arg8)\n                  %5 = affine.apply #map(%arg6, %arg9)\n                  %6 = affine.load %1[%arg3, %arg7, %4, %5] : memref<256x64x56x56xf32>\n                  %7 = affine.load %0[%arg4, %arg7, %arg8, %arg9] : memref<256x64x1x1xf32>\n                  %8 = affine.load %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x256x56x56xf32>\n                  %9 = arith.mulf %6, %7 : f32\n                  %10 = arith.addf %8, %9 : f32\n                  affine.store %10, %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x256x56x56xf32>\n                }\n              }\n            }\n          }\n        }\n      }\n    }\n    %3 = bufferization.to_tensor %alloc : memref<256x256x56x56xf32>\n    return %3 : tensor<256x256x56x56xf32>\n  }\n}\n\n",
+    "transform_wrapped_operation": "module attributes {torch.debug_module_name = \"Net\"} {\nfunc.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\nfunc.func private @printFlops(f64)\nfunc.func private @printI64(i64)\nfunc.func private @printNewline()\nfunc.func private @printMemrefF32(tensor<*xf32>)\n\n\nfunc.func @matmul() -> tensor<256x256x56x56xf32>{\n\n%val = arith.constant 2.00000e+00 : f32\n%zero = arith.constant 0.00000e+00 : f32\n\n%tmp_input = bufferization.alloc_tensor() : tensor<256x64x56x56xf32>\n%input = linalg.fill ins(%val : f32) outs(%tmp_input : tensor<256x64x56x56xf32>) -> tensor<256x64x56x56xf32>\n%tmp_filter = bufferization.alloc_tensor() : tensor<256x64x1x1xf32>\n%filter = linalg.fill ins(%val : f32) outs(%tmp_filter : tensor<256x64x1x1xf32>) -> tensor<256x64x1x1xf32>\n%tmp_init = bufferization.alloc_tensor() : tensor<256x256x56x56xf32>\n%init = linalg.fill ins(%val : f32) outs(%tmp_init : tensor<256x256x56x56xf32>) -> tensor<256x256x56x56xf32>\n\n%t0 = func.call @nanoTime() : () -> (i64)\n\n%return_arg = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x64x56x56xf32>, tensor<256x64x1x1xf32>) outs (%init: tensor<256x256x56x56xf32>) -> tensor<256x256x56x56xf32>\n%t = func.call @nanoTime() : () -> (i64)\n%delta = arith.subi %t, %t0 : i64\n%fp = arith.uitofp %delta : i64 to f64\n// func.call @printFlops(%fp) : (f64) -> ()\nfunc.call @printI64(%delta) : (i64) -> ()\nfunc.call @printNewline() : () -> ()\n\nreturn %return_arg : tensor<256x256x56x56xf32> \n}\n\nfunc.func @main(){\n    %c1 = arith.constant 1: index\n    %c0 = arith.constant 0 : index\n    %n = arith.constant 2: index\n    scf.for %i = %c0 to %n step %c1 {\n    %outputmain = func.call @matmul() : () -> tensor<256x256x56x56xf32>\n    }\n    return\n}\n}\n",
+    "loops_data": {
+      "nested_loops": [
+        [
+          "%arg3",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg4",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg5",
+          0,
+          56,
+          1
+        ],
+        [
+          "%arg6",
+          0,
+          56,
+          1
+        ],
+        [
+          "%arg7",
+          0,
+          64,
+          1
+        ],
+        [
+          "%arg8",
+          0,
+          1,
+          1
+        ],
+        [
+          "%arg9",
+          0,
+          1,
+          1
+        ]
+      ],
+      "op_count": {
+        "+": 1,
+        "-": 0,
+        "*": 1,
+        "/": 0,
+        "exp": 0
+      },
+      "load_data": [
+        [
+          "%arg3",
+          "%arg7",
+          "%arg5 + %arg8",
+          "%arg6 + %arg9"
+        ],
+        [
+          "%arg4",
+          "%arg7",
+          "%arg8",
+          "%arg9"
+        ],
+        [
+          "%arg3",
+          "%arg4",
+          "%arg5",
+          "%arg6"
+        ]
+      ],
+      "store_data": []
+    },
+    "execution_time": 41354533474
+  },
+  "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<2> : tensor<2xi64>} ins (%input, %filter: tensor<256x16x128x128xf32>, tensor<8x16x7x7xf32>) outs (%init: tensor<256x8x61x61xf32>) -> tensor<256x8x61x61xf32>": {
+    "operation": "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<2> : tensor<2xi64>} ins (%input, %filter: tensor<256x16x128x128xf32>, tensor<8x16x7x7xf32>) outs (%init: tensor<256x8x61x61xf32>) -> tensor<256x8x61x61xf32>",
+    "wrapped_operation": "func.func @func_call(%input: tensor<256x16x128x128xf32>, %filter: tensor<8x16x7x7xf32>, %init: tensor<256x8x61x61xf32>) -> tensor<256x8x61x61xf32> {\n  %ret = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<2> : tensor<2xi64>} ins (%input, %filter: tensor<256x16x128x128xf32>, tensor<8x16x7x7xf32>) outs (%init: tensor<256x8x61x61xf32>) -> tensor<256x8x61x61xf32>\n  return %ret : tensor<256x8x61x61xf32>\n}",
+    "lowered_operation": "#map = affine_map<(d0, d1) -> (d0 * 2 + d1)>\nmodule {\n  func.func @func_call(%arg0: tensor<256x16x128x128xf32>, %arg1: tensor<8x16x7x7xf32>, %arg2: tensor<256x8x61x61xf32>) -> tensor<256x8x61x61xf32> {\n    %0 = bufferization.to_memref %arg1 : memref<8x16x7x7xf32>\n    %1 = bufferization.to_memref %arg0 : memref<256x16x128x128xf32>\n    %2 = bufferization.to_memref %arg2 : memref<256x8x61x61xf32>\n    %alloc = memref.alloc() {alignment = 64 : i64} : memref<256x8x61x61xf32>\n    memref.copy %2, %alloc : memref<256x8x61x61xf32> to memref<256x8x61x61xf32>\n    affine.for %arg3 = 0 to 256 {\n      affine.for %arg4 = 0 to 8 {\n        affine.for %arg5 = 0 to 61 {\n          affine.for %arg6 = 0 to 61 {\n            affine.for %arg7 = 0 to 16 {\n              affine.for %arg8 = 0 to 7 {\n                affine.for %arg9 = 0 to 7 {\n                  %4 = affine.apply #map(%arg5, %arg8)\n                  %5 = affine.apply #map(%arg6, %arg9)\n                  %6 = affine.load %1[%arg3, %arg7, %4, %5] : memref<256x16x128x128xf32>\n                  %7 = affine.load %0[%arg4, %arg7, %arg8, %arg9] : memref<8x16x7x7xf32>\n                  %8 = affine.load %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x8x61x61xf32>\n                  %9 = arith.mulf %6, %7 : f32\n                  %10 = arith.addf %8, %9 : f32\n                  affine.store %10, %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x8x61x61xf32>\n                }\n              }\n            }\n          }\n        }\n      }\n    }\n    %3 = bufferization.to_tensor %alloc : memref<256x8x61x61xf32>\n    return %3 : tensor<256x8x61x61xf32>\n  }\n}\n\n",
+    "transform_wrapped_operation": "module attributes {torch.debug_module_name = \"Net\"} {\nfunc.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\nfunc.func private @printFlops(f64)\nfunc.func private @printI64(i64)\nfunc.func private @printNewline()\nfunc.func private @printMemrefF32(tensor<*xf32>)\n\n\nfunc.func @matmul() -> tensor<256x8x61x61xf32>{\n\n%val = arith.constant 2.00000e+00 : f32\n%zero = arith.constant 0.00000e+00 : f32\n\n%tmp_input = bufferization.alloc_tensor() : tensor<256x16x128x128xf32>\n%input = linalg.fill ins(%val : f32) outs(%tmp_input : tensor<256x16x128x128xf32>) -> tensor<256x16x128x128xf32>\n%tmp_filter = bufferization.alloc_tensor() : tensor<8x16x7x7xf32>\n%filter = linalg.fill ins(%val : f32) outs(%tmp_filter : tensor<8x16x7x7xf32>) -> tensor<8x16x7x7xf32>\n%tmp_init = bufferization.alloc_tensor() : tensor<256x8x61x61xf32>\n%init = linalg.fill ins(%val : f32) outs(%tmp_init : tensor<256x8x61x61xf32>) -> tensor<256x8x61x61xf32>\n\n%t0 = func.call @nanoTime() : () -> (i64)\n\n%return_arg = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<2> : tensor<2xi64>} ins (%input, %filter: tensor<256x16x128x128xf32>, tensor<8x16x7x7xf32>) outs (%init: tensor<256x8x61x61xf32>) -> tensor<256x8x61x61xf32>\n%t = func.call @nanoTime() : () -> (i64)\n%delta = arith.subi %t, %t0 : i64\n%fp = arith.uitofp %delta : i64 to f64\n// func.call @printFlops(%fp) : (f64) -> ()\nfunc.call @printI64(%delta) : (i64) -> ()\nfunc.call @printNewline() : () -> ()\n\nreturn %return_arg : tensor<256x8x61x61xf32> \n}\n\nfunc.func @main(){\n    %c1 = arith.constant 1: index\n    %c0 = arith.constant 0 : index\n    %n = arith.constant 2: index\n    scf.for %i = %c0 to %n step %c1 {\n    %outputmain = func.call @matmul() : () -> tensor<256x8x61x61xf32>\n    }\n    return\n}\n}\n",
+    "loops_data": {
+      "nested_loops": [
+        [
+          "%arg3",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg4",
+          0,
+          8,
+          1
+        ],
+        [
+          "%arg5",
+          0,
+          61,
+          1
+        ],
+        [
+          "%arg6",
+          0,
+          61,
+          1
+        ],
+        [
+          "%arg7",
+          0,
+          16,
+          1
+        ],
+        [
+          "%arg8",
+          0,
+          7,
+          1
+        ],
+        [
+          "%arg9",
+          0,
+          7,
+          1
+        ]
+      ],
+      "op_count": {
+        "+": 1,
+        "-": 0,
+        "*": 1,
+        "/": 0,
+        "exp": 0
+      },
+      "load_data": [
+        [
+          "%arg3",
+          "%arg7",
+          "%arg5 * 2 + %arg8",
+          "%arg6 * 2 + %arg9"
+        ],
+        [
+          "%arg4",
+          "%arg7",
+          "%arg8",
+          "%arg9"
+        ],
+        [
+          "%arg3",
+          "%arg4",
+          "%arg5",
+          "%arg6"
+        ]
+      ],
+      "store_data": []
+    },
+    "execution_time": 22558694398
+  },
+  "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x64x64x64xf32>, tensor<16x64x3x3xf32>) outs (%init: tensor<256x16x62x62xf32>) -> tensor<256x16x62x62xf32>": {
+    "operation": "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x64x64x64xf32>, tensor<16x64x3x3xf32>) outs (%init: tensor<256x16x62x62xf32>) -> tensor<256x16x62x62xf32>",
+    "wrapped_operation": "func.func @func_call(%input: tensor<256x64x64x64xf32>, %filter: tensor<16x64x3x3xf32>, %init: tensor<256x16x62x62xf32>) -> tensor<256x16x62x62xf32> {\n  %ret = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x64x64x64xf32>, tensor<16x64x3x3xf32>) outs (%init: tensor<256x16x62x62xf32>) -> tensor<256x16x62x62xf32>\n  return %ret : tensor<256x16x62x62xf32>\n}",
+    "lowered_operation": "#map = affine_map<(d0, d1) -> (d0 + d1)>\nmodule {\n  func.func @func_call(%arg0: tensor<256x64x64x64xf32>, %arg1: tensor<16x64x3x3xf32>, %arg2: tensor<256x16x62x62xf32>) -> tensor<256x16x62x62xf32> {\n    %0 = bufferization.to_memref %arg1 : memref<16x64x3x3xf32>\n    %1 = bufferization.to_memref %arg0 : memref<256x64x64x64xf32>\n    %2 = bufferization.to_memref %arg2 : memref<256x16x62x62xf32>\n    %alloc = memref.alloc() {alignment = 64 : i64} : memref<256x16x62x62xf32>\n    memref.copy %2, %alloc : memref<256x16x62x62xf32> to memref<256x16x62x62xf32>\n    affine.for %arg3 = 0 to 256 {\n      affine.for %arg4 = 0 to 16 {\n        affine.for %arg5 = 0 to 62 {\n          affine.for %arg6 = 0 to 62 {\n            affine.for %arg7 = 0 to 64 {\n              affine.for %arg8 = 0 to 3 {\n                affine.for %arg9 = 0 to 3 {\n                  %4 = affine.apply #map(%arg5, %arg8)\n                  %5 = affine.apply #map(%arg6, %arg9)\n                  %6 = affine.load %1[%arg3, %arg7, %4, %5] : memref<256x64x64x64xf32>\n                  %7 = affine.load %0[%arg4, %arg7, %arg8, %arg9] : memref<16x64x3x3xf32>\n                  %8 = affine.load %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x16x62x62xf32>\n                  %9 = arith.mulf %6, %7 : f32\n                  %10 = arith.addf %8, %9 : f32\n                  affine.store %10, %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x16x62x62xf32>\n                }\n              }\n            }\n          }\n        }\n      }\n    }\n    %3 = bufferization.to_tensor %alloc : memref<256x16x62x62xf32>\n    return %3 : tensor<256x16x62x62xf32>\n  }\n}\n\n",
+    "transform_wrapped_operation": "module attributes {torch.debug_module_name = \"Net\"} {\nfunc.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\nfunc.func private @printFlops(f64)\nfunc.func private @printI64(i64)\nfunc.func private @printNewline()\nfunc.func private @printMemrefF32(tensor<*xf32>)\n\n\nfunc.func @matmul() -> tensor<256x16x62x62xf32>{\n\n%val = arith.constant 2.00000e+00 : f32\n%zero = arith.constant 0.00000e+00 : f32\n\n%tmp_input = bufferization.alloc_tensor() : tensor<256x64x64x64xf32>\n%input = linalg.fill ins(%val : f32) outs(%tmp_input : tensor<256x64x64x64xf32>) -> tensor<256x64x64x64xf32>\n%tmp_filter = bufferization.alloc_tensor() : tensor<16x64x3x3xf32>\n%filter = linalg.fill ins(%val : f32) outs(%tmp_filter : tensor<16x64x3x3xf32>) -> tensor<16x64x3x3xf32>\n%tmp_init = bufferization.alloc_tensor() : tensor<256x16x62x62xf32>\n%init = linalg.fill ins(%val : f32) outs(%tmp_init : tensor<256x16x62x62xf32>) -> tensor<256x16x62x62xf32>\n\n%t0 = func.call @nanoTime() : () -> (i64)\n\n%return_arg = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>} ins (%input, %filter: tensor<256x64x64x64xf32>, tensor<16x64x3x3xf32>) outs (%init: tensor<256x16x62x62xf32>) -> tensor<256x16x62x62xf32>\n%t = func.call @nanoTime() : () -> (i64)\n%delta = arith.subi %t, %t0 : i64\n%fp = arith.uitofp %delta : i64 to f64\n// func.call @printFlops(%fp) : (f64) -> ()\nfunc.call @printI64(%delta) : (i64) -> ()\nfunc.call @printNewline() : () -> ()\n\nreturn %return_arg : tensor<256x16x62x62xf32> \n}\n\nfunc.func @main(){\n    %c1 = arith.constant 1: index\n    %c0 = arith.constant 0 : index\n    %n = arith.constant 2: index\n    scf.for %i = %c0 to %n step %c1 {\n    %outputmain = func.call @matmul() : () -> tensor<256x16x62x62xf32>\n    }\n    return\n}\n}\n",
+    "loops_data": {
+      "nested_loops": [
+        [
+          "%arg3",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg4",
+          0,
+          16,
+          1
+        ],
+        [
+          "%arg5",
+          0,
+          62,
+          1
+        ],
+        [
+          "%arg6",
+          0,
+          62,
+          1
+        ],
+        [
+          "%arg7",
+          0,
+          64,
+          1
+        ],
+        [
+          "%arg8",
+          0,
+          3,
+          1
+        ],
+        [
+          "%arg9",
+          0,
+          3,
+          1
+        ]
+      ],
+      "op_count": {
+        "+": 1,
+        "-": 0,
+        "*": 1,
+        "/": 0,
+        "exp": 0
+      },
+      "load_data": [
+        [
+          "%arg3",
+          "%arg7",
+          "%arg5 + %arg8",
+          "%arg6 + %arg9"
+        ],
+        [
+          "%arg4",
+          "%arg7",
+          "%arg8",
+          "%arg9"
+        ],
+        [
+          "%arg3",
+          "%arg4",
+          "%arg5",
+          "%arg6"
+        ]
+      ],
+      "store_data": []
+    },
+    "execution_time": 34496586857
+  },
+  "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<2> : tensor<2xi64>} ins (%input, %filter: tensor<256x32x32x32xf32>, tensor<256x32x7x7xf32>) outs (%init: tensor<256x256x13x13xf32>) -> tensor<256x256x13x13xf32>": {
+    "operation": "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<2> : tensor<2xi64>} ins (%input, %filter: tensor<256x32x32x32xf32>, tensor<256x32x7x7xf32>) outs (%init: tensor<256x256x13x13xf32>) -> tensor<256x256x13x13xf32>",
+    "wrapped_operation": "func.func @func_call(%input: tensor<256x32x32x32xf32>, %filter: tensor<256x32x7x7xf32>, %init: tensor<256x256x13x13xf32>) -> tensor<256x256x13x13xf32> {\n  %ret = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<2> : tensor<2xi64>} ins (%input, %filter: tensor<256x32x32x32xf32>, tensor<256x32x7x7xf32>) outs (%init: tensor<256x256x13x13xf32>) -> tensor<256x256x13x13xf32>\n  return %ret : tensor<256x256x13x13xf32>\n}",
+    "lowered_operation": "#map = affine_map<(d0, d1) -> (d0 * 2 + d1)>\nmodule {\n  func.func @func_call(%arg0: tensor<256x32x32x32xf32>, %arg1: tensor<256x32x7x7xf32>, %arg2: tensor<256x256x13x13xf32>) -> tensor<256x256x13x13xf32> {\n    %0 = bufferization.to_memref %arg1 : memref<256x32x7x7xf32>\n    %1 = bufferization.to_memref %arg0 : memref<256x32x32x32xf32>\n    %2 = bufferization.to_memref %arg2 : memref<256x256x13x13xf32>\n    %alloc = memref.alloc() {alignment = 64 : i64} : memref<256x256x13x13xf32>\n    memref.copy %2, %alloc : memref<256x256x13x13xf32> to memref<256x256x13x13xf32>\n    affine.for %arg3 = 0 to 256 {\n      affine.for %arg4 = 0 to 256 {\n        affine.for %arg5 = 0 to 13 {\n          affine.for %arg6 = 0 to 13 {\n            affine.for %arg7 = 0 to 32 {\n              affine.for %arg8 = 0 to 7 {\n                affine.for %arg9 = 0 to 7 {\n                  %4 = affine.apply #map(%arg5, %arg8)\n                  %5 = affine.apply #map(%arg6, %arg9)\n                  %6 = affine.load %1[%arg3, %arg7, %4, %5] : memref<256x32x32x32xf32>\n                  %7 = affine.load %0[%arg4, %arg7, %arg8, %arg9] : memref<256x32x7x7xf32>\n                  %8 = affine.load %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x256x13x13xf32>\n                  %9 = arith.mulf %6, %7 : f32\n                  %10 = arith.addf %8, %9 : f32\n                  affine.store %10, %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x256x13x13xf32>\n                }\n              }\n            }\n          }\n        }\n      }\n    }\n    %3 = bufferization.to_tensor %alloc : memref<256x256x13x13xf32>\n    return %3 : tensor<256x256x13x13xf32>\n  }\n}\n\n",
+    "transform_wrapped_operation": "module attributes {torch.debug_module_name = \"Net\"} {\nfunc.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\nfunc.func private @printFlops(f64)\nfunc.func private @printI64(i64)\nfunc.func private @printNewline()\nfunc.func private @printMemrefF32(tensor<*xf32>)\n\n\nfunc.func @matmul() -> tensor<256x256x13x13xf32>{\n\n%val = arith.constant 2.00000e+00 : f32\n%zero = arith.constant 0.00000e+00 : f32\n\n%tmp_input = bufferization.alloc_tensor() : tensor<256x32x32x32xf32>\n%input = linalg.fill ins(%val : f32) outs(%tmp_input : tensor<256x32x32x32xf32>) -> tensor<256x32x32x32xf32>\n%tmp_filter = bufferization.alloc_tensor() : tensor<256x32x7x7xf32>\n%filter = linalg.fill ins(%val : f32) outs(%tmp_filter : tensor<256x32x7x7xf32>) -> tensor<256x32x7x7xf32>\n%tmp_init = bufferization.alloc_tensor() : tensor<256x256x13x13xf32>\n%init = linalg.fill ins(%val : f32) outs(%tmp_init : tensor<256x256x13x13xf32>) -> tensor<256x256x13x13xf32>\n\n%t0 = func.call @nanoTime() : () -> (i64)\n\n%return_arg = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<2> : tensor<2xi64>} ins (%input, %filter: tensor<256x32x32x32xf32>, tensor<256x32x7x7xf32>) outs (%init: tensor<256x256x13x13xf32>) -> tensor<256x256x13x13xf32>\n%t = func.call @nanoTime() : () -> (i64)\n%delta = arith.subi %t, %t0 : i64\n%fp = arith.uitofp %delta : i64 to f64\n// func.call @printFlops(%fp) : (f64) -> ()\nfunc.call @printI64(%delta) : (i64) -> ()\nfunc.call @printNewline() : () -> ()\n\nreturn %return_arg : tensor<256x256x13x13xf32> \n}\n\nfunc.func @main(){\n    %c1 = arith.constant 1: index\n    %c0 = arith.constant 0 : index\n    %n = arith.constant 2: index\n    scf.for %i = %c0 to %n step %c1 {\n    %outputmain = func.call @matmul() : () -> tensor<256x256x13x13xf32>\n    }\n    return\n}\n}\n",
+    "loops_data": {
+      "nested_loops": [
+        [
+          "%arg3",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg4",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg5",
+          0,
+          13,
+          1
+        ],
+        [
+          "%arg6",
+          0,
+          13,
+          1
+        ],
+        [
+          "%arg7",
+          0,
+          32,
+          1
+        ],
+        [
+          "%arg8",
+          0,
+          7,
+          1
+        ],
+        [
+          "%arg9",
+          0,
+          7,
+          1
+        ]
+      ],
+      "op_count": {
+        "+": 1,
+        "-": 0,
+        "*": 1,
+        "/": 0,
+        "exp": 0
+      },
+      "load_data": [
+        [
+          "%arg3",
+          "%arg7",
+          "%arg5 * 2 + %arg8",
+          "%arg6 * 2 + %arg9"
+        ],
+        [
+          "%arg4",
+          "%arg7",
+          "%arg8",
+          "%arg9"
+        ],
+        [
+          "%arg3",
+          "%arg4",
+          "%arg5",
+          "%arg6"
+        ]
+      ],
+      "store_data": []
+    },
+    "execution_time": 65434063249
+  },
+  "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<2> : tensor<2xi64>} ins (%input, %filter: tensor<256x3x230x230xf32>, tensor<64x3x7x7xf32>) outs (%init: tensor<256x64x112x112xf32>) -> tensor<256x64x112x112xf32>": {
+    "operation": "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<2> : tensor<2xi64>} ins (%input, %filter: tensor<256x3x230x230xf32>, tensor<64x3x7x7xf32>) outs (%init: tensor<256x64x112x112xf32>) -> tensor<256x64x112x112xf32>",
+    "wrapped_operation": "func.func @func_call(%input: tensor<256x3x230x230xf32>, %filter: tensor<64x3x7x7xf32>, %init: tensor<256x64x112x112xf32>) -> tensor<256x64x112x112xf32> {\n  %ret = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<2> : tensor<2xi64>} ins (%input, %filter: tensor<256x3x230x230xf32>, tensor<64x3x7x7xf32>) outs (%init: tensor<256x64x112x112xf32>) -> tensor<256x64x112x112xf32>\n  return %ret : tensor<256x64x112x112xf32>\n}",
+    "lowered_operation": "#map = affine_map<(d0, d1) -> (d0 * 2 + d1)>\nmodule {\n  func.func @func_call(%arg0: tensor<256x3x230x230xf32>, %arg1: tensor<64x3x7x7xf32>, %arg2: tensor<256x64x112x112xf32>) -> tensor<256x64x112x112xf32> {\n    %0 = bufferization.to_memref %arg1 : memref<64x3x7x7xf32>\n    %1 = bufferization.to_memref %arg0 : memref<256x3x230x230xf32>\n    %2 = bufferization.to_memref %arg2 : memref<256x64x112x112xf32>\n    %alloc = memref.alloc() {alignment = 64 : i64} : memref<256x64x112x112xf32>\n    memref.copy %2, %alloc : memref<256x64x112x112xf32> to memref<256x64x112x112xf32>\n    affine.for %arg3 = 0 to 256 {\n      affine.for %arg4 = 0 to 64 {\n        affine.for %arg5 = 0 to 112 {\n          affine.for %arg6 = 0 to 112 {\n            affine.for %arg7 = 0 to 3 {\n              affine.for %arg8 = 0 to 7 {\n                affine.for %arg9 = 0 to 7 {\n                  %4 = affine.apply #map(%arg5, %arg8)\n                  %5 = affine.apply #map(%arg6, %arg9)\n                  %6 = affine.load %1[%arg3, %arg7, %4, %5] : memref<256x3x230x230xf32>\n                  %7 = affine.load %0[%arg4, %arg7, %arg8, %arg9] : memref<64x3x7x7xf32>\n                  %8 = affine.load %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x64x112x112xf32>\n                  %9 = arith.mulf %6, %7 : f32\n                  %10 = arith.addf %8, %9 : f32\n                  affine.store %10, %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x64x112x112xf32>\n                }\n              }\n            }\n          }\n        }\n      }\n    }\n    %3 = bufferization.to_tensor %alloc : memref<256x64x112x112xf32>\n    return %3 : tensor<256x64x112x112xf32>\n  }\n}\n\n",
+    "transform_wrapped_operation": "module attributes {torch.debug_module_name = \"Net\"} {\nfunc.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\nfunc.func private @printFlops(f64)\nfunc.func private @printI64(i64)\nfunc.func private @printNewline()\nfunc.func private @printMemrefF32(tensor<*xf32>)\n\n\nfunc.func @matmul() -> tensor<256x64x112x112xf32>{\n\n%val = arith.constant 2.00000e+00 : f32\n%zero = arith.constant 0.00000e+00 : f32\n\n%tmp_input = bufferization.alloc_tensor() : tensor<256x3x230x230xf32>\n%input = linalg.fill ins(%val : f32) outs(%tmp_input : tensor<256x3x230x230xf32>) -> tensor<256x3x230x230xf32>\n%tmp_filter = bufferization.alloc_tensor() : tensor<64x3x7x7xf32>\n%filter = linalg.fill ins(%val : f32) outs(%tmp_filter : tensor<64x3x7x7xf32>) -> tensor<64x3x7x7xf32>\n%tmp_init = bufferization.alloc_tensor() : tensor<256x64x112x112xf32>\n%init = linalg.fill ins(%val : f32) outs(%tmp_init : tensor<256x64x112x112xf32>) -> tensor<256x64x112x112xf32>\n\n%t0 = func.call @nanoTime() : () -> (i64)\n\n%return_arg = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<2> : tensor<2xi64>} ins (%input, %filter: tensor<256x3x230x230xf32>, tensor<64x3x7x7xf32>) outs (%init: tensor<256x64x112x112xf32>) -> tensor<256x64x112x112xf32>\n%t = func.call @nanoTime() : () -> (i64)\n%delta = arith.subi %t, %t0 : i64\n%fp = arith.uitofp %delta : i64 to f64\n// func.call @printFlops(%fp) : (f64) -> ()\nfunc.call @printI64(%delta) : (i64) -> ()\nfunc.call @printNewline() : () -> ()\n\nreturn %return_arg : tensor<256x64x112x112xf32> \n}\n\nfunc.func @main(){\n    %c1 = arith.constant 1: index\n    %c0 = arith.constant 0 : index\n    %n = arith.constant 2: index\n    scf.for %i = %c0 to %n step %c1 {\n    %outputmain = func.call @matmul() : () -> tensor<256x64x112x112xf32>\n    }\n    return\n}\n}\n",
+    "loops_data": {
+      "nested_loops": [
+        [
+          "%arg3",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg4",
+          0,
+          64,
+          1
+        ],
+        [
+          "%arg5",
+          0,
+          112,
+          1
+        ],
+        [
+          "%arg6",
+          0,
+          112,
+          1
+        ],
+        [
+          "%arg7",
+          0,
+          3,
+          1
+        ],
+        [
+          "%arg8",
+          0,
+          7,
+          1
+        ],
+        [
+          "%arg9",
+          0,
+          7,
+          1
+        ]
+      ],
+      "op_count": {
+        "+": 1,
+        "-": 0,
+        "*": 1,
+        "/": 0,
+        "exp": 0
+      },
+      "load_data": [
+        [
+          "%arg3",
+          "%arg7",
+          "%arg5 * 2 + %arg8",
+          "%arg6 * 2 + %arg9"
+        ],
+        [
+          "%arg4",
+          "%arg7",
+          "%arg8",
+          "%arg9"
+        ],
+        [
+          "%arg3",
+          "%arg4",
+          "%arg5",
+          "%arg6"
+        ]
+      ],
+      "store_data": []
+    },
+    "execution_time": 108586801776
+  },
+  "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<2> : tensor<2xi64>} ins (%input, %filter: tensor<256x3x260x260xf32>, tensor<64x3x3x3xf32>) outs (%init: tensor<256x64x129x129xf32>) -> tensor<256x64x129x129xf32>": {
+    "operation": "linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<2> : tensor<2xi64>} ins (%input, %filter: tensor<256x3x260x260xf32>, tensor<64x3x3x3xf32>) outs (%init: tensor<256x64x129x129xf32>) -> tensor<256x64x129x129xf32>",
+    "wrapped_operation": "func.func @func_call(%input: tensor<256x3x260x260xf32>, %filter: tensor<64x3x3x3xf32>, %init: tensor<256x64x129x129xf32>) -> tensor<256x64x129x129xf32> {\n  %ret = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<2> : tensor<2xi64>} ins (%input, %filter: tensor<256x3x260x260xf32>, tensor<64x3x3x3xf32>) outs (%init: tensor<256x64x129x129xf32>) -> tensor<256x64x129x129xf32>\n  return %ret : tensor<256x64x129x129xf32>\n}",
+    "lowered_operation": "#map = affine_map<(d0, d1) -> (d0 * 2 + d1)>\nmodule {\n  func.func @func_call(%arg0: tensor<256x3x260x260xf32>, %arg1: tensor<64x3x3x3xf32>, %arg2: tensor<256x64x129x129xf32>) -> tensor<256x64x129x129xf32> {\n    %0 = bufferization.to_memref %arg1 : memref<64x3x3x3xf32>\n    %1 = bufferization.to_memref %arg0 : memref<256x3x260x260xf32>\n    %2 = bufferization.to_memref %arg2 : memref<256x64x129x129xf32>\n    %alloc = memref.alloc() {alignment = 64 : i64} : memref<256x64x129x129xf32>\n    memref.copy %2, %alloc : memref<256x64x129x129xf32> to memref<256x64x129x129xf32>\n    affine.for %arg3 = 0 to 256 {\n      affine.for %arg4 = 0 to 64 {\n        affine.for %arg5 = 0 to 129 {\n          affine.for %arg6 = 0 to 129 {\n            affine.for %arg7 = 0 to 3 {\n              affine.for %arg8 = 0 to 3 {\n                affine.for %arg9 = 0 to 3 {\n                  %4 = affine.apply #map(%arg5, %arg8)\n                  %5 = affine.apply #map(%arg6, %arg9)\n                  %6 = affine.load %1[%arg3, %arg7, %4, %5] : memref<256x3x260x260xf32>\n                  %7 = affine.load %0[%arg4, %arg7, %arg8, %arg9] : memref<64x3x3x3xf32>\n                  %8 = affine.load %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x64x129x129xf32>\n                  %9 = arith.mulf %6, %7 : f32\n                  %10 = arith.addf %8, %9 : f32\n                  affine.store %10, %alloc[%arg3, %arg4, %arg5, %arg6] : memref<256x64x129x129xf32>\n                }\n              }\n            }\n          }\n        }\n      }\n    }\n    %3 = bufferization.to_tensor %alloc : memref<256x64x129x129xf32>\n    return %3 : tensor<256x64x129x129xf32>\n  }\n}\n\n",
+    "transform_wrapped_operation": "module attributes {torch.debug_module_name = \"Net\"} {\nfunc.func private @nanoTime() -> i64 attributes { llvm.emit_c_interface }\nfunc.func private @printFlops(f64)\nfunc.func private @printI64(i64)\nfunc.func private @printNewline()\nfunc.func private @printMemrefF32(tensor<*xf32>)\n\n\nfunc.func @matmul() -> tensor<256x64x129x129xf32>{\n\n%val = arith.constant 2.00000e+00 : f32\n%zero = arith.constant 0.00000e+00 : f32\n\n%tmp_input = bufferization.alloc_tensor() : tensor<256x3x260x260xf32>\n%input = linalg.fill ins(%val : f32) outs(%tmp_input : tensor<256x3x260x260xf32>) -> tensor<256x3x260x260xf32>\n%tmp_filter = bufferization.alloc_tensor() : tensor<64x3x3x3xf32>\n%filter = linalg.fill ins(%val : f32) outs(%tmp_filter : tensor<64x3x3x3xf32>) -> tensor<64x3x3x3xf32>\n%tmp_init = bufferization.alloc_tensor() : tensor<256x64x129x129xf32>\n%init = linalg.fill ins(%val : f32) outs(%tmp_init : tensor<256x64x129x129xf32>) -> tensor<256x64x129x129xf32>\n\n%t0 = func.call @nanoTime() : () -> (i64)\n\n%return_arg = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<2> : tensor<2xi64>} ins (%input, %filter: tensor<256x3x260x260xf32>, tensor<64x3x3x3xf32>) outs (%init: tensor<256x64x129x129xf32>) -> tensor<256x64x129x129xf32>\n%t = func.call @nanoTime() : () -> (i64)\n%delta = arith.subi %t, %t0 : i64\n%fp = arith.uitofp %delta : i64 to f64\n// func.call @printFlops(%fp) : (f64) -> ()\nfunc.call @printI64(%delta) : (i64) -> ()\nfunc.call @printNewline() : () -> ()\n\nreturn %return_arg : tensor<256x64x129x129xf32> \n}\n\nfunc.func @main(){\n    %c1 = arith.constant 1: index\n    %c0 = arith.constant 0 : index\n    %n = arith.constant 2: index\n    scf.for %i = %c0 to %n step %c1 {\n    %outputmain = func.call @matmul() : () -> tensor<256x64x129x129xf32>\n    }\n    return\n}\n}\n",
+    "loops_data": {
+      "nested_loops": [
+        [
+          "%arg3",
+          0,
+          256,
+          1
+        ],
+        [
+          "%arg4",
+          0,
+          64,
+          1
+        ],
+        [
+          "%arg5",
+          0,
+          129,
+          1
+        ],
+        [
+          "%arg6",
+          0,
+          129,
+          1
+        ],
+        [
+          "%arg7",
+          0,
+          3,
+          1
+        ],
+        [
+          "%arg8",
+          0,
+          3,
+          1
+        ],
+        [
+          "%arg9",
+          0,
+          3,
+          1
+        ]
+      ],
+      "op_count": {
+        "+": 1,
+        "-": 0,
+        "*": 1,
+        "/": 0,
+        "exp": 0
+      },
+      "load_data": [
+        [
+          "%arg3",
+          "%arg7",
+          "%arg5 * 2 + %arg8",
+          "%arg6 * 2 + %arg9"
+        ],
+        [
+          "%arg4",
+          "%arg7",
+          "%arg8",
+          "%arg9"
+        ],
+        [
+          "%arg3",
+          "%arg4",
+          "%arg5",
+          "%arg6"
+        ]
+      ],
+      "store_data": []
+    },
+    "execution_time": 21987584276
+  }
+}
