@@ -59,8 +59,8 @@ def transform_dialect_TP(code: str, operation_tag: str, tiling_size: list[Option
         nb_reduction_loops = sum([s != 0 for s in reduction_tiling_sizes])
         if nb_reduction_loops > 0:
             reduction_transform_dialect_code = (
-                f'    %reduction_{operation_tag} = transform.structured.match attributes{{tag = "{operation_tag}"}} in %arg1 : (!transform.any_op) -> !transform.any_op\n'
-                f'    %reduction_tiled_{operation_tag}, %loops_{operation_tag}{f':{nb_reduction_loops}' if nb_reduction_loops > 1 else ''} = transform.structured.tile_using_for %reduction_{operation_tag} tile_sizes {str(reduction_tiling_sizes)} : (!transform.any_op) -> (!transform.any_op{', !transform.any_op' * nb_reduction_loops})\n'
+                f"    %reduction_{operation_tag} = transform.structured.match attributes{{tag = \"{operation_tag}\"}} in %arg1 : (!transform.any_op) -> !transform.any_op\n"
+                f"    %reduction_tiled_{operation_tag}, %loops_{operation_tag}{f':{nb_reduction_loops}' if nb_reduction_loops > 1 else ''} = transform.structured.tile_using_for %reduction_{operation_tag} tile_sizes {str(reduction_tiling_sizes)} : (!transform.any_op) -> (!transform.any_op{', !transform.any_op' * nb_reduction_loops})\n"
             )
         else:
             reduction_transform_dialect_code = ''

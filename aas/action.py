@@ -68,7 +68,7 @@ class ParameterizedAction(Action):
         self.is_root = is_root
 
     def __repr__(self):
-        return f'{self.name}({', '.join([str(e) if e is not None else '-' for e in self.params])})'
+        return f"{self.name}({', '.join([str(e) if e is not None else '-' for e in self.params])})"
 
 
 class Parallelization(ParameterizedAction):

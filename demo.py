@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 env = AASOpEnv(is_training=False)
 
-agent: AlphaAutoScheduler = AlphaAutoScheduler.load_from_file('saves/aas_all_agent_no_cache.pt', env.get_reward)
+agent: AlphaAutoScheduler = AlphaAutoScheduler.load_from_file('models/aas_all_agent_no_cache.pt', env.get_reward)
 
 results = {}
 state = env.reset(idx=0)
