@@ -38,7 +38,7 @@ def evaluate_code(state: OperationState, bench_data: BenchmarkFeatures) -> tuple
     cache_exec_time = __check_execution_cache(state.bench_name, code_cache_key, tmp_exec_file)
     if cache_exec_time is not None:
         return cache_exec_time, True
-    print_alert('Cache miss')
+    # print_alert('Cache miss')
 
     real_exec_time, success = evaluate_code_with_bindings(state.transformed_code)
 

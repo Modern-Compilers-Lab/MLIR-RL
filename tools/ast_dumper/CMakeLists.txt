@@ -53,6 +53,8 @@ add_llvm_executable(AstDumper
 main.cpp
 )
 
+target_compile_options(AstDumper PRIVATE -fexceptions)
+
 llvm_update_compile_flags(AstDumper)
 
 target_link_libraries(AstDumper

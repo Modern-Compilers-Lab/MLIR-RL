@@ -53,6 +53,8 @@ add_llvm_executable(Vectorizer
 main.cpp
 )
 
+target_compile_options(Vectorizer PRIVATE -fexceptions)
+
 llvm_update_compile_flags(Vectorizer)
 
 target_link_libraries(Vectorizer
