@@ -1,7 +1,7 @@
 from aas import config as cfg
 from aas.state import OperationState
 from aas.observation.operation import NestedLoopFeatures, extract_op_features_from_code
-from aas.action import Action, Parallelization, Vectorization, NoTransformation
+from aas.action import Action, Parallelization, Vectorization, NoTransformation, Interchange
 from utils.log import print_alert
 import os
 import re
@@ -139,7 +139,7 @@ def transform_dialect_tile(code: str, operation_tag: str, tiling_size: list[int]
     return result
 
 
-def transform_dialect_interchange(code: str, operation_tag: str, interchange_list: list[int], tmp_file_path: str):
+def transform_dialect_interchange(code: str, operation_tag: str, interchange_list: list[Optional[int]], tmp_file_path: str):
     """Apply the interchange transformation to the specified operation in the given code.
 
     Args:
@@ -151,7 +151,7 @@ def transform_dialect_interchange(code: str, operation_tag: str, interchange_lis
     Returns:
         str: The code after applying the transformation.
     """
-    if not interchange_list:
+    if not interchange_list or any([param is None for param in interchange_list]):
         return code
 
     code = code.strip()
@@ -508,8 +508,8 @@ def apply_transformation(state: OperationState, code: str, tmp_file_path: str, a
             print_alert("REASON: No parameters")
             return ''
         new_code = transform_dialect_TP(code, state.operation_tag, action.params, state.operation_features.nested_loops, tmp_file_path)
-    # elif transformation == 'interchange':
-    #     new_code = transform_dialect_interchange(code, state.operation_tag, parameters, tmp_file_path)
+    elif isinstance(action, Interchange):
+        new_code = transform_dialect_interchange(code, state.operation_tag, action.params, tmp_file_path)
     # elif transformation == 'img2col':
     #     new_code = transform_dialect_img2col(code, state.operation_tag, tmp_file_path)
     elif isinstance(action, Vectorization):

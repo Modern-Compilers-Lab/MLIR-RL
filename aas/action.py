@@ -74,7 +74,7 @@ class ParameterizedAction(Action):
 class Parallelization(ParameterizedAction):
     """Class to represent a parallelization transformation as an agent action."""
 
-    DEFAULT_NAME = 'TP'
+    DEFAULT_NAME = 'parallelization'
     """The default name of the parallelization transformation"""
     ID = 0
     """The ID of the parallelization transformation"""
@@ -189,7 +189,7 @@ class Parallelization(ParameterizedAction):
 class Vectorization(Action):
     """Class to represent a vectorization transformation as an agent action."""
 
-    DEFAULT_NAME = 'V'
+    DEFAULT_NAME = 'vectorization'
     """The default name of the vectorization transformation"""
     ID = 1
     """The ID of the vectorization transformation"""
@@ -205,7 +205,7 @@ class Vectorization(Action):
 class NoTransformation(Action):
     """Class to represent a no transformation action as an agent action."""
 
-    DEFAULT_NAME = 'NT'
+    DEFAULT_NAME = 'no transformation'
     """The default name of the no transformation action"""
     ID = 2
     """The ID of the no transformation action"""
@@ -218,7 +218,7 @@ class NoTransformation(Action):
 class Img2Col(Action):
     """Class to represent an image to column transformation as an agent action."""
 
-    DEFAULT_NAME = 'I2C'
+    DEFAULT_NAME = 'img2col'
     """The default name of the image to column transformation"""
     ID = 3
     """The ID of the image to column transformation"""
@@ -234,7 +234,7 @@ class Img2Col(Action):
 class Tiling(ParameterizedAction):
     """Class to represent a tiling alone transformation as an agent action."""
 
-    DEFAULT_NAME = 'T'
+    DEFAULT_NAME = 'tiling'
     """The default name of the tiling transformation"""
     ID = 4
     """The ID of the tiling transformation"""
@@ -335,6 +335,44 @@ class Tiling(ParameterizedAction):
             op_count=operation_features.op_count,
             op_iter_space_size=op_iter_space_size,
             nested_loops=operation_features.nested_loops,
+            load_data=operation_features.load_data,
+            store_data=operation_features.store_data,
+            vectorizable=operation_features.vectorizable
+        )
+
+
+class Interchange(ParameterizedAction):
+    """Class to represent an interchange transformation as an agent action."""
+
+    DEFAULT_NAME = 'interchange'
+    """The default name of the interchange transformation"""
+    ID = 5
+    """The ID of the interchange transformation"""
+
+    def __init__(self, params: list[Optional[int]], is_root: bool = True):
+        """Initialize a new interchange action.
+
+        Args:
+            params (list[Optional[int]]): The parameters of the transformation.
+            is_root (bool): Whether the action is a root action or not. Defaults to True.
+        """
+        super().__init__(Interchange.ID, Interchange.DEFAULT_NAME, params, is_root=is_root)
+
+    def update_op_features(self, operation_features):
+        """Update the operation features with the interchange.
+
+        Args:
+            operation_features (OperationFeatures): The operation features to update.
+        """
+        new_nested_loops = operation_features.nested_loops.copy()
+        # Swap the nested loops according to the parameters
+        for i, param in enumerate(self.params):
+            new_nested_loops[i] = operation_features.nested_loops[param]
+        return OperationFeatures(
+            operation_type=operation_features.operation_type,
+            op_count=operation_features.op_count,
+            op_iter_space_size=operation_features.op_iter_space_size,
+            nested_loops=new_nested_loops,
             load_data=operation_features.load_data,
             store_data=operation_features.store_data,
             vectorizable=operation_features.vectorizable

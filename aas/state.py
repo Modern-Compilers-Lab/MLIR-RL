@@ -1,7 +1,7 @@
 from aas import config as cfg
 from aas.observation.operation import OperationFeatures, formula_str_to_list
 from aas.observation.benchmark import BenchmarkFeatures
-from aas.action import Action, Parallelization, Vectorization, NoTransformation, ParameterizedAction
+from aas.action import Action, Parallelization, Vectorization, NoTransformation, ParameterizedAction, Interchange
 import torch
 import math
 
@@ -158,8 +158,8 @@ class OperationState:
         Returns:
             OperationState: The next state of the environment.
         """
-        if self.is_terminal():
-            raise ValueError("Cannot apply action to terminal state.")
+        # if self.is_terminal():
+        #     raise ValueError("Cannot apply action to terminal state.")
         last_action = self.transformation_history[-1] if self.transformation_history else None
         if last_action is not None and not action.is_root:
             if isinstance(last_action, ParameterizedAction) and isinstance(action, ParameterizedAction):
@@ -172,10 +172,16 @@ class OperationState:
             step_count = self.step_count + 1
             new_transformation_history = self.transformation_history + [action]
 
+        op_features = self.operation_features
+        if isinstance(action, Interchange):
+            # Interchange action updates the operation features
+            new_op_features = action.update_op_features(self.operation_features)
+            op_features = new_op_features
+
         return OperationState(
             bench_features=self.bench_features,
             operation_tag=self.operation_tag,
-            operation_features=self.operation_features,
+            operation_features=op_features,
             step_count=step_count,
             transformation_history=new_transformation_history
         )
