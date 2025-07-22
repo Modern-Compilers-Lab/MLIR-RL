@@ -561,9 +561,6 @@ def evaluate_benchmark(model: Model, env: Env, device: torch.device = torch.devi
         bench_done = False
         cumulative_reward = 0
 
-        with open(f"demo/{state.bench_name}_original.mlir", 'w') as f:
-            f.write(state.transformed_code)
-
         while not bench_done:
             # Select the action using the model
             action, _, _, entropy = model.sample(obs, [len(state.operation_features.nested_loops)], greedy=True)
@@ -586,12 +583,8 @@ def evaluate_benchmark(model: Model, env: Env, device: torch.device = torch.devi
                 exec_time = next_state.exec_time
                 transformation_history = next_state.transformation_history.copy()
 
-                with open(f"demo/{bench_name}_optimized.mlir", 'w') as f:
-                    f.write(next_state.transformed_code)
-
                 next_state, next_obs, bench_done = env.get_next_op_state(next_state)
                 if bench_done:
-                    # eval_trange.set_postfix({'bench': bench_name, 'speedup': speedup})
                     optimizations_lines = []
                     last_idx = 0
                     for op in transformation_history:
