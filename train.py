@@ -44,7 +44,7 @@ optimizer = torch.optim.Adam(
 print_success("Model initialized")
 
 # Start training
-# ppo_trajectory = None
+old_trajectory = None
 for step in trange(cfg.nb_iterations, desc='Main loop'):
     trajectory = collect_trajectory(
         model,
@@ -68,6 +68,12 @@ for step in trange(cfg.nb_iterations, desc='Main loop'):
             model,
             device,
         )
+
+    # Extend trajectory with previous trajectory
+    if cfg.reuse_experience:
+        if old_trajectory is not None:
+            trajectory.extend(old_trajectory)
+        old_trajectory = trajectory.copy()
 
     ppo_update(
         trajectory,

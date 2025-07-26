@@ -34,7 +34,7 @@ class Config(metaclass=Singleton):
     """Flag to indicate if the new architecture should be used or not"""
     normalize_bounds: bool
     """Flag to indicate if the upper bounds in the input should be normalized or not"""
-    normalize_adv: Literal['none', 'standard', 'abs-max']
+    normalize_adv: Literal['none', 'standard', 'max-abs']
     """The advantage normalization method"""
     force_vector: bool
     """Flag to force vectorization"""
@@ -42,6 +42,8 @@ class Config(metaclass=Singleton):
     """Flag to enable sparse reward"""
     split_ops: bool
     """Flag to enable splitting operations into separate benchmarks"""
+    reuse_experience: bool
+    """Flag to enable reusing experience"""
     activation: Literal["relu", "tanh"]
     """The activation function to use in the network"""
     benchmarks_folder_path: str
@@ -60,8 +62,6 @@ class Config(metaclass=Singleton):
     """Batch size for value update"""
     value_coef: float
     """Value coefficient"""
-    value_alpha: float
-    """Value alpha"""
     entropy_coef: float
     """Entropy coefficient"""
     reward_scale: float
@@ -112,6 +112,7 @@ class Config(metaclass=Singleton):
         self.force_vector = True
         self.sparse_reward = True
         self.split_ops = False
+        self.reuse_experience = False
         self.activation = "relu"
         self.benchmarks_folder_path = ""
         self.bench_count = 20
@@ -121,7 +122,6 @@ class Config(metaclass=Singleton):
         self.value_epochs = 32
         self.value_batch_size = 32
         self.value_coef = 0.5
-        self.value_alpha = 0.0
         self.entropy_coef = 0.01
         self.reward_scale = 0.01
         self.intrinsic_reward_integration = 0.01
@@ -161,6 +161,7 @@ class Config(metaclass=Singleton):
         self.force_vector = config["force_vector"]
         self.sparse_reward = config["sparse_reward"]
         self.split_ops = config["split_ops"]
+        self.reuse_experience = config["reuse_experience"]
         self.activation = config["activation"]
         self.benchmarks_folder_path = config["benchmarks_folder_path"]
         self.bench_count = config["bench_count"]
@@ -170,7 +171,6 @@ class Config(metaclass=Singleton):
         self.value_epochs = config["value_epochs"]
         self.value_batch_size = config["value_batch_size"]
         self.value_coef = config["value_coef"]
-        self.value_alpha = config["value_alpha"]
         self.entropy_coef = config["entropy_coef"]
         self.reward_scale = config["reward_scale"]
         self.intrinsic_reward_integration = config["intrinsic_reward_integration"]
@@ -208,11 +208,11 @@ class Config(metaclass=Singleton):
             "force_vector": self.force_vector,
             "sparse_reward": self.sparse_reward,
             "split_ops": self.split_ops,
+            "reuse_experience": self.reuse_experience,
             "activation": self.activation,
             "benchmarks_folder_path": self.benchmarks_folder_path,
             "bench_count": self.bench_count,
             "nb_iterations": self.nb_iterations,
-            "value_alpha": self.value_alpha,
             "ppo_epochs": self.ppo_epochs,
             "ppo_batch_size": self.ppo_batch_size,
             "value_epochs": self.value_epochs,

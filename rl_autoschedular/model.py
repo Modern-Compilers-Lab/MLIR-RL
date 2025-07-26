@@ -68,7 +68,7 @@ class HiearchyModel(nn.Module):
             actions (Optional[list[tuple[str, Optional[Union[list[int], int]]]]]): list of actions forced for the model to return. Defaults to None.
 
         Returns:
-            Optional[list[tuple[str, Optional[Union[list[int], int]]]]]: list of actions.
+            list[tuple[str, Optional[Union[list[int], int]]]]: list of actions.
             torch.Tensor: action log probabilities.
             torch.Tensor: action values.
             torch.Tensor: resulting entropy.
@@ -178,7 +178,8 @@ class HiearchyModel(nn.Module):
             interchange_index (torch.Tensor): The interchange indices.
 
         Returns:
-            tuple[torch.Tensor, torch.Tensor]: The log probabilities and entropies of the
+            torch.Tensor: The log probabilities
+            torch.Tensor: The entropies
         """
         assert (eps_dists is None) == (eps is None), 'eps_dists and eps must be both None or both not None.'
 
@@ -264,8 +265,8 @@ class ValueModel(nn.Module):
             torch.Tensor: The value loss.
         """
         vclip = values + torch.clamp(new_values - values, -0.2, 0.2)
-        vloss1 = (returns - vclip).pow(2) * torch.exp(torch.clamp_max(cfg.value_alpha * returns, 50.0))
-        vloss2 = (returns - new_values).pow(2) * torch.exp(torch.clamp_max(cfg.value_alpha * returns, 50.0))
+        vloss1 = (returns - vclip).pow(2)
+        vloss2 = (returns - new_values).pow(2)
         return 0.5 * torch.max(vloss1, vloss2).mean()
 
 
@@ -381,20 +382,22 @@ class PolicyModel(nn.Module):
 
         return transformation_dist, parallelization_dist, tiling_dist, interchange_dist
 
-    def loss(self, new_actions_log_p: torch.Tensor, actions_log_p: torch.Tensor, advantages: torch.Tensor) -> torch.Tensor:
+    def loss(self, new_actions_log_p: torch.Tensor, mu_actions_log_p: torch.Tensor, off_policy_rates: torch.Tensor, advantages: torch.Tensor, clip_range: float = 0.2) -> torch.Tensor:
         """Calculate the policy loss.
 
         Args:
             new_actions_log_p (torch.Tensor): The log probabilities of the new actions.
-            actions_log_p (torch.Tensor): The log probabilities of the actions.
+            mu_actions_log_p (torch.Tensor): The log probabilities of the actions under the behavior policy.
+            off_policy_rates (torch.Tensor): The rate between the old policy and the behavioral (mu) policy.
             advantages (torch.Tensor): The advantages of the actions.
+            clip_range (float): The clipping range for the policy loss.
 
         Returns:
             torch.Tensor: The policy loss.
         """
-        ratios = torch.exp(torch.clamp(new_actions_log_p - actions_log_p, -50.0, 50.0))
+        ratios = torch.exp(torch.clamp(new_actions_log_p - mu_actions_log_p, -80.0, 80.0))
         surr1 = ratios * advantages
-        surr2 = torch.clamp(ratios, 1 - 0.2, 1 + 0.2) * advantages
+        surr2 = torch.clamp(ratios, (1 - clip_range) * off_policy_rates, (1 + clip_range) * off_policy_rates) * advantages
         return - torch.min(surr1, surr2).mean()
 
 
