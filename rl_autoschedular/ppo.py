@@ -6,7 +6,7 @@ from rl_autoschedular.state import OperationState
 from rl_autoschedular import config as cfg
 from rl_autoschedular import file_logger as fl
 from dataclasses import dataclass
-from utils.log import print_error, print_success
+from utils.log import print_error
 from tqdm import trange
 
 
@@ -25,7 +25,7 @@ class Trajectory:
     """Observations of next states in the trajectory."""
     next_values: torch.Tensor
     """Values of actions in the trajectory with one additional step (shifted to one step in the future)."""
-    action_log_p: torch.Tensor
+    mu_action_log_p: torch.Tensor
     """Action log probabilities in the trajectory."""
     rewards: torch.Tensor
     """Rewards in the trajectory."""
@@ -48,7 +48,7 @@ class Trajectory:
             values=torch.concatenate((self.values, other.values)),
             next_obs=torch.concatenate((self.next_obs, other.next_obs)),
             next_values=torch.concatenate((self.next_values, other.next_values)),
-            action_log_p=torch.concatenate((self.action_log_p, other.action_log_p)),
+            mu_action_log_p=torch.concatenate((self.mu_action_log_p, other.mu_action_log_p)),
             rewards=torch.concatenate((self.rewards, other.rewards)),
             done=torch.concatenate((self.done, other.done)),
         )
@@ -66,7 +66,7 @@ class Trajectory:
             values=self.values.clone(),
             next_obs=self.next_obs.clone(),
             next_values=self.next_values.clone(),
-            action_log_p=self.action_log_p.clone(),
+            mu_action_log_p=self.mu_action_log_p.clone(),
             rewards=self.rewards.clone(),
             done=self.done.clone(),
         )
@@ -90,7 +90,7 @@ def collect_trajectory(model: Model, env: Env, step: int, device: torch.device =
     stored_value: list[torch.Tensor] = []
     stored_next_obs: list[torch.Tensor] = []
     stored_next_value: list[torch.Tensor] = []
-    stored_action_log_p: list[torch.Tensor] = []
+    stored_mu_action_log_p: list[torch.Tensor] = []
     stored_reward: list[torch.Tensor] = []
     stored_done: list[torch.Tensor] = []
 
@@ -114,7 +114,7 @@ def collect_trajectory(model: Model, env: Env, step: int, device: torch.device =
         bench_done = False
         while not bench_done:
             num_loops = len(state.operation_features.nested_loops)
-            action_index, action_log_p, value, entropy = model.sample(obs, [num_loops], eps=eps)
+            action_index, mu_action_log_p, value, entropy = model.sample(obs, [num_loops], eps=eps)
 
             assert len(action_index) == 1
             next_state, next_obs, reward, op_done, speedup = env.step(state, action_index[0])
@@ -128,16 +128,16 @@ def collect_trajectory(model: Model, env: Env, step: int, device: torch.device =
             stored_state.append(state)
             stored_action_index.append(action_index[0])
             stored_obs.append(obs)
-            stored_value.append(value)
+            stored_value.append(value.squeeze(-1))
             stored_next_obs.append(next_obs)
-            stored_next_value.append(next_value)
-            stored_action_log_p.append(action_log_p)
+            stored_next_value.append(next_value.squeeze(-1))
+            stored_mu_action_log_p.append(mu_action_log_p)
             stored_reward.append(torch.tensor(reward).unsqueeze(0))
 
             if op_done:
                 next_state, next_obs, bench_done = env.get_next_op_state(next_state)
 
-            stored_done.append(torch.tensor(bench_done).unsqueeze(0))
+            stored_done.append(torch.tensor(bench_done).unsqueeze(0).float())
 
             log_entropy.append(entropy.item())
             log_rewards.append(reward)
@@ -166,9 +166,9 @@ def collect_trajectory(model: Model, env: Env, step: int, device: torch.device =
     stored_value_tensor = torch.concatenate(stored_value)
     stored_next_obs_tensor = torch.concatenate(stored_next_obs)
     stored_next_value_tensor = torch.concatenate(stored_next_value)
-    stored_action_log_p_tensor = torch.concatenate(stored_action_log_p)
-    stored_reward_tensor = torch.concatenate(stored_reward).float()
-    stored_done_tensor = torch.concatenate(stored_done).float()
+    stored_mu_action_log_p_tensor = torch.concatenate(stored_mu_action_log_p)
+    stored_reward_tensor = torch.concatenate(stored_reward)
+    stored_done_tensor = torch.concatenate(stored_done)
 
     trajectory = Trajectory(
         states=stored_state,
@@ -177,53 +177,9 @@ def collect_trajectory(model: Model, env: Env, step: int, device: torch.device =
         values=stored_value_tensor,
         next_obs=stored_next_obs_tensor,
         next_values=stored_next_value_tensor,
-        action_log_p=stored_action_log_p_tensor,
+        mu_action_log_p=stored_mu_action_log_p_tensor,
         rewards=stored_reward_tensor,
         done=stored_done_tensor,
-    )
-
-    return trajectory
-
-
-def shuffle_trajectory(trajectory: Trajectory):
-    """Shuffle the trajectory.
-
-    Args:
-        trajectory (Trajectory): The trajectory to shuffle.
-
-    Returns:
-        Trajectory: The shuffled trajectory.
-    """
-
-    stored_state = trajectory.states
-    stored_action_index = trajectory.actions
-    stored_value = trajectory.values
-    stored_next_value = trajectory.next_values
-    stored_action_log_p = trajectory.action_log_p
-    stored_x = trajectory.x
-    stored_reward = trajectory.rewards
-    stored_done = trajectory.done
-
-    permutation = torch.randperm(stored_action_log_p.size()[0])
-
-    stored_state = [stored_state[i] for i in permutation]
-    stored_action_index = [stored_action_index[i] for i in permutation]
-    stored_value = stored_value[permutation]
-    stored_next_value = stored_next_value[permutation]
-    stored_action_log_p = stored_action_log_p[permutation]
-    stored_x = stored_x[permutation]
-    stored_reward = stored_reward[permutation]
-    stored_done = stored_done[permutation]
-
-    trajectory = Trajectory(
-        states=stored_state,
-        actions=stored_action_index,
-        values=stored_value,
-        next_values=stored_next_value,
-        action_log_p=stored_action_log_p,
-        x=stored_x,
-        rewards=stored_reward,
-        done=stored_done,
     )
 
     return trajectory
@@ -233,18 +189,14 @@ def shuffle_ppo_data(stored_action_index: list[tuple[str, Optional[Union[list[in
     """Shuffle the PPO data.
 
     Args:
-        stored_action_index (list[tuple[str, list[int]]]): stored action index.
-        stored_action_log_p (torch.Tensor): stored action log probabilities.
-        stored_x (torch.Tensor): stored observation vectors.
-        advantages (torch.Tensor): stored advantages.
-        returns (torch.Tensor): stored returns.
+        stored_action_index (list[tuple[str, Optional[Union[list[int], int]]]]): The action indices to shuffle.
+        stored_states (list[OperationState]): The states to shuffle.
+        *tensors (torch.Tensor): The tensors to shuffle.
 
     Returns:
-        list[tuple[str, list[int]]]: shuffled action index.
-        torch.Tensor: shuffled action log probabilities.
-        torch.Tensor: shuffled observation vectors.
-        torch.Tensor: shuffled advantages.
-        torch.Tensor: shuffled returns.
+        list[tuple[str, Optional[Union[list[int], int]]]]: The shuffled action indices.
+        list[OperationState]: The shuffled states.
+        tuple[torch.Tensor]: The shuffled tensors.
     """
 
     permutation = torch.randperm(len(stored_action_index))
@@ -268,7 +220,7 @@ def shuffle_tensors(*tensors: torch.Tensor, permutation: Optional[torch.Tensor] 
     return tuple(tensor[permutation] for tensor in tensors)
 
 
-def compute_gae(done: torch.Tensor, rewards: torch.Tensor, values: torch.Tensor, next_values: torch.Tensor, gamma: float = 1, lambda_: float = 0.95) -> tuple[torch.Tensor, torch.Tensor]:
+def compute_gae(done: torch.Tensor, rewards: torch.Tensor, values: torch.Tensor, next_values: torch.Tensor, gamma: float = 0.99, lambda_: float = 0.95) -> torch.Tensor:
     """Compute the Generalized Advantage Estimation.
 
     Args:
@@ -276,7 +228,7 @@ def compute_gae(done: torch.Tensor, rewards: torch.Tensor, values: torch.Tensor,
         rewards (torch.Tensor): rewards.
         values (torch.Tensor): values.
         next_values (torch.Tensor): values of the next state.
-        gamma (float): discount factor. Defaults to 1.
+        gamma (float): discount factor. Defaults to 0.99.
         lambda_ (float): GAE factor. Defaults to 0.95.
 
     Returns:
@@ -297,12 +249,12 @@ def compute_gae(done: torch.Tensor, rewards: torch.Tensor, values: torch.Tensor,
         last_advantage = delta + gamma * lambda_ * last_advantage
 
         advantages[t] = last_advantage
-    returns = advantages + values
+    # returns = advantages + values
 
-    return advantages, returns
+    return advantages
 
 
-def compute_returns(done: torch.Tensor, rewards: torch.Tensor, gamma: float = 1) -> torch.Tensor:
+def compute_returns(done: torch.Tensor, rewards: torch.Tensor, values: torch.Tensor, off_policy_rates: torch.Tensor, gamma: float = 0.99) -> torch.Tensor:
     """Compute the returns.
 
     Args:
@@ -322,11 +274,28 @@ def compute_returns(done: torch.Tensor, rewards: torch.Tensor, gamma: float = 1)
         mask = 1.0 - done[t]
         last_return = last_return * mask
 
-        last_return = rewards[t] + gamma * last_return
+        last_return = values[t] + (rewards[t] + gamma * last_return - values[t]) * off_policy_rates[t]
 
         returns[t] = last_return
 
     return returns
+
+
+def compute_rho(action_log_p: torch.Tensor, mu_action_log_p: torch.Tensor) -> torch.Tensor:
+    """Compute the off-policy rate (rho) for the current policy.
+
+    Args:
+        action_log_p (torch.Tensor): The action log probabilities of the current policy.
+        mu_action_log_p (torch.Tensor): The action log probabilities of the behavior policy.
+
+    Returns:
+        torch.Tensor: The off-policy rate.
+    """
+    off_policy_rate = torch.exp(torch.clamp(action_log_p - mu_action_log_p, -80.0, 80.0))
+    if 'epsilon' not in cfg.exploration and not cfg.reuse_experience:
+        assert (off_policy_rate == 1).all(), 'off_policy_rate should be 1 since behavior policy is the same as the current policy.'
+
+    return off_policy_rate
 
 
 def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Optimizer, device: torch.device = torch.device('cpu')):
@@ -358,32 +327,43 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
         stored_values = trajectory.values
         stored_next_obs = trajectory.next_obs
         stored_next_values = trajectory.next_values
-        stored_action_log_p = trajectory.action_log_p
+        stored_mu_action_log_p = trajectory.mu_action_log_p
         stored_rewards = trajectory.rewards
         stored_done = trajectory.done
 
-        stored_values = stored_values.reshape(-1)
-        stored_next_values = stored_next_values.reshape(-1)
-        stored_rewards = stored_rewards.reshape(-1)
-        stored_done = stored_done.reshape(-1)
+        stored_action_log_p, _, _ = model(stored_obs, [len(state.operation_features.nested_loops) for state in stored_states], actions=stored_action_index)
+        stored_off_policy_rate = compute_rho(stored_action_log_p, stored_mu_action_log_p)
 
-        stored_advantages, _ = compute_gae(stored_done, stored_rewards, stored_values, stored_next_values)
-        stored_returns = compute_returns(stored_done, stored_rewards)
+        stored_advantages = compute_gae(stored_done, stored_rewards, stored_values, stored_next_values)
+        stored_returns = compute_returns(stored_done, stored_rewards, stored_values, stored_off_policy_rate)
 
-        stored_action_index, stored_states, stored_obs, stored_values, stored_next_obs, stored_action_log_p, stored_advantages, stored_returns = shuffle_ppo_data(
+        max_abs_adv = stored_advantages.abs().max()
+        if cfg.normalize_adv == 'max-abs' and max_abs_adv > 0:
+            stored_advantages = stored_advantages / max_abs_adv
+
+        (
             stored_action_index,
             stored_states,
             stored_obs,
             stored_values,
             stored_next_obs,
+            stored_mu_action_log_p,
             stored_action_log_p,
+            stored_off_policy_rate,
+            stored_advantages,
+            stored_returns
+        ) = shuffle_ppo_data(
+            stored_action_index,
+            stored_states,
+            stored_obs,
+            stored_values,
+            stored_next_obs,
+            stored_mu_action_log_p,
+            stored_action_log_p,
+            stored_off_policy_rate,
             stored_advantages,
             stored_returns
         )
-
-        max_adv = stored_advantages.abs().max()
-        if cfg.normalize_adv == 'abs-max' and max_adv > 0:
-            stored_advantages = stored_advantages / max_adv
 
         len_trajectory = len(stored_action_index)
         for i in range(0, len_trajectory, cfg.ppo_batch_size):
@@ -394,17 +374,19 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
             obs = stored_obs[i:betch_end]
             values = stored_values[i:betch_end]
             next_obs = stored_next_obs[i:betch_end]
+            mu_actions_log_p = stored_mu_action_log_p[i:betch_end]
             actions_log_p = stored_action_log_p[i:betch_end]
+            off_policy_rates = stored_off_policy_rate[i:betch_end]
             advantages = stored_advantages[i:betch_end]
             returns = stored_returns[i:betch_end]
 
-            if cfg.normalize_adv == 'standard' and advantages.shape[0] > 1:
+            if cfg.normalize_adv == 'standard':
                 advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
             with torch.enable_grad():
                 new_actions_log_p, new_values, entropy = model(obs, [len(state.operation_features.nested_loops) for state in states], actions=actions)
 
-                policy_loss = model.policy_model.loss(new_actions_log_p, actions_log_p, advantages)
+                policy_loss = model.policy_model.loss(new_actions_log_p, mu_actions_log_p, off_policy_rates, advantages)
                 loss = policy_loss
 
                 if cfg.value_epochs == 0:
@@ -476,12 +458,14 @@ def value_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Op
         stored_values = trajectory.values
         stored_rewards = trajectory.rewards
         stored_done = trajectory.done
+        stored_states = trajectory.states
+        stored_action_index = trajectory.actions
+        stored_mu_action_log_p = trajectory.mu_action_log_p
 
-        stored_values = stored_values.reshape(-1)
-        stored_rewards = stored_rewards.reshape(-1)
-        stored_done = stored_done.reshape(-1)
+        stored_action_log_p, _, _ = model(stored_obs, [len(state.operation_features.nested_loops) for state in stored_states], actions=stored_action_index)
+        stored_off_policy_rate = compute_rho(stored_action_log_p, stored_mu_action_log_p)
 
-        stored_returns = compute_returns(stored_done, stored_rewards)
+        stored_returns = compute_returns(stored_done, stored_rewards, stored_values, stored_off_policy_rate)
 
         stored_obs, stored_values, stored_returns = shuffle_tensors(stored_obs, stored_values, stored_returns)
 
