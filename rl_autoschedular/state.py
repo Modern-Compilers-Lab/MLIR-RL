@@ -40,6 +40,10 @@ class OperationFeatures:
     """List of store accesses where each store is represented by the list of access arguments."""
     nested_loops: list[NestedLoopFeatures]
     """List of nested loops where each loop is represented by the NestedLoopFeatures dataclass."""
+    producers: list[str]
+    """"""
+    consumers: list[str]
+    """"""
     vectorizable: bool
     """Flag to indicate if the operation is vectorizable."""
 
@@ -52,6 +56,8 @@ class OperationFeatures:
             [load.copy() for load in self.load_data],
             self.store_data.copy(),
             [loop.copy() for loop in self.nested_loops],
+            self.producers.copy(),
+            self.consumers.copy(),
             self.vectorizable
         )
 
@@ -89,6 +95,12 @@ class OperationState:
     """Tag used to identify the operation in the MLIR code."""
     operation_features: OperationFeatures
     """Features of the operation."""
+    producer_tag: str
+    """"""
+    producer_features: OperationFeatures
+    """"""
+    fused_ops: set[str]
+    """"""
     validated_code: str
     """The latest validated benchmark code (if not in inference, this will always be the original code)."""
     transformed_code: str
@@ -114,6 +126,9 @@ class OperationState:
             self.bench_name,
             self.operation_tag,
             self.operation_features.copy(),
+            self.producer_tag,
+            self.producer_features.copy() if self.producer_features is not None else None,
+            self.fused_ops.copy(),
             self.validated_code,
             self.transformed_code,
             self.actions.copy(),

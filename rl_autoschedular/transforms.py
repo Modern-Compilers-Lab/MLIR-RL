@@ -510,6 +510,91 @@ module attributes {{transform.with_named_sequence}} {{
 
     return result
 
+def transform_dialect_TF(code: str, consumer_tag: str, producer_tag: str, tiling_size: list[int],tmp_file_path: str):
+    """Apply the tiling and fusion transformation to the specified operation in the given code.
+
+    Args:
+        code (str): The code to apply the transformation to.
+        consumer_tag (str): The tag of the operation to apply the transformation to.
+        producer_tag (str): the tag of the producer to fuse with
+        tiling_size (list[int]): The tiling size to apply.
+        tmp_file_path (str): The path to the temporary file to write the code to.
+
+    Returns:
+        str: The code after applying the transformation.
+    """    
+
+    if not tiling_size:
+        return ''
+
+    if all([a == 0 for a in tiling_size]):
+        return code # TODO: not too sure ?
+    
+    code = code.strip()
+
+    n_loops = sum([s != 0 for s in tiling_size])
+    r = ', '.join(['!transform.any_op'] * n_loops)
+    assert n_loops > 0, "No loops to tile"
+
+    transform_dialect_code = (
+        f'\nmodule attributes {{transform.with_named_sequence}} {{\n'
+        f'  transform.named_sequence @__transform_main(%arg1: !transform.any_op {{transform.readonly}}) {{\n'
+        f'    %op_{consumer_tag} = transform.structured.match attributes{{tag = "{consumer_tag}"}} in %arg1 : (!transform.any_op) -> !transform.any_op\n'
+        f'    %tiled_op_{consumer_tag}, %loops = transform.structured.tile_using_forall %op_{consumer_tag} tile_sizes {str(tiling_size)} : (!transform.any_op) -> (!transform.any_op, !transform.any_op)\n'
+        f'    %op_{producer_tag} = transform.structured.match attributes{{tag = "{producer_tag}"}} in %arg1 : (!transform.any_op) -> !transform.any_op\n'
+        f'    %forall_op_{consumer_tag} = transform.get_parent_op %tiled_op_{consumer_tag}: (!transform.any_op) -> !transform.any_op\n'
+        f'    transform.structured.fuse_into_containing_op %op_{producer_tag} into %forall_op_{consumer_tag} : (!transform.any_op, !transform.any_op) -> (!transform.any_op, !transform.any_op)\n'
+        f'    transform.yield\n'
+        f'  }}\n'
+        f'}}\n'
+    )
+
+    code = code + transform_dialect_code + '\n'
+
+    with open(tmp_file_path, "w") as file:
+        file.write(code)
+
+    result = os.popen(
+        f"{os.getenv('LLVM_BUILD_PATH')}/bin/mlir-opt {tmp_file_path} -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule",
+    ).read()
+
+    result = result.replace("module {\n", "", 1)
+    result = ''.join(result.rsplit('\n}\n', 1))
+    result = re.sub(r"module attributes \{transform.with_named_sequence\} \{\s+\}", "", result)
+
+    return result
+
+def transform_dialect_fuse_only(code, consumer_tag, producer_tag, tmp_file):
+    code = code.strip()
+
+    transform_dialect_code = (
+        f'\nmodule attributes {{transform.with_named_sequence}} {{\n'
+        f'  transform.named_sequence @__transform_main(%arg1: !transform.any_op {{transform.readonly}}) {{\n'
+        f'    %op_{producer_tag} = transform.structured.match attributes{{tag = "{producer_tag}"}} in %arg1 : (!transform.any_op) -> !transform.any_op\n'
+        f'    %op_{consumer_tag} = transform.structured.match attributes{{tag = "{consumer_tag}"}} in %arg1 : (!transform.any_op) -> !transform.any_op\n'
+        f'    %forall_op_{consumer_tag} = transform.get_parent_op %op_{consumer_tag}: (!transform.any_op) -> !transform.any_op\n'
+        f'    transform.structured.fuse_into_containing_op %op_{producer_tag} into %forall_op_{consumer_tag} : (!transform.any_op, !transform.any_op) -> (!transform.any_op, !transform.any_op)\n'
+        f'    transform.yield\n'
+        f'  }}\n'
+        f'}}\n'
+    )
+
+    code = code + transform_dialect_code + '\n'
+
+
+    with open(tmp_file, "w") as file:
+        file.write(code)
+
+        result = os.popen(
+            f"{os.getenv('LLVM_BUILD_PATH')}/bin/mlir-opt {tmp_file} -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule",
+        ).read()
+
+    result = result.replace("module {\n", "", 1)
+    result = ''.join(result.rsplit('\n}\n', 1))
+    result = re.sub(r"module attributes \{transform.with_named_sequence\} \{\s+\}", "", result)
+
+    return result
+
 
 def apply_transformation(state: OperationState, code: str, transformation: str, parameters: list) -> str:
     """Apply the specified transformation to the given code.
@@ -536,6 +621,13 @@ def apply_transformation(state: OperationState, code: str, transformation: str, 
         new_code = transform_dialect_TP(new_code, state.operation_tag, parallel_params, tmp_file)
     elif transformation == 'interchange':
         new_code = transform_dialect_interchange(code, state.operation_tag, parameters, tmp_file)
+    elif transformation == "fusion":
+        new_code = code
+        if state.producer_tag is not None:
+            if state.operation_tag not in state.fused_ops:
+                new_code = transform_dialect_TF(code, state.operation_tag, state.producer_tag, parameters ,tmp_file)
+            else:
+                new_code = transform_dialect_fuse_only(code, state.operation_tag, state.producer_tag, tmp_file)
     elif transformation == 'vectorization':
         is_legal = is_vectorizable(state.operation_features)
 

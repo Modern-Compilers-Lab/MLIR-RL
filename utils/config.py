@@ -88,6 +88,8 @@ class Config(metaclass=Singleton):
     """Path to the file containing the execution data"""
     results_dir: str
     """Path to the results directory"""
+    data_format: Literal["json","mlir"]
+    """"""
 
     loaded: bool
     """Flag to check if the config was already loaded from JSON file or not"""
@@ -135,6 +137,7 @@ class Config(metaclass=Singleton):
         self.debug = False
         self.exec_data_file = ""
         self.results_dir = "results"
+        self.data_format = 'mlir'
         self.loaded = False
 
     def load_from_json(self):
@@ -184,8 +187,12 @@ class Config(metaclass=Singleton):
         self.debug = config["debug"]
         self.exec_data_file = config["exec_data_file"]
         self.results_dir = config["results_dir"]
+        self.data_format = config.get("data_format","mlir")
         # Set loaded flag
         self.loaded = True
+        self.logging = False
+
+        assert self.data_format in ["json","mlir"]
 
     def to_dict(self):
         """Convert the configuration to a dictionary."""
@@ -230,7 +237,9 @@ class Config(metaclass=Singleton):
             "tags": self.tags,
             "debug": self.debug,
             "exec_data_file": self.exec_data_file,
-            "results_dir": self.results_dir
+            "results_dir": self.results_dir,
+            "data_format":self.data_format,
+            "logging":self.logging
         }
 
     def __str__(self):

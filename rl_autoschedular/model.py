@@ -29,8 +29,8 @@ class HiearchyModel(nn.Module):
                 interchange_mask = 0
                 interchange_input = 0
 
-        self.input_dim = 5 + L + L + 1 + L * D * SD + L * D + 5 + interchange_input + cfg.truncate * 3 * L
-        self.action_mask_size = N + 2 * L * (TS + 1) + interchange_mask
+        self.input_dim = 5 + L + L + 1 + L * D * SD + L * D + 5 + interchange_input + cfg.truncate * 4 * L
+        self.action_mask_size = N + 3 * L * (TS + 1) + interchange_mask
 
         self.policy_model = PolicyModel(self.input_dim, self.action_mask_size)
         self.value_model = ValueModel(self.input_dim, self.action_mask_size)
@@ -76,7 +76,7 @@ class HiearchyModel(nn.Module):
         assert not greedy or eps is None, 'Cannot be greedy and explore at the same time.'
 
         # Model feedforward
-        transformation_dist, parallelization_dist, tiling_dist, interchange_dist = self.policy_model(obs, num_loops)
+        transformation_dist, parallelization_dist, tiling_dist, interchange_dist, fusion_dist = self.policy_model(obs, num_loops)
         values = self.value_model(obs)
 
         # Sample actions
@@ -85,25 +85,28 @@ class HiearchyModel(nn.Module):
             transformation_index = transformation_dist.probs.argmax(-1)
             parallelization_index = parallelization_dist.probs.argmax(-1)
             tiling_index = tiling_dist.probs.argmax(-1)
+            fusion_index = fusion_dist.probs.argmax(-1)
             if cfg.interchange_mode == 'continuous':
                 interchange_index = interchange_dist.mean.long()
             else:
                 interchange_index = interchange_dist.probs.argmax(-1)
         else:
             if eps is not None:
-                transformation_eps_dist, parallelization_eps_dist, tiling_eps_dist, interchange_eps_dist = self.__create_uniform_distributions(obs, num_loops)
+                transformation_eps_dist, parallelization_eps_dist, tiling_eps_dist, interchange_eps_dist, fusion_eps_dist = self.__create_uniform_distributions(obs, num_loops)
             if eps is not None and torch.rand(1).item() < eps:
                 # Sample actions uniformly
                 transformation_index = transformation_eps_dist.sample()
                 parallelization_index = parallelization_eps_dist.sample()
                 tiling_index = tiling_eps_dist.sample()
                 interchange_index = interchange_eps_dist.sample().long()
+                fusion_index = fusion_eps_dist.sample()
             else:
                 # Sample actions
                 transformation_index = transformation_dist.sample()
                 parallelization_index = parallelization_dist.sample()
                 tiling_index = tiling_dist.sample()
                 interchange_index = interchange_dist.sample().long()
+                fusion_index = fusion_dist.sample()
 
         if cfg.interchange_mode == 'continuous':
             # Clamp interchange index to [0, num_loops! - 1]
@@ -111,13 +114,13 @@ class HiearchyModel(nn.Module):
             interchange_index = interchange_index.clamp(torch.zeros_like(total_count, dtype=torch.int64), total_count - 1)
 
         # Get raw actions from indices
-        actions = indices_to_raw_actions(transformation_index, parallelization_index, tiling_index, interchange_index, num_loops)
+        actions = indices_to_raw_actions(transformation_index, parallelization_index, tiling_index, interchange_index, fusion_index, num_loops)
 
         # Calculate the log probabilities and entropies
         action_log_p, entropy = self.__calculate_dist_stats(
-            [transformation_dist, parallelization_dist, tiling_dist, interchange_dist],
-            [transformation_index, parallelization_index, tiling_index, interchange_index],
-            eps_dists=[transformation_eps_dist, parallelization_eps_dist, tiling_eps_dist, interchange_eps_dist] if eps is not None else None,
+            [transformation_dist, parallelization_dist, tiling_dist, interchange_dist, fusion_dist],
+            [transformation_index, parallelization_index, tiling_index, interchange_index, fusion_index],
+            eps_dists=[transformation_eps_dist, parallelization_eps_dist, tiling_eps_dist, interchange_eps_dist, fusion_eps_dist] if eps is not None else None,
             eps=eps
         )
 
@@ -141,6 +144,7 @@ class HiearchyModel(nn.Module):
         transformation_logits = torch.zeros((batch_size, N), dtype=torch.float32)
         parallelization_logits = torch.zeros((batch_size, L, TS + 1), dtype=torch.float32)
         tiling_logits = torch.zeros((batch_size, L, TS + 1), dtype=torch.float32)
+        fusion_logits = torch.zeros((batch_size, L, TS + 1), dtype=torch.float32)
         match cfg.interchange_mode:
             case 'enumerate':
                 interchange_logits = torch.zeros((batch_size, 3 * L - 6), dtype=torch.float32)
@@ -150,19 +154,20 @@ class HiearchyModel(nn.Module):
                 interchange_logits = torch.zeros((batch_size, 1), dtype=torch.float32)
 
         # Apply masks on logits
-        transformation_logits, parallelization_logits, tiling_logits, interchange_logits = apply_masks(transformation_logits, parallelization_logits, tiling_logits, interchange_logits, *extract_masks(action_mask))
+        transformation_logits, parallelization_logits, tiling_logits, interchange_logits = apply_masks(transformation_logits, parallelization_logits, tiling_logits, interchange_logits, fusion_logits, *extract_masks(action_mask))
 
         # Create distributions with the masked probabilities
         transformation_dist = Categorical(logits=transformation_logits)
         parallelization_dist = Categorical(logits=parallelization_logits)
         tiling_dist = Categorical(logits=tiling_logits)
+        fusion_dist = Categorical(logits=fusion_logits)
         if cfg.interchange_mode != 'continuous':
             interchange_dist = Categorical(logits=interchange_logits)
         else:
             total_count = torch.tensor([math.factorial(loops) for loops in num_loops], dtype=torch.float64)
             interchange_dist = Uniform(0.0, total_count)
 
-        return transformation_dist, parallelization_dist, tiling_dist, interchange_dist
+        return transformation_dist, parallelization_dist, tiling_dist, interchange_dist, fusion_dist
 
     def __calculate_dist_stats(self, dists: list[Distribution], indices: list[torch.Tensor], eps_dists: Optional[list[Distribution]] = None, eps: Optional[float] = None) -> tuple[torch.Tensor, torch.Tensor]:
         """Calculate the log probabilities and entropies of the actions.
@@ -182,8 +187,8 @@ class HiearchyModel(nn.Module):
         """
         assert (eps_dists is None) == (eps is None), 'eps_dists and eps must be both None or both not None.'
 
-        transformation_dist, parallelization_dist, tiling_dist, interchange_dist = dists
-        transformation_index, parallelization_index, tiling_index, interchange_index = indices
+        transformation_dist, parallelization_dist, tiling_dist, interchange_dist, fusion_dist = dists
+        transformation_index, parallelization_index, tiling_index, interchange_index, fusion_index = indices
 
         batch_size = transformation_index.shape[0]
 
@@ -191,24 +196,29 @@ class HiearchyModel(nn.Module):
         parallelization_log_p = parallelization_dist.log_prob(parallelization_index).sum(-1)
         tiling_log_p = tiling_dist.log_prob(tiling_index).sum(-1)
         interchange_log_p = interchange_dist.log_prob(interchange_index)
+        fusion_log_p = fusion_dist.log_prob(fusion_index).sum(-1)
 
         if eps_dists is not None:
-            transformation_eps_dist, parallelization_eps_dist, tiling_eps_dist, interchange_eps_dist = eps_dists
+            transformation_eps_dist, parallelization_eps_dist, tiling_eps_dist, interchange_eps_dist, fusion_eps_dist = eps_dists
             transformation_log_p = ((1 - eps) * transformation_log_p.exp() + eps * transformation_eps_dist.log_prob(transformation_index).exp()).log()
             parallelization_log_p = ((1 - eps) * parallelization_log_p.exp() + eps * parallelization_eps_dist.log_prob(parallelization_index).sum(-1).exp()).log()
             tiling_log_p = ((1 - eps) * tiling_log_p.exp() + eps * tiling_eps_dist.log_prob(tiling_index).sum(-1).exp()).log()
             interchange_log_p = ((1 - eps) * interchange_log_p.exp() + eps * interchange_eps_dist.log_prob(interchange_index).exp()).log()
+            fusion_log_p = ((1 - eps) * fusion_log_p.exp() + eps * fusion_eps_dist.log_prob(fusion_index).sum(-1).exp()).log()
+
 
         # Calculate the total log probability
         action_log_p = transformation_log_p
         action_log_p[transformation_index == 1] += parallelization_log_p[transformation_index == 1]
         action_log_p[transformation_index == 2] += tiling_log_p[transformation_index == 2]
         action_log_p[transformation_index == 3] += interchange_log_p[transformation_index == 3]
+        action_log_p[transformation_index == 5] += fusion_log_p[transformation_index == 5]
 
         # Calculate the entropy
         entropy = transformation_dist.entropy()
         entropy[transformation_index == 1] += parallelization_dist.entropy().sum(-1)[transformation_index == 1]
         entropy[transformation_index == 2] += tiling_dist.entropy().sum(-1)[transformation_index == 2]
+        entropy[transformation_index == 5] += fusion_dist.entropy().sum(-1)[transformation_index == 5]
         if not isinstance(interchange_dist, Binomial) or batch_size == 1:
             entropy[transformation_index == 3] += interchange_dist.entropy()[transformation_index == 3]
 
@@ -309,6 +319,7 @@ class PolicyModel(nn.Module):
         self.parallelization_fc = nn.Linear(512, L * (TS + 1))
         self.tiling_fc = nn.Linear(512, L * (TS + 1))
         self.interchange_fc = interchange_layer
+        self.fusion_fc = nn.Linear(512, L * (TS + 1))
 
         if cfg.new_architecture:
             self.transformation_fc = nn.Sequential(
@@ -335,10 +346,16 @@ class PolicyModel(nn.Module):
                 self.interchange_fc,
             )
 
+            self.fusion_fc = nn.Sequential(
+                nn.Linear(512, 512),
+                activation_layer(),
+                self.fusion_fc,
+            )
+
     def __call__(self, obs: torch.Tensor, num_loops: list[int]) -> tuple[Distribution, Distribution, Distribution, Distribution]:
         return super().__call__(obs, num_loops)
 
-    def forward(self, obs: torch.Tensor, num_loops: list[int]) -> tuple[Distribution, Distribution, Distribution, Distribution]:
+    def forward(self, obs: torch.Tensor, num_loops: list[int]) -> tuple[Distribution, Distribution, Distribution, Distribution, Distribution]:
         """Forward pass of the model.
 
         Args:
@@ -360,15 +377,18 @@ class PolicyModel(nn.Module):
         transformation_logits = self.transformation_fc(x)
         parallelization_logits = self.parallelization_fc(x).reshape(batch_size, L, TS + 1)
         tiling_logits = self.tiling_fc(x).reshape(batch_size, L, TS + 1)
+        fusion_logits = self.fusion_fc(x).reshape(batch_size, L, TS + 1)
         interchange_logits = self.interchange_fc(x)
 
         # Apply masks on logits
-        transformation_logits, parallelization_logits, tiling_logits, interchange_logits = apply_masks(transformation_logits, parallelization_logits, tiling_logits, interchange_logits, *extract_masks(action_mask))
+        transformation_logits, parallelization_logits, tiling_logits, interchange_logits, fusion_logits = apply_masks(transformation_logits, parallelization_logits, tiling_logits, interchange_logits, fusion_logits, *extract_masks(action_mask))
 
         # Create distributions with the masked probabilities
         transformation_dist = Categorical(logits=transformation_logits)
         parallelization_dist = Categorical(logits=parallelization_logits)
         tiling_dist = Categorical(logits=tiling_logits)
+        fusion_dist = Categorical(logits=fusion_logits)
+        
         if cfg.interchange_mode != 'continuous':
             interchange_dist = Categorical(logits=interchange_logits)
         else:
@@ -379,7 +399,7 @@ class PolicyModel(nn.Module):
             else:
                 interchange_dist = Normal(interchange_logit, self.interchange_logstd.clamp(-1, 1).exp())
 
-        return transformation_dist, parallelization_dist, tiling_dist, interchange_dist
+        return transformation_dist, parallelization_dist, tiling_dist, interchange_dist, fusion_dist
 
     def loss(self, new_actions_log_p: torch.Tensor, actions_log_p: torch.Tensor, advantages: torch.Tensor) -> torch.Tensor:
         """Calculate the policy loss.
@@ -644,7 +664,7 @@ class InverseModel(nn.Module):
         return loss.mean()
 
 
-def extract_masks(action_mask: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+def extract_masks(action_mask: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Extract masks from the action mask tensor.
 
     Args:
@@ -659,17 +679,19 @@ def extract_masks(action_mask: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor
     TS = cfg.num_tile_sizes
     TP_BEGIN = N
     T_BEGIN = TP_BEGIN + L * (TS + 1)
-    I_BEGIN = T_BEGIN + L * (TS + 1)
+    F_BEGIN = T_BEGIN + L * (TS + 1)
+    I_BEGIN = F_BEGIN + L * (TS + 1)
 
     transform_mask = action_mask[:, :N]
     TP_mask = action_mask[:, TP_BEGIN:T_BEGIN].reshape(batch_size, L, TS + 1)
-    T_mask = action_mask[:, T_BEGIN:I_BEGIN].reshape(batch_size, L, TS + 1)
+    T_mask = action_mask[:, T_BEGIN:F_BEGIN].reshape(batch_size, L, TS + 1)
+    F_mask = action_mask[:, F_BEGIN:I_BEGIN].reshape(batch_size, L, TS + 1)
     if cfg.interchange_mode == 'continuous':
         I_mask = torch.ones((batch_size, 1), dtype=torch.bool)
     else:
         I_mask = action_mask[:, I_BEGIN:]
 
-    return transform_mask, TP_mask, T_mask, I_mask
+    return transform_mask, TP_mask, T_mask, I_mask, F_mask
 
 
 def apply_masks(*args: torch.Tensor, value: float = -torch.inf) -> list[torch.Tensor]:
@@ -707,6 +729,7 @@ def transformation_to_int(transformation: str) -> int:
         'tiling': 2,
         'interchange': 3,
         'vectorization': 4,
+        'fusion':5
     }[transformation]
 
 
@@ -725,10 +748,11 @@ def int_to_transformation(transformation: int) -> str:
         2: 'tiling',
         3: 'interchange',
         4: 'vectorization',
+        5: 'fusion',
     }[transformation]
 
 
-def raw_actions_to_indices(actions: list[tuple[str, Optional[Union[list[int], int]]]]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+def raw_actions_to_indices(actions: list[tuple[str, Optional[Union[list[int], int]]]]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Convert a list of actions to tensor of indices.
 
     Args:
@@ -744,6 +768,7 @@ def raw_actions_to_indices(actions: list[tuple[str, Optional[Union[list[int], in
     parallelization_index = torch.zeros((batch_size, L), dtype=torch.int64)
     tiling_index = torch.zeros((batch_size, L), dtype=torch.int64)
     interchange_index = torch.zeros((batch_size,), dtype=torch.int64)
+    fusion_index = torch.zeros((batch_size, L), dtype=torch.int64)
     for i, action in enumerate(actions):
         action_name, parameters = action
         match action_name:
@@ -753,11 +778,13 @@ def raw_actions_to_indices(actions: list[tuple[str, Optional[Union[list[int], in
                 tiling_index[i, :len(parameters)] = torch.tensor(parameters)
             case 'interchange':
                 interchange_index[i] = parameters
+            case 'fusion':
+                fusion_index[i, :len(parameters)] = torch.tensor(parameters) 
 
-    return transformation_index, parallelization_index, tiling_index, interchange_index
+    return transformation_index, parallelization_index, tiling_index, interchange_index, fusion_index
 
 
-def indices_to_raw_actions(transformation_index: torch.Tensor, parallelization_index: torch.Tensor, tiling_index: torch.Tensor, interchange_index: torch.Tensor, num_loops: list[int]) -> list[tuple[str, Optional[Union[list[int], int]]]]:
+def indices_to_raw_actions(transformation_index: torch.Tensor, parallelization_index: torch.Tensor, tiling_index: torch.Tensor, interchange_index: torch.Tensor, fusion_index: torch.Tensor, num_loops: list[int]) -> list[tuple[str, Optional[Union[list[int], int]]]]:
     """Convert tensor indices to a list of actions.
 
     Args:
@@ -780,6 +807,8 @@ def indices_to_raw_actions(transformation_index: torch.Tensor, parallelization_i
                 parameters = tiling_index[i, :num_loops[i]].tolist()
             case 'interchange':
                 parameters = interchange_index[i].item()
+            case 'fusion':
+                parameters = fusion_index[i, :num_loops[i]].tolist()
         actions.append((transformation, parameters))
 
     return actions

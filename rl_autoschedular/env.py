@@ -4,7 +4,7 @@ from rl_autoschedular.state import (
     OperationType, NestedLoopFeatures
 )
 from typing import Optional, Union, Literal
-from rl_autoschedular.observation import extract_bench_features_from_file, build_op_features_vector
+from rl_autoschedular.observation import extract_bench_features_from_code, extract_bench_features_from_file, build_op_features_vector
 from rl_autoschedular.transforms import apply_transformation, is_vectorizable
 from rl_autoschedular.evaluation import evaluate_code
 from utils.log import print_error
@@ -55,25 +55,67 @@ class Env:
         if cfg.eval_json_file and not is_training:
             bench_json_file = cfg.eval_json_file
 
-        with open(bench_json_file) as file:
-            benchmarks_json: dict[str, int] = json.load(file)
 
-        # Build benchmark features
-        self.benchmarks_data = []
-        for bench_name, root_exec_time in tqdm(benchmarks_json.items(), desc="Extracting benchmark features", unit="bench"):
-            bench_file = os.path.join(cfg.benchmarks_folder_path, bench_name + ".mlir")
-            benchmark_data = extract_bench_features_from_file(bench_name, bench_file, root_exec_time)
+        if cfg.data_format == "mlir":
 
-            if cfg.split_ops and is_training and len(benchmark_data.operation_tags) > 1:
-                # Split benchmarks with more than one operation into multiple benchmarks
-                for tag in benchmark_data.operation_tags:
-                    # Create a new benchmark data with only the current operation
-                    new_bench_data = benchmark_data.copy()
-                    new_bench_data.bench_name = f"{benchmark_data.bench_name}_{tag}"
-                    new_bench_data.operation_tags = [tag]
-                    new_bench_data.operations = {tag: new_bench_data.operations[tag]}
-                    self.benchmarks_data.append(new_bench_data)
-            else:
+            with open(bench_json_file) as file:
+                benchmarks_json: dict[str, int] = json.load(file)
+
+            # Build benchmark features
+            self.benchmarks_data = []
+            for bench_name, root_exec_time in tqdm(benchmarks_json.items(), desc="Extracting benchmark features", unit="bench"):
+                bench_file = os.path.join(cfg.benchmarks_folder_path, bench_name + ".mlir")
+                benchmark_data = extract_bench_features_from_file(bench_name, bench_file, root_exec_time)
+
+                if cfg.split_ops and is_training and len(benchmark_data.operation_tags) > 1:
+                    # Split benchmarks with more than one operation into multiple benchmarks
+                    for tag in benchmark_data.operation_tags:
+                        # Create a new benchmark data with only the current operation
+                        new_bench_data = benchmark_data.copy()
+                        new_bench_data.bench_name = f"{benchmark_data.bench_name}_{tag}"
+                        new_bench_data.operation_tags = [tag]
+                        new_bench_data.operations = {tag: new_bench_data.operations[tag]}
+                        self.benchmarks_data.append(new_bench_data)
+                else:
+                    self.benchmarks_data.append(benchmark_data)
+
+        elif cfg.data_format == "json":
+
+            with open(bench_json_file) as file:
+                json_data: dict[str,dict] = json.load(file)
+
+            self.benchmarks_data = []
+            
+            operation_filter = [
+                'linalg.matmul',
+                'linalg.conv_2d',
+                'pooling',
+                'generic',
+                'linalg.add',
+                "func.call",
+            ]
+
+            bench_filter = [
+                'bench',
+                "patterns",
+                "Residual",
+                "resnet",
+                "single",
+                "linalg"
+            ]
+
+            json_data = [(op, details) for op, details in json_data.items() if any([s in op for s in bench_filter])]
+            json_data = [(op, details) for op, details in json_data if any([s in details.get("operation","func.call") for s in operation_filter])]
+
+            # Get the AST of the MLIR code and give a tag to each linalg operation
+            for i in tqdm(range(len(json_data))):
+                # Get full MLIR code and execution time
+                code = json_data[i][1]["transform_wrapped_operation"]
+                exec_time = json_data[i][1]["execution_time"]
+                
+                # Build benchmark features
+                bench_name = json_data[i][0]
+                benchmark_data = extract_bench_features_from_code(bench_name, code, exec_time)
                 self.benchmarks_data.append(benchmark_data)
 
     def reset(self, bench_idx: Optional[int] = None) -> tuple[OperationState, torch.Tensor]:
@@ -193,10 +235,19 @@ class Env:
         new_op_features = self.__current_bench_data.operations[new_op_tag]
         new_action_mask = self.__init_action_mask(new_op_features)
         new_actions = self.__init_action_history()
+        new_producer_tag = None
+        new_producer_features = None
+        if len(new_op_features.producers) != 0:
+            new_producer_tag = new_op_features.producers[0]
+            new_producer_features = self.__current_bench_data.operations[new_producer_tag]
+
         next_state = OperationState(
             bench_name=state.bench_name,
             operation_tag=new_op_tag,  # New operation tag
             operation_features=new_op_features,  # New operation features
+            producer_tag=new_producer_tag, # New operation's first producer
+            producer_features=new_producer_features, # the new producer's features
+            fused_ops=state.fused_ops,
             validated_code=state.validated_code,
             transformed_code=state.transformed_code,
             actions=new_actions,  # Empty actions history
@@ -223,6 +274,12 @@ class Env:
         operation_tag = self.__current_bench_data.operation_tags[operation_idx]
         operation_features = self.__current_bench_data.operations[operation_tag]
 
+        producer_tag = None
+        producer_features = None
+        if len(operation_features.producers) != 0:
+            producer_tag = operation_features.producers[0]
+            producer_features = self.__current_bench_data.operations[producer_tag]
+
         # Build action mask
         action_mask = self.__init_action_mask(operation_features)
 
@@ -233,6 +290,9 @@ class Env:
             bench_name=self.__current_bench_data.bench_name,
             operation_tag=operation_tag,
             operation_features=operation_features.copy(),
+            producer_tag=producer_tag,
+            producer_features=producer_features,
+            fused_ops=set(),
             validated_code=self.__current_bench_data.code,
             transformed_code=self.__current_bench_data.code,
             actions=actions,
@@ -314,12 +374,12 @@ class Env:
         """Initialize the action mask.
 
         Notes:
-            Action mask (NUM_TRANSFORMATIONS + L * (TS + 1) + L * (TS + 1) + interchange_mask):
-                Transformations: no_transform, TP, T, I, vect
+            Action mask (NUM_TRANSFORMATIONS + L * (TS + 1) + L * (TS + 1) + interchange_mask + L * (TS + 1)):
+                Transformations: no_transform, TP, T, I, vect, Fusion
                 TP: L loops * (TS + 1)
                 T : L loops * (TS + 1)
+                F : L loops * (TS + 1)
                 interchange_mask: 3 * L - 6 | L | 0
-
         Args:
             operation_features (OperationFeatures): The operation features.
 
@@ -332,10 +392,10 @@ class Env:
         TS = cfg.num_tile_sizes
         TP_BEGIN = cfg.num_transformations
         T_BEGIN = TP_BEGIN + L * (TS + 1)
-        I_BEGIN_1C = T_BEGIN + L * (TS + 1)
+        F_BEGIN = T_BEGIN + L * (TS + 1)
+        I_BEGIN_1C = F_BEGIN + L * (TS + 1)
         I_BEGIN_2C = I_BEGIN_1C + L - 1
         I_BEGIN_3C = I_BEGIN_2C + L - 2
-
         match cfg.interchange_mode:
             case 'enumerate':
                 interchange_mask = 3 * L - 6
@@ -344,10 +404,11 @@ class Env:
             case 'continuous':
                 interchange_mask = 0
 
-        action_mask = np.ones((cfg.num_transformations + 2 * L * (TS + 1) + interchange_mask), dtype=bool)
+        action_mask = np.ones((cfg.num_transformations + 3 * L * (TS + 1) + interchange_mask), dtype=bool)
         action_mask[:cfg.num_transformations] = cfg.init_action_mask
         action_mask[TP_BEGIN:T_BEGIN] = self.__tiling_mask(operation_features.nested_loops, for_parallelization=True)
-        action_mask[T_BEGIN:I_BEGIN_1C] = self.__tiling_mask(operation_features.nested_loops, for_parallelization=False)
+        action_mask[T_BEGIN:F_BEGIN] = self.__tiling_mask(operation_features.nested_loops, for_parallelization=False)
+        action_mask[F_BEGIN:I_BEGIN_1C] = self.__tiling_mask(operation_features.nested_loops, for_parallelization=False)
 
         if cfg.interchange_mode == 'enumerate':
             action_mask[I_BEGIN_1C + max(num_loops - 1, 0):I_BEGIN_2C] = False
@@ -384,7 +445,8 @@ class Env:
         TS = cfg.num_tile_sizes
         TP_BEGIN = N
         T_BEGIN = TP_BEGIN + L * (TS + 1)
-        I_BEGIN = T_BEGIN + L * (TS + 1)
+        F_BEGIN = T_BEGIN + L * (TS + 1)
+        I_BEGIN = F_BEGIN + L * (TS + 1)
 
         if cfg.interchange_mode == 'pointers':
             # Reset pointer masking
@@ -392,21 +454,26 @@ class Env:
 
         match transformation:
             case 'parallelization':
-                new_action_mask[:N] = [not cfg.force_vector, False, False, False, True]
+                new_action_mask[:N] = [not cfg.force_vector, False, False, False, True, True]
             case 'tiling':
-                new_action_mask[:N] = [False, False, False, True, False]
+                new_action_mask[:N] = [False, False, False, True, False, True]
             case 'interchange':
                 if 0 < len(parameters) < num_loops:
                     # In case of incomplete interchange, prevent any other action, and prevent repeating a loop
-                    new_action_mask[:N] = [False, False, False, True, False]
+                    new_action_mask[:N] = [False, False, False, True, False, True]
                     for param in parameters:
                         new_action_mask[I_BEGIN + param] = False
                 else:
-                    new_action_mask[:N] = [False, True, False, False, False]
+                    new_action_mask[:N] = [False, True, False, False, False, True]
+            case 'fusion':
+                # TODO:
+                pass
 
         # Update tiling masks
         new_action_mask[TP_BEGIN:T_BEGIN] = self.__tiling_mask(operation_features.nested_loops, for_parallelization=True)
-        new_action_mask[T_BEGIN:I_BEGIN] = self.__tiling_mask(operation_features.nested_loops, for_parallelization=False)
+        new_action_mask[T_BEGIN:F_BEGIN] = self.__tiling_mask(operation_features.nested_loops, for_parallelization=False)
+        new_action_mask[F_BEGIN:I_BEGIN] = self.__tiling_mask(operation_features.nested_loops, for_parallelization=False)
+
 
         # If we have only one loop -> Allow the first candidate which will be the identity permutation
         if num_loops == 1 and cfg.interchange_mode == 'enumerate':
@@ -479,18 +546,19 @@ class Env:
         """Initialize the action history.
 
         Notes:
-            The action history is a 3D array with the shape (truncate, 3, MAX_NUM_LOOPS).
+            The action history is a 3D array with the shape (truncate, 4, MAX_NUM_LOOPS).
             Second index:
                 0: parallelization
                 1: tiling
                 2: interchange
+                3: fusion
 
         Returns:
             np.ndarray: The initialized action history.
         """
         if cfg.reverse_history:
-            return np.zeros((cfg.max_num_loops, 3, cfg.truncate))
-        return np.zeros((cfg.truncate, 3, cfg.max_num_loops))
+            return np.zeros((cfg.max_num_loops, 4, cfg.truncate))
+        return np.zeros((cfg.truncate, 4, cfg.max_num_loops))
 
     def __update_action_history(self, state: OperationState, transformation: str, parameters: list[int]) -> np.ndarray:
         """Update the action history based on the transformation applied.
@@ -515,7 +583,8 @@ class Env:
         transformation_indices = {
             'parallelization': 0,
             'tiling': 1,
-            'interchange': 2
+            'interchange': 2,
+            'fusion':3
         }
         transformation_index = transformation_indices[transformation]
         for loop_index in range(num_loops):
@@ -578,7 +647,7 @@ class Env:
         action_name, parameter = raw_action
 
         # Sellect the tiling candidates for each loop
-        if action_name in ['tiling', 'parallelization']:
+        if action_name in ['tiling', 'parallelization', 'fusion']:
             # Get loop upper bounds
             candidates = [
                 [0] + self.__get_tiling_candidates(loop.upper_bound, loop.iterator_type, action_name == 'parallelization')[0]
@@ -625,6 +694,19 @@ class Env:
                     parall_parameters.append(0)
 
             return ('parallelization', parall_parameters)
+
+        elif action_name == 'fusion':
+            fusion_parameters = []
+            for i in range(num_loops):
+                if i < len(parameter):
+                    if parameter[i] != -1:
+                        fusion_parameters.append(candidates[i][parameter[i]])
+                    else:  # parameter[i] == -1:
+                        fusion_parameters.append(0)
+                else:  # i >= len(parameter)
+                    fusion_parameters.append(0)
+
+            return ('parallelization', fusion_parameters)
 
         elif action_name == 'vectorization':
             return ('vectorization', [0])
@@ -742,7 +824,7 @@ class Env:
         num_loops = len(state.operation_features.nested_loops)
         transformed_code: Optional[str] = None
         match transformation:
-            case 'parallelization' | 'tiling':
+            case 'parallelization' | 'tiling' | 'fusion':
                 # Apply the transformation and get the new code
                 try:
                     transformed_code = apply_transformation(
@@ -865,6 +947,12 @@ class Env:
         if transformation == 'interchange' and len(parameters) < num_loops:
             state.interchange_permutation = parameters
             return
+        
+        if transformation == "fusion":
+            state.fused_ops.update([state.operation_tags, state.producer_tag])
+
+        if transformation == "tiling":
+            state.fused_ops.update([state.operation_tag])
 
         # Erase saved interchange permutation (Not needed anymore)
         state.interchange_permutation = []
@@ -903,6 +991,9 @@ class Env:
                 if len(parameters) == num_loops:
                     for i, j in enumerate(parameters):
                         new_operation_features.nested_loops[i] = operation_features.nested_loops[j]
+            case "fusion":
+                # TODO
+                pass
             case _:
                 raise ValueError(f"Invalid transformation: {transformation}")
 

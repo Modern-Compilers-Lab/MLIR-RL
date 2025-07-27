@@ -1,3 +1,4 @@
+from collections import defaultdict
 import numpy as np
 import re
 from typing import Optional
@@ -483,8 +484,29 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
             load_data=load_data,
             store_data=store_data,
             nested_loops=nested_loops,
-            vectorizable=vectorizable
+            vectorizable=vectorizable,
+            consumers=[],
+            producers=[]
         )
+
+    # Extracte Producer/Consumer features
+    graph_lines = graph_lines.split('\n')
+    graph_lines = [line.split(' --> ') for line in graph_lines if ' --> ' in line]
+
+    op_producers = defaultdict(lambda: {'producers': []})
+    op_consumers = defaultdict(lambda: {'consumers': []})
+    
+    for producer, consumer in graph_lines:
+        op_producers[consumer]['producers'].insert(0, producer)
+        op_consumers[producer]['consumers'].append(consumer)
+    
+    for tag, info in op_producers.items():
+        if tag in operations:
+            operations[tag].producers = info['producers']
+    
+    for tag, info in op_consumers.items():
+        if tag in operations:
+            operations[tag].consumers = info['consumers']
 
     return BenchmarkFeatures(
         bench_name=bench_name,
