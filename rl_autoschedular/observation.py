@@ -6,10 +6,38 @@ import os
 from copy import copy
 import subprocess
 from rl_autoschedular import config as cfg
-from rl_autoschedular.state import OperationFeatures, NestedLoopFeatures, BenchmarkFeatures, OperationType
+from rl_autoschedular.state import OperationFeatures, NestedLoopFeatures, BenchmarkFeatures, OperationType, LoopNode
 
 
 # ================================================ Public functions ================================================
+
+def build_tree(obs_batch, num_loops):
+    """
+    Build a list of trees, one for each sample in the batch.
+    obs_batch: Tensor of shape (batch_size, input_size)
+    """
+    batch_size = obs_batch.shape[0]
+    trees = []
+    
+    for b in range(batch_size):
+        current_num_loops = int(num_loops[b].item())
+        
+        obs = obs_batch[b]
+        parent = None
+        root = None
+        
+        for i in range(current_num_loops):
+            vector = None
+            if i == current_num_loops - 1:
+                vector = obs  # Vector for deepest node only
+            
+            parent = LoopNode(parent=parent, vector=vector)
+            if root is None:
+                root = parent
+        trees.append(root)
+
+    return trees
+
 
 
 def build_op_features_vector(op_features: OperationFeatures):
@@ -422,7 +450,7 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
         BenchmarkFeatures: extracted benchmark features
     """
     info, full_code = raw_ast_info.split("########################################")
-    operations_lines, _ = info.split('#BEGIN_GRAPH')
+    operations_lines, graph_lines = info.split('#BEGIN_GRAPH')
 
     operations_blocks = operations_lines.split('#START_OPERATION')
     operations_blocks = [block.strip() for block in operations_blocks if block]
@@ -502,11 +530,11 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
     
     for tag, info in op_producers.items():
         if tag in operations:
-            operations[tag].producers = info['producers']
+            operations[tag].producers = [prod for prod in info['producers'] if prod in operations]
     
     for tag, info in op_consumers.items():
         if tag in operations:
-            operations[tag].consumers = info['consumers']
+            operations[tag].consumers = [prod for prod in info['consumers'] if prod in operations]
 
     return BenchmarkFeatures(
         bench_name=bench_name,

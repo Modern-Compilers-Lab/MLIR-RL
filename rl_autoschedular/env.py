@@ -246,6 +246,7 @@ class Env:
             operation_tag=new_op_tag,  # New operation tag
             operation_features=new_op_features,  # New operation features
             producer_tag=new_producer_tag, # New operation's first producer
+            current_producer=0,
             producer_features=new_producer_features, # the new producer's features
             fused_ops=state.fused_ops,
             validated_code=state.validated_code,
@@ -291,6 +292,7 @@ class Env:
             operation_tag=operation_tag,
             operation_features=operation_features.copy(),
             producer_tag=producer_tag,
+            current_producer=0,
             producer_features=producer_features,
             fused_ops=set(),
             validated_code=self.__current_bench_data.code,
@@ -604,28 +606,41 @@ class Env:
         Returns:
             np.ndarray: observation vector of the state.
         """
+        num_loops = len(state.operation_features.nested_loops)
         op_type_vector = self.__get_op_type_vector(state.operation_features.operation_type)
         op_features_vector = build_op_features_vector(state.operation_features)
         if cfg.interchange_mode == 'pointers':
             interchange_perm_vector = self.__get_interchange_perm_vector(state)
             op_features_vector = np.concatenate((op_features_vector, interchange_perm_vector))
 
+        if state.producer_features is not None:
+            prod_op_type_vector = self.__get_op_type_vector(state.producer_features.operation_type)
+            prod_op_features_vector = build_op_features_vector(state.producer_features)
+
+        else:
+            prod_op_type_vector = np.zeros((5,))
+            prod_op_features_vector = np.zeros(op_features_vector.shape)
+
         action_history = state.actions.reshape(-1)
         action_mask = state.action_mask
+
+        # Normalize the upper bounds of the loops
+        if cfg.normalize_bounds:
+            op_features_vector[:cfg.max_num_loops] = op_features_vector[:cfg.max_num_loops] / 4096
+            prod_op_features_vector[:cfg.max_num_loops] = prod_op_features_vector[:cfg.max_num_loops] / 4096
 
         obs = np.concatenate((
             # The input of the policy network:
             op_type_vector,  # 5
-            op_features_vector,  # MAX_NUM_LOOPS + MAX_NUM_LOOPS*MAX_NUM_LOAD_STORE_DIM*MAX_NUM_STORES_LOADS + MAX_NUM_LOOPS*MAX_NUM_LOAD_STORE_DIM + 5 [+ MAX_NUM_LOOPS]
-            action_history,  # truncate*3*MAX_NUM_LOOPS
+            op_features_vector,  # MAX_NUM_LOOPS + MAX_NUM_LOOPS + MAX_NUM_LOOPS*MAX_NUM_LOAD_STORE_DIM*MAX_NUM_STORES_LOADS + MAX_NUM_LOOPS*MAX_NUM_LOAD_STORE_DIM + 5 [+ MAX_NUM_LOOPS] + 1
+            prod_op_type_vector, # 5
+            prod_op_features_vector, # MAX_NUM_LOOPS + MAX_NUM_LOOPS*MAX_NUM_LOAD_STORE_DIM*MAX_NUM_STORES_LOADS + MAX_NUM_LOOPS*MAX_NUM_LOAD_STORE_DIM + 5 [+ MAX_NUM_LOOPS] + 1
+            action_history,  # truncate*4*MAX_NUM_LOOPS
 
             # The action mask:
-            action_mask  # 5 + MAX_NUM_LOOPS + MAX_NUM_LOOPS
+            action_mask,  # NUM_TRANSFORMATION + 3 * MAX_NUM_LOOPS * (NUM_TILE_SIZES + 1) + [3 * MAX_NUM_LOOPS - 6 | MAX_NUM_LOOPS]
+            [num_loops]  # 1
         ))
-
-        # Normalize the upper bounds of the loops
-        if cfg.normalize_bounds:
-            obs[5:cfg.max_num_loops + 5] = obs[5:cfg.max_num_loops + 5] / 4096
 
         obs = torch.tensor(obs, dtype=torch.float32)
         obs = obs.unsqueeze(0)
@@ -706,7 +721,7 @@ class Env:
                 else:  # i >= len(parameter)
                     fusion_parameters.append(0)
 
-            return ('parallelization', fusion_parameters)
+            return ('fusion', fusion_parameters)
 
         elif action_name == 'vectorization':
             return ('vectorization', [0])
@@ -949,7 +964,15 @@ class Env:
             return
         
         if transformation == "fusion":
-            state.fused_ops.update([state.operation_tags, state.producer_tag])
+            state.fused_ops.update([state.operation_tag, state.producer_tag])
+            
+            if state.producer_features is not None and (state.current_producer + 1) < len(state.operation_features.producers):
+                state.current_producer += 1
+                state.producer_tag = state.operation_features.producers[state.current_producer]
+                state.producer_features = self.__current_bench_data.operations[state.producer_tag]
+            else:
+                state.producer_tag = None
+                state.producer_features = None
 
         if transformation == "tiling":
             state.fused_ops.update([state.operation_tag])

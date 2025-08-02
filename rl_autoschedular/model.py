@@ -5,6 +5,7 @@ from typing import Optional, Union
 from rl_autoschedular import config as cfg
 import math
 
+from rl_autoschedular.observation import build_tree
 
 class HiearchyModel(nn.Module):
     """Hierarchical reinforcement learning model for MLIR code optimization."""
@@ -238,8 +239,13 @@ class ValueModel(nn.Module):
         self.input_dim = input_dim
         self.action_mask_size = action_mask_size
         activation_layer = nn.ReLU if cfg.activation == 'relu' else nn.Tanh
+        
+        embedding_size = 411
+        action_history_size = cfg.truncate*4*7
+        self.lstm = LSTMEmbedding(output_size=embedding_size)
+        
         self.network = nn.Sequential(
-            nn.Linear(self.input_dim, 512),
+            nn.Linear(embedding_size + action_history_size, 512),
             activation_layer(),
             nn.Linear(512, 512),
             activation_layer(),
@@ -260,6 +266,7 @@ class ValueModel(nn.Module):
         Returns:
             torch.Tensor: The value tensor.
         """
+        obs = self.lstm(obs)
         return self.network(obs[:, :-(self.action_mask_size)])
 
     def loss(self, new_values: torch.Tensor, values: torch.Tensor, returns: torch.Tensor) -> torch.Tensor:
@@ -306,8 +313,12 @@ class PolicyModel(nn.Module):
                 if cfg.interchange_distribution == 'normal':
                     self.interchange_logstd = nn.Parameter(torch.zeros(1))
 
+        embedding_size = 411
+        action_history_size = cfg.truncate*4*7 # 140
+        self.lstm = LSTMEmbedding(output_size=embedding_size)
+        
         self.backbone = nn.Sequential(
-            nn.Linear(self.input_dim, 512),
+            nn.Linear(embedding_size + action_history_size, 512),
             activation_layer(),
             nn.Linear(512, 512),
             activation_layer(),
@@ -368,6 +379,8 @@ class PolicyModel(nn.Module):
         TS = cfg.num_tile_sizes
         batch_size = obs.shape[0]
 
+        obs = self.lstm(obs)
+
         x = obs[:, :-(self.action_mask_size)]
         action_mask = obs[:, -(self.action_mask_size):].bool()
 
@@ -416,6 +429,143 @@ class PolicyModel(nn.Module):
         surr1 = ratios * advantages
         surr2 = torch.clamp(ratios, 1 - 0.2, 1 + 0.2) * advantages
         return - torch.min(surr1, surr2).mean()
+
+def initialization_function_xavier(x):
+    return nn.init.xavier_uniform_(x)
+
+class LSTMEmbedding(nn.Module):
+    def __init__(self, output_size):
+
+        L = cfg.max_num_loops
+        LSD = cfg.max_num_load_store_dim
+        SL = cfg.max_num_stores_loads
+
+        super(LSTMEmbedding, self).__init__()
+        
+        self.embedding_size = output_size
+        
+        self.input_size = L + L * LSD * SL + L * LSD + 5 + 1 + L + 5
+
+        self.comp_embed_layer_sizes = [600, 350, 512, 512]
+        
+        self.lstm = nn.LSTM(
+            self.comp_embed_layer_sizes[-1],
+            self.embedding_size,
+            batch_first=True
+        )
+
+        self.comps_lstm = nn.LSTM(
+            412, self.embedding_size, batch_first=True
+        )
+        self.nodes_lstm = nn.LSTM(
+            self.embedding_size, self.embedding_size, batch_first=True
+        )
+
+        self.no_comps_tensor = nn.Parameter(
+            initialization_function_xavier(torch.randn(1, self.embedding_size))
+        )
+        self.no_nodes_tensor = nn.Parameter(
+            initialization_function_xavier(torch.randn(1, self.embedding_size))
+        )
+
+        concat_layer_sizes = [
+            self.embedding_size * 2  # i changed it to *2 only because we dont have the loop_tensor_vector
+        ] + self.comp_embed_layer_sizes[-2:]
+
+        self.drops=[0.225, 0.225, 0.225, 0.225]
+
+        self.concat_layers = nn.ModuleList()
+        self.concat_dropouts = nn.ModuleList()
+
+        for i in range(len(concat_layer_sizes) - 1):
+            linear_concat = nn.Linear(concat_layer_sizes[i], concat_layer_sizes[i + 1], bias=True)
+            initialization_function_xavier(linear_concat.weight)
+            self.concat_layers.append(linear_concat)
+
+            self.concat_dropouts.append(nn.Dropout(self.drops[i]))
+
+        self.ELU = nn.ELU()
+
+    def get_hidden_state(self, node):
+        if node is not None and node.children != []:
+            nodes_list = []
+
+            for n in node.children:
+                # Recusrive call to embed all the children of the loop first if they exist
+                nodes_list.append(self.get_hidden_state(n))
+        
+            # Pass the embedding of all the child loops through the nodes LSTM
+            nodes_tensor = torch.cat(nodes_list, 1)
+            if not self.use_attention:
+                lstm_out, (nodes_h_n, nodes_c_n) = self.nodes_lstm(nodes_tensor)
+                nodes_h_n = nodes_h_n.permute(1, 0, 2)
+
+        else: # If there are no child loops contained within this level
+            # The nodes embedding is a random vector (no_nodes_tensor) that represents that there are no nodes underneath this level
+            nodes_h_n = torch.unsqueeze(self.no_nodes_tensor, 0).expand(
+                1, -1, -1
+            )
+
+        if node is not None and node.vector is not None:
+            comps_tensor = torch.unsqueeze(torch.unsqueeze(torch.tensor(node.vector, dtype=torch.float32), dim=0), dim=0)
+            if not self.use_attention:
+                lstm_out, (comps_h_n, comps_c_n) = self.comps_lstm(comps_tensor)
+
+        else:# If there are no child computations contained within this level
+            # The computations embedding is a random vector (no_comps_tensor) that represents that there are no computations underneath this level
+            comps_h_n = torch.unsqueeze(self.no_comps_tensor, 0).expand(
+                1, # i changed it to 1 for now
+                -1, 
+                -1
+            )
+            
+        # Concatinate the loop vector, computations embedding and nodes (child loops) embedding
+        x = torch.cat((nodes_h_n, comps_h_n), 2)
+        # Pass the concatinated vector through a feed forward neural network
+        
+        
+        for i in range(len(self.concat_layers)):
+            x = self.concat_layers[i](x)
+            x = self.concat_dropouts[i](self.ELU(x))
+
+        return x
+
+    def get_hidden_state_batch(self, root_nodes):
+        """
+        root_nodes: list of LoopNode objects (length = batch_size)
+        returns: tensor of shape (batch_size, 1, embedding_dim)
+        """
+        embeddings = []
+        for node in root_nodes:
+            emb = self.get_hidden_state(node)  # (1, 1, embedding_dim)
+            embeddings.append(emb)
+
+        return torch.cat(embeddings, dim=0)  # (batch_size, 1, embedding_dim)
+
+
+    def forward(self, obs):
+        # batch_size = obs.size(0)
+
+        consumer_obs = obs[:, :self.input_size]
+        producer_obs = obs[:, self.input_size:(self.input_size)*2]
+
+        rest = obs[:, (self.input_size)*2:-1]  # (B, N)
+        
+        num_loops = obs[:, -1]
+
+        consumer_nodes = build_tree(consumer_obs, num_loops)
+        producer_nodes = build_tree(producer_obs, num_loops)
+        consumer_embeddings = self.get_hidden_state_batch(consumer_nodes)  # (B, 1, D)
+        producer_embeddings = self.get_hidden_state_batch(producer_nodes)  # (B, 1, D)
+
+        roots_tensor = torch.cat([consumer_embeddings, producer_embeddings], dim=1)  # (B, 2, D)
+        _, (final_hidden, _) = self.lstm(roots_tensor)  # final_hidden: (1, B, D)
+
+        final_hidden = final_hidden.squeeze(0)  # (B, D)
+
+        out = torch.cat([final_hidden, rest], dim=1)  # (B, D + N)
+
+        return out
 
 
 class ICMModel(nn.Module):

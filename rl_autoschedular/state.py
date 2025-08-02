@@ -5,6 +5,21 @@ import numpy as np
 
 OperationType = Literal["generic", "matmul", "conv_2d", "pooling", "add"]
 
+class LoopNode:
+    def __init__(self, parent,vector, arg='', upper='',lower=''):
+        self.arg = arg
+        self.upper = upper
+        self.lower = lower
+        self.children = []
+        self.parent = parent
+        self.vector = vector
+
+    def __repr__(self, level=0):
+        indent = "  " * level
+        result = f"{indent}- {self.arg}\n"
+        for child in self.children:
+            result += child.__repr__(level + 1)
+        return result
 
 @dataclass
 class NestedLoopFeatures:
@@ -97,6 +112,8 @@ class OperationState:
     """Features of the operation."""
     producer_tag: str
     """"""
+    current_producer: int
+    """"""
     producer_features: OperationFeatures
     """"""
     fused_ops: set[str]
@@ -127,6 +144,7 @@ class OperationState:
             self.operation_tag,
             self.operation_features.copy(),
             self.producer_tag,
+            self.current_producer,
             self.producer_features.copy() if self.producer_features is not None else None,
             self.fused_ops.copy(),
             self.validated_code,
