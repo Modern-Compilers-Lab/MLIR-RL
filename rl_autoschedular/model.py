@@ -58,7 +58,7 @@ class HiearchyModel(nn.Module):
 
         return action_log_p, values, entropy
 
-    def sample(self, obs: torch.Tensor, num_loops: torch.Tensor, greedy: bool = False, eps: Optional[float] = None) -> tuple[list[tuple[str, Optional[Union[list[int], int]]]], torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def sample(self, obs: torch.Tensor, num_loops: torch.Tensor, greedy: bool = False, eps: Optional[float] = None) -> tuple[list[tuple[str, Optional[Union[list[int], int]]]], torch.Tensor, torch.Tensor, torch.Tensor]:
         """Sample an action from the model.
 
         Args:
@@ -75,7 +75,6 @@ class HiearchyModel(nn.Module):
 
         # Model feedforward
         transformation_dist, parallelization_dist, tiling_dist, interchange_dist = self.policy_model(obs, num_loops)
-        values = self.value_model(obs)
 
         # Sample actions
         if greedy:
@@ -120,7 +119,7 @@ class HiearchyModel(nn.Module):
             eps=eps
         )
 
-        return actions, actions_index, action_log_p, values, entropy
+        return actions, actions_index, action_log_p, entropy
 
     def __create_uniform_distributions(self, obs: torch.Tensor, num_loops: torch.Tensor) -> tuple[Distribution, Distribution, Distribution, Distribution]:
         """Create uniform distributions for the actions.
@@ -255,7 +254,7 @@ class ValueModel(nn.Module):
         Returns:
             torch.Tensor: The value tensor.
         """
-        return self.network(obs[:, :-(self.action_mask_size)])
+        return self.network(obs[:, :-(self.action_mask_size)]).squeeze(-1)
 
     def loss(self, new_values: torch.Tensor, values: torch.Tensor, returns: torch.Tensor) -> torch.Tensor:
         """Calculate the value loss.
@@ -386,12 +385,12 @@ class PolicyModel(nn.Module):
 
         return transformation_dist, parallelization_dist, tiling_dist, interchange_dist
 
-    def loss(self, new_actions_log_p: torch.Tensor, mu_actions_log_p: torch.Tensor, off_policy_rates: torch.Tensor, advantages: torch.Tensor, clip_range: float = 0.2) -> torch.Tensor:
+    def loss(self, actions_log_p: torch.Tensor, actions_bev_log_p: torch.Tensor, off_policy_rates: torch.Tensor, advantages: torch.Tensor, clip_range: float = 0.2) -> torch.Tensor:
         """Calculate the policy loss.
 
         Args:
             new_actions_log_p (torch.Tensor): The log probabilities of the new actions.
-            mu_actions_log_p (torch.Tensor): The log probabilities of the actions under the behavior policy.
+            actions_bev_log_p (torch.Tensor): The log probabilities of the actions under the behavior policy.
             off_policy_rates (torch.Tensor): The rate between the old policy and the behavioral (mu) policy.
             advantages (torch.Tensor): The advantages of the actions.
             clip_range (float): The clipping range for the policy loss.
@@ -399,7 +398,7 @@ class PolicyModel(nn.Module):
         Returns:
             torch.Tensor: The policy loss.
         """
-        ratios = torch.exp(torch.clamp(new_actions_log_p - mu_actions_log_p, -80.0, 80.0))
+        ratios = torch.exp(torch.clamp(actions_log_p - actions_bev_log_p, -80.0, 80.0))
         surr1 = ratios * advantages
         surr2 = torch.clamp(ratios, (1 - clip_range) * off_policy_rates, (1 + clip_range) * off_policy_rates) * advantages
         return - torch.min(surr1, surr2).mean()

@@ -190,11 +190,8 @@ class TrajectoryData(Dataset[T_data_timestep]):
         Args:
             model (Model): The model to use for updating the attributes.
         """
-        self.actions_old_log_p, values, _ = model(self.obs, self.num_loops, self.actions_index)
-        next_values = model.value_model(self.next_obs)
-
-        self.values = values.squeeze(-1)
-        self.next_values = next_values.squeeze(-1)
+        self.actions_old_log_p, self.values, _ = model(self.obs, self.num_loops, self.actions_index)
+        self.next_values = model.value_model(self.next_obs)
 
         self.__compute_rho()
         self.__compute_returns()
