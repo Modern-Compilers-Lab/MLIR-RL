@@ -55,9 +55,7 @@ class Env:
         if cfg.eval_json_file and not is_training:
             bench_json_file = cfg.eval_json_file
 
-
         if cfg.data_format == "mlir":
-
             with open(bench_json_file) as file:
                 benchmarks_json: dict[str, int] = json.load(file)
 
@@ -82,10 +80,10 @@ class Env:
         elif cfg.data_format == "json":
 
             with open(bench_json_file) as file:
-                json_data: dict[str,dict] = json.load(file)
+                json_data: dict[str, dict] = json.load(file)
 
             self.benchmarks_data = []
-            
+
             operation_filter = [
                 'linalg.matmul',
                 'linalg.conv_2d',
@@ -105,14 +103,14 @@ class Env:
             ]
 
             json_data = [(op, details) for op, details in json_data.items() if any([s in op for s in bench_filter])]
-            json_data = [(op, details) for op, details in json_data if any([s in details.get("operation","func.call") for s in operation_filter])]
+            json_data = [(op, details) for op, details in json_data if any([s in details.get("operation", "func.call") for s in operation_filter])]
 
             # Get the AST of the MLIR code and give a tag to each linalg operation
             for i in tqdm(range(len(json_data))):
                 # Get full MLIR code and execution time
                 code = json_data[i][1]["transform_wrapped_operation"]
                 exec_time = json_data[i][1]["execution_time"]
-                
+
                 # Build benchmark features
                 bench_name = json_data[i][0]
                 benchmark_data = extract_bench_features_from_code(bench_name, code, exec_time)
@@ -245,9 +243,9 @@ class Env:
             bench_name=state.bench_name,
             operation_tag=new_op_tag,  # New operation tag
             operation_features=new_op_features,  # New operation features
-            producer_tag=new_producer_tag, # New operation's first producer
+            producer_tag=new_producer_tag,  # New operation's first producer
             current_producer=0,
-            producer_features=new_producer_features, # the new producer's features
+            producer_features=new_producer_features,  # the new producer's features
             fused_ops=state.fused_ops,
             validated_code=state.validated_code,
             transformed_code=state.transformed_code,
@@ -476,7 +474,6 @@ class Env:
         new_action_mask[T_BEGIN:F_BEGIN] = self.__tiling_mask(operation_features.nested_loops, for_parallelization=False)
         new_action_mask[F_BEGIN:I_BEGIN] = self.__tiling_mask(operation_features.nested_loops, for_parallelization=False)
 
-
         # If we have only one loop -> Allow the first candidate which will be the identity permutation
         if num_loops == 1 and cfg.interchange_mode == 'enumerate':
             new_action_mask[I_BEGIN] = True
@@ -586,7 +583,7 @@ class Env:
             'parallelization': 0,
             'tiling': 1,
             'interchange': 2,
-            'fusion':3
+            'fusion': 3
         }
         transformation_index = transformation_indices[transformation]
         for loop_index in range(num_loops):
@@ -633,8 +630,8 @@ class Env:
             # The input of the policy network:
             op_type_vector,  # 5
             op_features_vector,  # MAX_NUM_LOOPS + MAX_NUM_LOOPS + MAX_NUM_LOOPS*MAX_NUM_LOAD_STORE_DIM*MAX_NUM_STORES_LOADS + MAX_NUM_LOOPS*MAX_NUM_LOAD_STORE_DIM + 5 [+ MAX_NUM_LOOPS] + 1
-            prod_op_type_vector, # 5
-            prod_op_features_vector, # MAX_NUM_LOOPS + MAX_NUM_LOOPS*MAX_NUM_LOAD_STORE_DIM*MAX_NUM_STORES_LOADS + MAX_NUM_LOOPS*MAX_NUM_LOAD_STORE_DIM + 5 [+ MAX_NUM_LOOPS] + 1
+            prod_op_type_vector,  # 5
+            prod_op_features_vector,  # MAX_NUM_LOOPS + MAX_NUM_LOOPS*MAX_NUM_LOAD_STORE_DIM*MAX_NUM_STORES_LOADS + MAX_NUM_LOOPS*MAX_NUM_LOAD_STORE_DIM + 5 [+ MAX_NUM_LOOPS] + 1
             action_history,  # truncate*4*MAX_NUM_LOOPS
 
             # The action mask:
@@ -962,10 +959,10 @@ class Env:
         if transformation == 'interchange' and len(parameters) < num_loops:
             state.interchange_permutation = parameters
             return
-        
+
         if transformation == "fusion":
             state.fused_ops.update([state.operation_tag, state.producer_tag])
-            
+
             if state.producer_features is not None and (state.current_producer + 1) < len(state.operation_features.producers):
                 state.current_producer += 1
                 state.producer_tag = state.operation_features.producers[state.current_producer]

@@ -3,9 +3,8 @@ import torch.nn as nn
 from torch.distributions import Categorical, Binomial, Normal, Distribution, Uniform
 from typing import Optional, Union
 from rl_autoschedular import config as cfg
-import math
-
 from rl_autoschedular.observation import build_tree
+
 
 class HiearchyModel(nn.Module):
     """Hierarchical reinforcement learning model for MLIR code optimization."""
@@ -30,19 +29,18 @@ class HiearchyModel(nn.Module):
                 interchange_mask = 0
                 interchange_input = 0
 
-        self.input_dim = 5 + L + L + 1 + L * D * SD + L * D + 5 + interchange_input + cfg.truncate * 4 * L
+        embedding_size = 411
+        op_feats_size = 5 + L + L + 1 + L * D * SD + L * D + 5
+        action_history_size = interchange_input + cfg.truncate * 4 * L
         self.action_mask_size = N + 3 * L * (TS + 1) + interchange_mask
 
-        self.policy_model = PolicyModel(self.input_dim, self.action_mask_size)
-        self.value_model = ValueModel(self.input_dim, self.action_mask_size)
+        self.policy_model = PolicyModel(embedding_size, op_feats_size, action_history_size, self.action_mask_size)
+        self.value_model = ValueModel(embedding_size, op_feats_size, action_history_size, self.action_mask_size)
 
-        if 'curiosity' in cfg.exploration:
-            self.icm_model = ICMModel(self.input_dim, self.action_mask_size)
+    def __call__(self, obs: torch.Tensor, num_loops: torch.Tensor, actions_index: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        return super().__call__(obs, num_loops, actions_index)
 
-    def __call__(self, obs: torch.Tensor, num_loops: list[int], actions: list[tuple[str, Optional[Union[list[int], int]]]]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        return super().__call__(obs, num_loops, actions)
-
-    def forward(self, obs: torch.Tensor, num_loops: list[int], actions: list[tuple[str, Optional[Union[list[int], int]]]]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, obs: torch.Tensor, num_loops: torch.Tensor, actions_index: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Forward pass of the model.
 
         Args:
@@ -53,25 +51,24 @@ class HiearchyModel(nn.Module):
         """
         action_log_p, entropy = self.__calculate_dist_stats(
             list(self.policy_model(obs, num_loops)),
-            list(raw_actions_to_indices(actions))
+            list(decode_actions_index(actions_index))
         )
 
         values = self.value_model(obs)
 
         return action_log_p, values, entropy
 
-    def sample(self, obs: torch.Tensor, num_loops: list[int], greedy: bool = False, eps: Optional[float] = None) -> tuple[list[tuple[str, Optional[Union[list[int], int]]]], torch.Tensor, torch.Tensor, torch.Tensor]:
+    def sample(self, obs: torch.Tensor, num_loops: torch.Tensor, greedy: bool = False, eps: Optional[float] = None) -> tuple[list[tuple[str, Optional[Union[list[int], int]]]], torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Sample an action from the model.
 
         Args:
             obs (torch.Tensor): The input tensor.
-            num_loops (list[int]): The number of loops for each element in the batch.
-            actions (Optional[list[tuple[str, Optional[Union[list[int], int]]]]]): list of actions forced for the model to return. Defaults to None.
+            num_loops (torch.Tensor): The number of loops for each element in the batch.
 
         Returns:
             list[tuple[str, Optional[Union[list[int], int]]]]: list of actions.
-            torch.Tensor: action log probabilities.
-            torch.Tensor: action values.
+            torch.Tensor: actions log probability.
+            torch.Tensor: actions value.
             torch.Tensor: resulting entropy.
         """
         assert not greedy or eps is None, 'Cannot be greedy and explore at the same time.'
@@ -111,11 +108,12 @@ class HiearchyModel(nn.Module):
 
         if cfg.interchange_mode == 'continuous':
             # Clamp interchange index to [0, num_loops! - 1]
-            total_count = torch.tensor([math.factorial(loops) for loops in num_loops], dtype=torch.int64)
+            total_count = (num_loops + 1).lgamma().exp().long()
             interchange_index = interchange_index.clamp(torch.zeros_like(total_count, dtype=torch.int64), total_count - 1)
 
         # Get raw actions from indices
         actions = indices_to_raw_actions(transformation_index, parallelization_index, tiling_index, interchange_index, fusion_index, num_loops)
+        actions_index = encode_actions_index(transformation_index, parallelization_index, tiling_index, interchange_index, fusion_index)
 
         # Calculate the log probabilities and entropies
         action_log_p, entropy = self.__calculate_dist_stats(
@@ -125,9 +123,9 @@ class HiearchyModel(nn.Module):
             eps=eps
         )
 
-        return actions, action_log_p, values, entropy
+        return actions, actions_index, action_log_p, values, entropy
 
-    def __create_uniform_distributions(self, obs: torch.Tensor, num_loops: list[int]) -> tuple[Distribution, Distribution, Distribution, Distribution]:
+    def __create_uniform_distributions(self, obs: torch.Tensor, num_loops: torch.Tensor) -> tuple[Distribution, Distribution, Distribution, Distribution, Distribution]:
         """Create uniform distributions for the actions.
 
         Args:
@@ -155,7 +153,7 @@ class HiearchyModel(nn.Module):
                 interchange_logits = torch.zeros((batch_size, 1), dtype=torch.float32)
 
         # Apply masks on logits
-        transformation_logits, parallelization_logits, tiling_logits, interchange_logits = apply_masks(transformation_logits, parallelization_logits, tiling_logits, interchange_logits, fusion_logits, *extract_masks(action_mask))
+        transformation_logits, parallelization_logits, tiling_logits, interchange_logits, fusion_logits = apply_masks(transformation_logits, parallelization_logits, tiling_logits, interchange_logits, fusion_logits, *extract_masks(action_mask))
 
         # Create distributions with the masked probabilities
         transformation_dist = Categorical(logits=transformation_logits)
@@ -165,7 +163,7 @@ class HiearchyModel(nn.Module):
         if cfg.interchange_mode != 'continuous':
             interchange_dist = Categorical(logits=interchange_logits)
         else:
-            total_count = torch.tensor([math.factorial(loops) for loops in num_loops], dtype=torch.float64)
+            total_count = (num_loops + 1).lgamma().exp()
             interchange_dist = Uniform(0.0, total_count)
 
         return transformation_dist, parallelization_dist, tiling_dist, interchange_dist, fusion_dist
@@ -208,7 +206,6 @@ class HiearchyModel(nn.Module):
             interchange_log_p = ((1 - eps) * interchange_log_p.exp() + eps * interchange_eps_dist.log_prob(interchange_index).exp()).log()
             fusion_log_p = ((1 - eps) * fusion_log_p.exp() + eps * fusion_eps_dist.log_prob(fusion_index).sum(-1).exp()).log()
 
-
         # Calculate the total log probability
         action_log_p = transformation_log_p
         action_log_p[transformation_index == 1] += parallelization_log_p[transformation_index == 1]
@@ -229,7 +226,7 @@ class HiearchyModel(nn.Module):
 
 class ValueModel(nn.Module):
     """Value model for MLIR code optimization."""
-    def __init__(self, input_dim: int, action_mask_size: int):
+    def __init__(self, embedding_size: int, op_feats_size: int, action_history_size: int, action_mask_size: int):
         """Initialize the model.
 
         Args:
@@ -237,14 +234,11 @@ class ValueModel(nn.Module):
         """
         super(ValueModel, self).__init__()
 
-        self.input_dim = input_dim
         self.action_mask_size = action_mask_size
         activation_layer = nn.ReLU if cfg.activation == 'relu' else nn.Tanh
-        
-        embedding_size = 411
-        action_history_size = cfg.truncate*4*7
+
         self.lstm = LSTMEmbedding(output_size=embedding_size)
-        
+
         self.network = nn.Sequential(
             nn.Linear(embedding_size + action_history_size, 512),
             activation_layer(),
@@ -289,7 +283,7 @@ class ValueModel(nn.Module):
 
 class PolicyModel(nn.Module):
     """Policy model for MLIR code optimization."""
-    def __init__(self, input_dim: int, action_mask_size: int):
+    def __init__(self, embedding_size: int, op_feats_size: int, action_history_size: int, action_mask_size: int):
         """Initialize the model.
 
         Args:
@@ -297,7 +291,6 @@ class PolicyModel(nn.Module):
         """
         super(PolicyModel, self).__init__()
 
-        self.input_dim = input_dim
         self.action_mask_size = action_mask_size
         activation_layer = nn.ReLU if cfg.activation == 'relu' else nn.Tanh
         N = cfg.num_transformations
@@ -314,10 +307,8 @@ class PolicyModel(nn.Module):
                 if cfg.interchange_distribution == 'normal':
                     self.interchange_logstd = nn.Parameter(torch.zeros(1))
 
-        embedding_size = 411
-        action_history_size = cfg.truncate*4*7 # 140
         self.lstm = LSTMEmbedding(output_size=embedding_size)
-        
+
         self.backbone = nn.Sequential(
             nn.Linear(embedding_size + action_history_size, 512),
             activation_layer(),
@@ -364,10 +355,10 @@ class PolicyModel(nn.Module):
                 self.fusion_fc,
             )
 
-    def __call__(self, obs: torch.Tensor, num_loops: list[int]) -> tuple[Distribution, Distribution, Distribution, Distribution]:
+    def __call__(self, obs: torch.Tensor, num_loops: torch.Tensor) -> tuple[Distribution, Distribution, Distribution, Distribution, Distribution]:
         return super().__call__(obs, num_loops)
 
-    def forward(self, obs: torch.Tensor, num_loops: list[int]) -> tuple[Distribution, Distribution, Distribution, Distribution, Distribution]:
+    def forward(self, obs: torch.Tensor, num_loops: torch.Tensor) -> tuple[Distribution, Distribution, Distribution, Distribution, Distribution]:
         """Forward pass of the model.
 
         Args:
@@ -402,13 +393,13 @@ class PolicyModel(nn.Module):
         parallelization_dist = Categorical(logits=parallelization_logits)
         tiling_dist = Categorical(logits=tiling_logits)
         fusion_dist = Categorical(logits=fusion_logits)
-        
+
         if cfg.interchange_mode != 'continuous':
             interchange_dist = Categorical(logits=interchange_logits)
         else:
             interchange_logit = interchange_logits.squeeze(-1)
             if cfg.interchange_distribution == 'binomial':
-                total_count = torch.tensor([math.factorial(loops) for loops in num_loops])
+                total_count = (num_loops + 1).lgamma().exp().long()
                 interchange_dist = Binomial(total_count, logits=interchange_logit)
             else:
                 interchange_dist = Normal(interchange_logit, self.interchange_logstd.clamp(-1, 1).exp())
@@ -433,49 +424,44 @@ class PolicyModel(nn.Module):
         surr2 = torch.clamp(ratios, (1 - clip_range) * off_policy_rates, (1 + clip_range) * off_policy_rates) * advantages
         return - torch.min(surr1, surr2).mean()
 
+
 def initialization_function_xavier(x):
     return nn.init.xavier_uniform_(x)
 
+
 class LSTMEmbedding(nn.Module):
-    def __init__(self, output_size):
-
-        L = cfg.max_num_loops
-        LSD = cfg.max_num_load_store_dim
-        SL = cfg.max_num_stores_loads
-
+    def __init__(self, embedding_size: int, op_feats_size: int, action_history_size: int, action_mask_size: int):
         super(LSTMEmbedding, self).__init__()
-        
-        self.embedding_size = output_size
-        
-        self.input_size = L + L * LSD * SL + L * LSD + 5 + 1 + L + 5
+
+        self.op_feats_size = op_feats_size
 
         self.comp_embed_layer_sizes = [600, 350, 512, 512]
-        
+
         self.lstm = nn.LSTM(
             self.comp_embed_layer_sizes[-1],
-            self.embedding_size,
+            embedding_size,
             batch_first=True
         )
 
         self.comps_lstm = nn.LSTM(
-            412, self.embedding_size, batch_first=True
+            412, embedding_size, batch_first=True
         )
         self.nodes_lstm = nn.LSTM(
-            self.embedding_size, self.embedding_size, batch_first=True
+            embedding_size, embedding_size, batch_first=True
         )
 
         self.no_comps_tensor = nn.Parameter(
-            initialization_function_xavier(torch.randn(1, self.embedding_size))
+            initialization_function_xavier(torch.randn(1, embedding_size))
         )
         self.no_nodes_tensor = nn.Parameter(
-            initialization_function_xavier(torch.randn(1, self.embedding_size))
+            initialization_function_xavier(torch.randn(1, embedding_size))
         )
 
         concat_layer_sizes = [
-            self.embedding_size * 2  # i changed it to *2 only because we dont have the loop_tensor_vector
+            embedding_size * 2  # i changed it to *2 only because we dont have the loop_tensor_vector
         ] + self.comp_embed_layer_sizes[-2:]
 
-        self.drops=[0.225, 0.225, 0.225, 0.225]
+        self.drops = [0.225, 0.225, 0.225, 0.225]
 
         self.concat_layers = nn.ModuleList()
         self.concat_dropouts = nn.ModuleList()
@@ -496,14 +482,14 @@ class LSTMEmbedding(nn.Module):
             for n in node.children:
                 # Recusrive call to embed all the children of the loop first if they exist
                 nodes_list.append(self.get_hidden_state(n))
-        
+
             # Pass the embedding of all the child loops through the nodes LSTM
             nodes_tensor = torch.cat(nodes_list, 1)
             if not self.use_attention:
                 lstm_out, (nodes_h_n, nodes_c_n) = self.nodes_lstm(nodes_tensor)
                 nodes_h_n = nodes_h_n.permute(1, 0, 2)
 
-        else: # If there are no child loops contained within this level
+        else:  # If there are no child loops contained within this level
             # The nodes embedding is a random vector (no_nodes_tensor) that represents that there are no nodes underneath this level
             nodes_h_n = torch.unsqueeze(self.no_nodes_tensor, 0).expand(
                 1, -1, -1
@@ -514,19 +500,18 @@ class LSTMEmbedding(nn.Module):
             if not self.use_attention:
                 lstm_out, (comps_h_n, comps_c_n) = self.comps_lstm(comps_tensor)
 
-        else:# If there are no child computations contained within this level
+        else:  # If there are no child computations contained within this level
             # The computations embedding is a random vector (no_comps_tensor) that represents that there are no computations underneath this level
             comps_h_n = torch.unsqueeze(self.no_comps_tensor, 0).expand(
-                1, # i changed it to 1 for now
-                -1, 
+                1,  # i changed it to 1 for now
+                -1,
                 -1
             )
-            
+
         # Concatinate the loop vector, computations embedding and nodes (child loops) embedding
         x = torch.cat((nodes_h_n, comps_h_n), 2)
         # Pass the concatinated vector through a feed forward neural network
-        
-        
+
         for i in range(len(self.concat_layers)):
             x = self.concat_layers[i](x)
             x = self.concat_dropouts[i](self.ELU(x))
@@ -545,15 +530,14 @@ class LSTMEmbedding(nn.Module):
 
         return torch.cat(embeddings, dim=0)  # (batch_size, 1, embedding_dim)
 
-
     def forward(self, obs):
         # batch_size = obs.size(0)
 
-        consumer_obs = obs[:, :self.input_size]
-        producer_obs = obs[:, self.input_size:(self.input_size)*2]
+        consumer_obs = obs[:, :self.op_feats_size]
+        producer_obs = obs[:, self.op_feats_size:(self.op_feats_size) * 2]
 
-        rest = obs[:, (self.input_size)*2:-1]  # (B, N)
-        
+        rest = obs[:, (self.op_feats_size) * 2:-1]  # (B, N)
+
         num_loops = obs[:, -1]
 
         consumer_nodes = build_tree(consumer_obs, num_loops)
@@ -596,16 +580,16 @@ class ICMModel(nn.Module):
         self.forward_model = ForwardModel()
         self.inverse_model = InverseModel()
 
-    def __call__(self, obs: torch.Tensor, next_obs: torch.Tensor, actions: list[tuple[str, Optional[Union[list[int], int]]]]) -> tuple[torch.Tensor, torch.Tensor, tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]:
-        return super().__call__(obs, next_obs, actions)
+    def __call__(self, obs: torch.Tensor, next_obs: torch.Tensor, actions_index: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]:
+        return super().__call__(obs, next_obs, actions_index)
 
-    def forward(self, obs: torch.Tensor, next_obs: torch.Tensor, actions: list[tuple[str, Optional[Union[list[int], int]]]]) -> tuple[torch.Tensor, torch.Tensor, tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]:
+    def forward(self, obs: torch.Tensor, next_obs: torch.Tensor, actions_index: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]:
         """Forward pass of the model.
 
         Args:
             obs (torch.Tensor): The input tensor.
             next_obs (torch.Tensor): The next input tensor.
-            actions (list[tuple[str, Optional[Union[list[int], int]]]]): The list of actions.
+            actions_index (torch.Tensor): The list of actions.
 
         Returns:
             tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: The logits of the transformations, parallelizations, tilings, and interchanges.
@@ -617,24 +601,24 @@ class ICMModel(nn.Module):
         state_latent = self.encoder(x)
         next_state_latent = self.encoder(next_x)
 
-        next_state_latent_hat = self.forward_model(state_latent, actions)
+        next_state_latent_hat = self.forward_model(state_latent, actions_index)
         action_logits_hat = self.inverse_model(state_latent, next_state_latent, action_mask)
 
         return next_state_latent, next_state_latent_hat, action_logits_hat
 
-    def loss(self, next_states_latent: torch.Tensor, next_states_latent_hat: torch.Tensor, action_logits: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor], actions: list[tuple[str, Optional[Union[list[int], int]]]]) -> torch.Tensor:
+    def loss(self, next_states_latent: torch.Tensor, next_states_latent_hat: torch.Tensor, action_logits: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor], actions_index: torch.Tensor) -> torch.Tensor:
         """Calculate the ICM loss.
 
         Args:
             next_states_latent (torch.Tensor): The next latent state tensor.
             next_states_latent_hat (torch.Tensor): The predicted next latent state tensor.
             action_logits (tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]): The predicted logits of the actions.
-            actions (list[tuple[str, Optional[Union[list[int], int]]]): The list of actions.
+            actions_index (list[tuple[str, Optional[Union[list[int], int]]]): The list of actions.
 
         Returns:
             torch.Tensor: The ICM loss.
         """
-        return cfg.forward_weight * self.forward_model.loss(next_states_latent, next_states_latent_hat) + (1 - cfg.forward_weight) * self.inverse_model.loss(action_logits, actions)
+        return cfg.forward_weight * self.forward_model.loss(next_states_latent, next_states_latent_hat) + (1 - cfg.forward_weight) * self.inverse_model.loss(action_logits, actions_index)
 
 
 class ForwardModel(nn.Module):
@@ -674,22 +658,22 @@ class ForwardModel(nn.Module):
             nn.Linear(512, 512),
         )
 
-    def __call__(self, state_latent: torch.Tensor, actions: list[tuple[str, Optional[Union[list[int], int]]]]) -> torch.Tensor:
-        return super().__call__(state_latent, actions)
+    def __call__(self, state_latent: torch.Tensor, actions_index: torch.Tensor) -> torch.Tensor:
+        return super().__call__(state_latent, actions_index)
 
-    def forward(self, state_latent: torch.Tensor, actions: list[tuple[str, Optional[Union[list[int], int]]]]) -> torch.Tensor:
+    def forward(self, state_latent: torch.Tensor, actions_index: torch.Tensor) -> torch.Tensor:
         """Forward pass of the model.
 
         Args:
             state_latent (torch.Tensor): The latent state tensor.
-            actions (list[tuple[str, Optional[Union[list[int], int]]]): The list of actions.
+            actions_index (torch.Tensor): The list of actions.
 
         Returns:
             torch.Tensor: The predicted latent state tensor.
         """
         batch_size = state_latent.shape[0]
 
-        transformation_index, parallelization_index, tiling_index, interchange_index = raw_actions_to_indices(actions)
+        transformation_index, parallelization_index, tiling_index, interchange_index = decode_actions_index(actions_index)
 
         transformation_latent = self.transformation_encoder(transformation_index)
         parallelization_latent = self.parallelization_encoder(parallelization_index).reshape(batch_size, -1)
@@ -784,21 +768,21 @@ class InverseModel(nn.Module):
 
         return apply_masks(transformation_logits, parallelization_logits, tiling_logits, interchange_logits, *extract_masks(action_mask))
 
-    def loss(self, action_logits: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor], actions: list[tuple[str, Optional[Union[list[int], int]]]]) -> torch.Tensor:
+    def loss(self, action_logits: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor], actions_index: torch.Tensor) -> torch.Tensor:
         """Calculate the inverse model loss.
 
         Args:
             action_logits (tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]): The predicted logits of the actions.
-            actions (list[tuple[str, Optional[Union[list[int], int]]]): The list of actions.
+            actions_index (torch.Tensor): The list of actions.
 
         Returns:
             torch.Tensor: The inverse model loss.
         """
         L = cfg.max_num_loops
         TS = cfg.num_tile_sizes
-        batch_size = len(actions)
+        batch_size = actions_index.size(0)
 
-        transformation_index, parallelization_index, tiling_index, interchange_index = raw_actions_to_indices(actions)
+        transformation_index, parallelization_index, tiling_index, interchange_index = decode_actions_index(actions_index)
         transformation_logits_hat, parallelization_logits_hat, tiling_logits_hat, interchange_logits_hat = action_logits
 
         transformation_loss = self.disc_loss(transformation_logits_hat, transformation_index)
@@ -882,7 +866,7 @@ def transformation_to_int(transformation: str) -> int:
         'tiling': 2,
         'interchange': 3,
         'vectorization': 4,
-        'fusion':5
+        'fusion': 5
     }[transformation]
 
 
@@ -903,6 +887,44 @@ def int_to_transformation(transformation: int) -> str:
         4: 'vectorization',
         5: 'fusion',
     }[transformation]
+
+
+def decode_actions_index(index: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Convert actions index to separate indices
+    Args:
+        torch.Tensor: the actions index
+    Returns:
+        tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: The indices tensors for the transformations, parallelizations, tilings, and interchanges.
+    """
+    L = cfg.max_num_loops
+    TP_BEGIN = 1
+    T_BEGIN = TP_BEGIN + L
+    F_BEGIN = T_BEGIN + L
+    I_BEGIN = F_BEGIN + L
+
+    transformation_index = index[:, 0]
+    parallelization_index = index[:, TP_BEGIN:T_BEGIN]
+    tiling_index = index[:, T_BEGIN:F_BEGIN]
+    fusion_index = index[:, F_BEGIN:I_BEGIN]
+    interchange_index = index[:, I_BEGIN]
+
+    return transformation_index, parallelization_index, tiling_index, interchange_index, fusion_index
+
+
+def encode_actions_index(transformation_index: torch.Tensor, parallelization_index: torch.Tensor, tiling_index: torch.Tensor, interchange_index: torch.Tensor, fusion_index: torch.Tensor) -> torch.Tensor:
+    """Convert separate indices to actions index
+    Args:
+        torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor: The indices tensors for the transformations, parallelizations, tilings, and interchanges.
+    Returns:
+        torch.Tensor: the action index
+    """
+    return torch.cat((
+        transformation_index.unsqueeze(-1),
+        parallelization_index,
+        tiling_index,
+        fusion_index,
+        interchange_index.unsqueeze(-1),
+    ), dim=-1)
 
 
 def raw_actions_to_indices(actions: list[tuple[str, Optional[Union[list[int], int]]]]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -932,12 +954,12 @@ def raw_actions_to_indices(actions: list[tuple[str, Optional[Union[list[int], in
             case 'interchange':
                 interchange_index[i] = parameters
             case 'fusion':
-                fusion_index[i, :len(parameters)] = torch.tensor(parameters) 
+                fusion_index[i, :len(parameters)] = torch.tensor(parameters)
 
     return transformation_index, parallelization_index, tiling_index, interchange_index, fusion_index
 
 
-def indices_to_raw_actions(transformation_index: torch.Tensor, parallelization_index: torch.Tensor, tiling_index: torch.Tensor, interchange_index: torch.Tensor, fusion_index: torch.Tensor, num_loops: list[int]) -> list[tuple[str, Optional[Union[list[int], int]]]]:
+def indices_to_raw_actions(transformation_index: torch.Tensor, parallelization_index: torch.Tensor, tiling_index: torch.Tensor, interchange_index: torch.Tensor, fusion_index: torch.Tensor, num_loops: torch.Tensor) -> list[tuple[str, Optional[Union[list[int], int]]]]:
     """Convert tensor indices to a list of actions.
 
     Args:

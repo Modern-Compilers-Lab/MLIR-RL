@@ -10,12 +10,13 @@ import os
 from tqdm import trange
 from rl_autoschedular import config as cfg
 from rl_autoschedular import file_logger as fl
+from rl_autoschedular.trajectory import TrajectoryData
 from utils.log import print_info, print_success
+from typing import Optional
 from rl_autoschedular.ppo import (
     collect_trajectory,
     ppo_update,
     value_update,
-    update_trajectory_values,
     evaluate_benchmark
 )
 
@@ -44,7 +45,7 @@ optimizer = torch.optim.Adam(
 print_success("Model initialized")
 
 # Start training
-old_trajectory = None
+old_trajectory: Optional[TrajectoryData] = None
 for step in trange(cfg.nb_iterations, desc='Main loop'):
     trajectory = collect_trajectory(
         model,
@@ -52,6 +53,12 @@ for step in trange(cfg.nb_iterations, desc='Main loop'):
         step,
         device,
     )
+
+    # Extend trajectory with previous trajectory
+    if cfg.reuse_experience:
+        if old_trajectory is not None:
+            trajectory = old_trajectory + trajectory
+        old_trajectory = trajectory.copy()
 
     # Fit value model to trajectory rewards
     if cfg.value_epochs > 0:
@@ -61,19 +68,6 @@ for step in trange(cfg.nb_iterations, desc='Main loop'):
             optimizer,
             device,
         )
-
-        # Update trajectory values to be used in PPO update
-        update_trajectory_values(
-            trajectory,
-            model,
-            device,
-        )
-
-    # Extend trajectory with previous trajectory
-    if cfg.reuse_experience:
-        if old_trajectory is not None:
-            trajectory.extend(old_trajectory)
-        old_trajectory = trajectory.copy()
 
     ppo_update(
         trajectory,

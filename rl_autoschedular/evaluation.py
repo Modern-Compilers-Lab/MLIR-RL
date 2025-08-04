@@ -310,7 +310,7 @@ def __get_code_cache_key(state: OperationState, bench_data: BenchmarkFeatures) -
         'tiling': 'T',
         'interchange': 'I',
         'vectorization': 'V',
-        "fusion":"F"
+        "fusion": "F"
     }
 
     ops_codes = [''] * len(bench_data.operation_tags)

@@ -18,26 +18,25 @@ def build_tree(obs_batch, num_loops):
     """
     batch_size = obs_batch.shape[0]
     trees = []
-    
+
     for b in range(batch_size):
         current_num_loops = int(num_loops[b].item())
-        
+
         obs = obs_batch[b]
         parent = None
         root = None
-        
+
         for i in range(current_num_loops):
             vector = None
             if i == current_num_loops - 1:
                 vector = obs  # Vector for deepest node only
-            
+
             parent = LoopNode(parent=parent, vector=vector)
             if root is None:
                 root = parent
         trees.append(root)
 
     return trees
-
 
 
 def build_op_features_vector(op_features: OperationFeatures):
@@ -523,15 +522,15 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
 
     op_producers = defaultdict(lambda: {'producers': []})
     op_consumers = defaultdict(lambda: {'consumers': []})
-    
+
     for producer, consumer in graph_lines:
         op_producers[consumer]['producers'].insert(0, producer)
         op_consumers[producer]['consumers'].append(consumer)
-    
+
     for tag, info in op_producers.items():
         if tag in operations:
             operations[tag].producers = [prod for prod in info['producers'] if prod in operations]
-    
+
     for tag, info in op_consumers.items():
         if tag in operations:
             operations[tag].consumers = [prod for prod in info['consumers'] if prod in operations]
