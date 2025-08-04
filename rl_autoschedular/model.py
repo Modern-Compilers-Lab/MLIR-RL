@@ -3,7 +3,6 @@ import torch.nn as nn
 from torch.distributions import Categorical, Binomial, Normal, Distribution, Uniform
 from typing import Optional, Union
 from rl_autoschedular import config as cfg
-import math
 
 
 class HiearchyModel(nn.Module):
@@ -38,10 +37,10 @@ class HiearchyModel(nn.Module):
         if 'curiosity' in cfg.exploration:
             self.icm_model = ICMModel(self.input_dim, self.action_mask_size)
 
-    def __call__(self, obs: torch.Tensor, num_loops: list[int], actions: list[tuple[str, Optional[Union[list[int], int]]]]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        return super().__call__(obs, num_loops, actions)
+    def __call__(self, obs: torch.Tensor, num_loops: torch.Tensor, actions_index: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        return super().__call__(obs, num_loops, actions_index)
 
-    def forward(self, obs: torch.Tensor, num_loops: list[int], actions: list[tuple[str, Optional[Union[list[int], int]]]]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, obs: torch.Tensor, num_loops: torch.Tensor, actions_index: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Forward pass of the model.
 
         Args:
@@ -52,25 +51,24 @@ class HiearchyModel(nn.Module):
         """
         action_log_p, entropy = self.__calculate_dist_stats(
             list(self.policy_model(obs, num_loops)),
-            list(raw_actions_to_indices(actions))
+            list(decode_actions_index(actions_index))
         )
 
         values = self.value_model(obs)
 
         return action_log_p, values, entropy
 
-    def sample(self, obs: torch.Tensor, num_loops: list[int], greedy: bool = False, eps: Optional[float] = None) -> tuple[list[tuple[str, Optional[Union[list[int], int]]]], torch.Tensor, torch.Tensor, torch.Tensor]:
+    def sample(self, obs: torch.Tensor, num_loops: torch.Tensor, greedy: bool = False, eps: Optional[float] = None) -> tuple[list[tuple[str, Optional[Union[list[int], int]]]], torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Sample an action from the model.
 
         Args:
             obs (torch.Tensor): The input tensor.
-            num_loops (list[int]): The number of loops for each element in the batch.
-            actions (Optional[list[tuple[str, Optional[Union[list[int], int]]]]]): list of actions forced for the model to return. Defaults to None.
+            num_loops (torch.Tensor): The number of loops for each element in the batch.
 
         Returns:
             list[tuple[str, Optional[Union[list[int], int]]]]: list of actions.
-            torch.Tensor: action log probabilities.
-            torch.Tensor: action values.
+            torch.Tensor: actions log probability.
+            torch.Tensor: actions value.
             torch.Tensor: resulting entropy.
         """
         assert not greedy or eps is None, 'Cannot be greedy and explore at the same time.'
@@ -107,11 +105,12 @@ class HiearchyModel(nn.Module):
 
         if cfg.interchange_mode == 'continuous':
             # Clamp interchange index to [0, num_loops! - 1]
-            total_count = torch.tensor([math.factorial(loops) for loops in num_loops], dtype=torch.int64)
+            total_count = (num_loops + 1).lgamma().exp().long()
             interchange_index = interchange_index.clamp(torch.zeros_like(total_count, dtype=torch.int64), total_count - 1)
 
         # Get raw actions from indices
         actions = indices_to_raw_actions(transformation_index, parallelization_index, tiling_index, interchange_index, num_loops)
+        actions_index = encode_actions_index(transformation_index, parallelization_index, tiling_index, interchange_index)
 
         # Calculate the log probabilities and entropies
         action_log_p, entropy = self.__calculate_dist_stats(
@@ -121,9 +120,9 @@ class HiearchyModel(nn.Module):
             eps=eps
         )
 
-        return actions, action_log_p, values, entropy
+        return actions, actions_index, action_log_p, values, entropy
 
-    def __create_uniform_distributions(self, obs: torch.Tensor, num_loops: list[int]) -> tuple[Distribution, Distribution, Distribution, Distribution]:
+    def __create_uniform_distributions(self, obs: torch.Tensor, num_loops: torch.Tensor) -> tuple[Distribution, Distribution, Distribution, Distribution]:
         """Create uniform distributions for the actions.
 
         Args:
@@ -159,7 +158,7 @@ class HiearchyModel(nn.Module):
         if cfg.interchange_mode != 'continuous':
             interchange_dist = Categorical(logits=interchange_logits)
         else:
-            total_count = torch.tensor([math.factorial(loops) for loops in num_loops], dtype=torch.float64)
+            total_count = (num_loops + 1).lgamma().exp()
             interchange_dist = Uniform(0.0, total_count)
 
         return transformation_dist, parallelization_dist, tiling_dist, interchange_dist
@@ -336,10 +335,10 @@ class PolicyModel(nn.Module):
                 self.interchange_fc,
             )
 
-    def __call__(self, obs: torch.Tensor, num_loops: list[int]) -> tuple[Distribution, Distribution, Distribution, Distribution]:
+    def __call__(self, obs: torch.Tensor, num_loops: torch.Tensor) -> tuple[Distribution, Distribution, Distribution, Distribution]:
         return super().__call__(obs, num_loops)
 
-    def forward(self, obs: torch.Tensor, num_loops: list[int]) -> tuple[Distribution, Distribution, Distribution, Distribution]:
+    def forward(self, obs: torch.Tensor, num_loops: torch.Tensor) -> tuple[Distribution, Distribution, Distribution, Distribution]:
         """Forward pass of the model.
 
         Args:
@@ -375,7 +374,7 @@ class PolicyModel(nn.Module):
         else:
             interchange_logit = interchange_logits.squeeze(-1)
             if cfg.interchange_distribution == 'binomial':
-                total_count = torch.tensor([math.factorial(loops) for loops in num_loops])
+                total_count = (num_loops + 1).lgamma().exp().long()
                 interchange_dist = Binomial(total_count, logits=interchange_logit)
             else:
                 interchange_dist = Normal(interchange_logit, self.interchange_logstd.clamp(-1, 1).exp())
@@ -426,16 +425,16 @@ class ICMModel(nn.Module):
         self.forward_model = ForwardModel()
         self.inverse_model = InverseModel()
 
-    def __call__(self, obs: torch.Tensor, next_obs: torch.Tensor, actions: list[tuple[str, Optional[Union[list[int], int]]]]) -> tuple[torch.Tensor, torch.Tensor, tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]:
-        return super().__call__(obs, next_obs, actions)
+    def __call__(self, obs: torch.Tensor, next_obs: torch.Tensor, actions_index: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]:
+        return super().__call__(obs, next_obs, actions_index)
 
-    def forward(self, obs: torch.Tensor, next_obs: torch.Tensor, actions: list[tuple[str, Optional[Union[list[int], int]]]]) -> tuple[torch.Tensor, torch.Tensor, tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]:
+    def forward(self, obs: torch.Tensor, next_obs: torch.Tensor, actions_index: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]:
         """Forward pass of the model.
 
         Args:
             obs (torch.Tensor): The input tensor.
             next_obs (torch.Tensor): The next input tensor.
-            actions (list[tuple[str, Optional[Union[list[int], int]]]]): The list of actions.
+            actions_index (torch.Tensor): The list of actions.
 
         Returns:
             tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: The logits of the transformations, parallelizations, tilings, and interchanges.
@@ -447,24 +446,24 @@ class ICMModel(nn.Module):
         state_latent = self.encoder(x)
         next_state_latent = self.encoder(next_x)
 
-        next_state_latent_hat = self.forward_model(state_latent, actions)
+        next_state_latent_hat = self.forward_model(state_latent, actions_index)
         action_logits_hat = self.inverse_model(state_latent, next_state_latent, action_mask)
 
         return next_state_latent, next_state_latent_hat, action_logits_hat
 
-    def loss(self, next_states_latent: torch.Tensor, next_states_latent_hat: torch.Tensor, action_logits: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor], actions: list[tuple[str, Optional[Union[list[int], int]]]]) -> torch.Tensor:
+    def loss(self, next_states_latent: torch.Tensor, next_states_latent_hat: torch.Tensor, action_logits: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor], actions_index: torch.Tensor) -> torch.Tensor:
         """Calculate the ICM loss.
 
         Args:
             next_states_latent (torch.Tensor): The next latent state tensor.
             next_states_latent_hat (torch.Tensor): The predicted next latent state tensor.
             action_logits (tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]): The predicted logits of the actions.
-            actions (list[tuple[str, Optional[Union[list[int], int]]]): The list of actions.
+            actions_index (list[tuple[str, Optional[Union[list[int], int]]]): The list of actions.
 
         Returns:
             torch.Tensor: The ICM loss.
         """
-        return cfg.forward_weight * self.forward_model.loss(next_states_latent, next_states_latent_hat) + (1 - cfg.forward_weight) * self.inverse_model.loss(action_logits, actions)
+        return cfg.forward_weight * self.forward_model.loss(next_states_latent, next_states_latent_hat) + (1 - cfg.forward_weight) * self.inverse_model.loss(action_logits, actions_index)
 
 
 class ForwardModel(nn.Module):
@@ -504,22 +503,22 @@ class ForwardModel(nn.Module):
             nn.Linear(512, 512),
         )
 
-    def __call__(self, state_latent: torch.Tensor, actions: list[tuple[str, Optional[Union[list[int], int]]]]) -> torch.Tensor:
-        return super().__call__(state_latent, actions)
+    def __call__(self, state_latent: torch.Tensor, actions_index: torch.Tensor) -> torch.Tensor:
+        return super().__call__(state_latent, actions_index)
 
-    def forward(self, state_latent: torch.Tensor, actions: list[tuple[str, Optional[Union[list[int], int]]]]) -> torch.Tensor:
+    def forward(self, state_latent: torch.Tensor, actions_index: torch.Tensor) -> torch.Tensor:
         """Forward pass of the model.
 
         Args:
             state_latent (torch.Tensor): The latent state tensor.
-            actions (list[tuple[str, Optional[Union[list[int], int]]]): The list of actions.
+            actions_index (torch.Tensor): The list of actions.
 
         Returns:
             torch.Tensor: The predicted latent state tensor.
         """
         batch_size = state_latent.shape[0]
 
-        transformation_index, parallelization_index, tiling_index, interchange_index = raw_actions_to_indices(actions)
+        transformation_index, parallelization_index, tiling_index, interchange_index = decode_actions_index(actions_index)
 
         transformation_latent = self.transformation_encoder(transformation_index)
         parallelization_latent = self.parallelization_encoder(parallelization_index).reshape(batch_size, -1)
@@ -614,21 +613,21 @@ class InverseModel(nn.Module):
 
         return apply_masks(transformation_logits, parallelization_logits, tiling_logits, interchange_logits, *extract_masks(action_mask))
 
-    def loss(self, action_logits: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor], actions: list[tuple[str, Optional[Union[list[int], int]]]]) -> torch.Tensor:
+    def loss(self, action_logits: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor], actions_index: torch.Tensor) -> torch.Tensor:
         """Calculate the inverse model loss.
 
         Args:
             action_logits (tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]): The predicted logits of the actions.
-            actions (list[tuple[str, Optional[Union[list[int], int]]]): The list of actions.
+            actions_index (torch.Tensor): The list of actions.
 
         Returns:
             torch.Tensor: The inverse model loss.
         """
         L = cfg.max_num_loops
         TS = cfg.num_tile_sizes
-        batch_size = len(actions)
+        batch_size = actions_index.size(0)
 
-        transformation_index, parallelization_index, tiling_index, interchange_index = raw_actions_to_indices(actions)
+        transformation_index, parallelization_index, tiling_index, interchange_index = decode_actions_index(actions_index)
         transformation_logits_hat, parallelization_logits_hat, tiling_logits_hat, interchange_logits_hat = action_logits
 
         transformation_loss = self.disc_loss(transformation_logits_hat, transformation_index)
@@ -731,6 +730,41 @@ def int_to_transformation(transformation: int) -> str:
     }[transformation]
 
 
+def decode_actions_index(index: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Convert actions index to separate indices
+    Args:
+        torch.Tensor: the actions index
+    Returns:
+        tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: The indices tensors for the transformations, parallelizations, tilings, and interchanges.
+    """
+    L = cfg.max_num_loops
+    TP_BEGIN = 1
+    T_BEGIN = TP_BEGIN + L
+    I_BEGIN = T_BEGIN + L
+
+    transformation_index = index[:, 0]
+    parallelization_index = index[:, TP_BEGIN:T_BEGIN]
+    tiling_index = index[:, T_BEGIN:I_BEGIN]
+    interchange_index = index[:, I_BEGIN]
+
+    return transformation_index, parallelization_index, tiling_index, interchange_index
+
+
+def encode_actions_index(transformation_index: torch.Tensor, parallelization_index: torch.Tensor, tiling_index: torch.Tensor, interchange_index: torch.Tensor) -> torch.Tensor:
+    """Convert separate indices to actions index
+    Args:
+        torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor: The indices tensors for the transformations, parallelizations, tilings, and interchanges.
+    Returns:
+        torch.Tensor: the action index
+    """
+    return torch.cat((
+        transformation_index.unsqueeze(-1),
+        parallelization_index,
+        tiling_index,
+        interchange_index.unsqueeze(-1),
+    ), dim=-1)
+
+
 def raw_actions_to_indices(actions: list[tuple[str, Optional[Union[list[int], int]]]]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Convert a list of actions to tensor of indices.
 
@@ -760,7 +794,7 @@ def raw_actions_to_indices(actions: list[tuple[str, Optional[Union[list[int], in
     return transformation_index, parallelization_index, tiling_index, interchange_index
 
 
-def indices_to_raw_actions(transformation_index: torch.Tensor, parallelization_index: torch.Tensor, tiling_index: torch.Tensor, interchange_index: torch.Tensor, num_loops: list[int]) -> list[tuple[str, Optional[Union[list[int], int]]]]:
+def indices_to_raw_actions(transformation_index: torch.Tensor, parallelization_index: torch.Tensor, tiling_index: torch.Tensor, interchange_index: torch.Tensor, num_loops: torch.Tensor) -> list[tuple[str, Optional[Union[list[int], int]]]]:
     """Convert tensor indices to a list of actions.
 
     Args:

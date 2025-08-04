@@ -1,75 +1,11 @@
 import torch
-from typing import Optional, Union
 from rl_autoschedular.env import Env
 from rl_autoschedular.model import HiearchyModel as Model
-from rl_autoschedular.state import OperationState
+from rl_autoschedular.trajectory import TrajectoryCollector, TrajectoryData
 from rl_autoschedular import config as cfg
 from rl_autoschedular import file_logger as fl
-from dataclasses import dataclass
 from utils.log import print_error
 from tqdm import trange
-
-
-@dataclass
-class Trajectory:
-    """Dataclass to store the trajectory data."""
-    states: list[OperationState]
-    """States in the trajectory."""
-    actions: list[tuple[str, Optional[Union[list[int], int]]]]
-    """Actions in the trajectory."""
-    obs: torch.Tensor
-    """Observations in the trajectory"""
-    values: torch.Tensor
-    """Values of actions in the trajectory."""
-    next_obs: torch.Tensor
-    """Observations of next states in the trajectory."""
-    next_values: torch.Tensor
-    """Values of actions in the trajectory with one additional step (shifted to one step in the future)."""
-    mu_action_log_p: torch.Tensor
-    """Action log probabilities in the trajectory."""
-    rewards: torch.Tensor
-    """Rewards in the trajectory."""
-    done: torch.Tensor
-    """Done flags in the trajectory."""
-
-    def extend(self, other: 'Trajectory') -> 'Trajectory':
-        """Extend the trajectory with another trajectory.
-
-        Args:
-            other (Trajectory): The other trajectory to extend with.
-
-        Returns:
-            Trajectory: The extended trajectory.
-        """
-        return Trajectory(
-            states=self.states + [state.copy() for state in other.states],
-            actions=self.actions + other.actions,
-            obs=torch.concatenate((self.obs, other.obs)),
-            values=torch.concatenate((self.values, other.values)),
-            next_obs=torch.concatenate((self.next_obs, other.next_obs)),
-            next_values=torch.concatenate((self.next_values, other.next_values)),
-            mu_action_log_p=torch.concatenate((self.mu_action_log_p, other.mu_action_log_p)),
-            rewards=torch.concatenate((self.rewards, other.rewards)),
-            done=torch.concatenate((self.done, other.done)),
-        )
-
-    def copy(self) -> 'Trajectory':
-        """Copy the trajectory.
-
-        Returns:
-            Trajectory: The copied trajectory.
-        """
-        return Trajectory(
-            states=[state.copy() for state in self.states],
-            actions=self.actions.copy(),
-            obs=self.obs.clone(),
-            values=self.values.clone(),
-            next_obs=self.next_obs.clone(),
-            next_values=self.next_values.clone(),
-            mu_action_log_p=self.mu_action_log_p.clone(),
-            rewards=self.rewards.clone(),
-            done=self.done.clone(),
-        )
 
 
 def collect_trajectory(model: Model, env: Env, step: int, device: torch.device = torch.device('cpu')):
@@ -82,24 +18,9 @@ def collect_trajectory(model: Model, env: Env, step: int, device: torch.device =
         device (torch.device): The device to use. Defaults to torch.device('cpu').
 
     Returns:
-        Trajectory: The collected trajectory.
+        TrejectoryData: The collected trajectory.
     """
-    stored_state: list[OperationState] = []
-    stored_action_index: list[tuple[str, Optional[Union[list[int], int]]]] = []
-    stored_obs: list[torch.Tensor] = []
-    stored_value: list[torch.Tensor] = []
-    stored_next_obs: list[torch.Tensor] = []
-    stored_next_value: list[torch.Tensor] = []
-    stored_mu_action_log_p: list[torch.Tensor] = []
-    stored_reward: list[torch.Tensor] = []
-    stored_done: list[torch.Tensor] = []
-
-    log_rewards: list[float] = []
-    log_intrinsic_rewards: list[float] = []
-    log_speedups: list[float] = []
-    log_entropy: list[float] = []
-    log_final_speedups: list[float] = []
-    log_op_speedups: dict[str, list[float]] = {}
+    tc = TrajectoryCollector()
 
     eps = None
     if 'epsilon' in cfg.exploration:
@@ -114,195 +35,52 @@ def collect_trajectory(model: Model, env: Env, step: int, device: torch.device =
         bench_done = False
         while not bench_done:
             num_loops = len(state.operation_features.nested_loops)
-            action_index, mu_action_log_p, value, entropy = model.sample(obs, [num_loops], eps=eps)
+            action, action_index, action_bev_log_p, _, entropy = model.sample(obs, torch.tensor([num_loops]), eps=eps)
+            assert len(action) == 1 and action_index.size(0) == 1 and action_bev_log_p.size(0) == 1
 
-            assert len(action_index) == 1
-            next_state, next_obs, reward, op_done, speedup = env.step(state, action_index[0])
-            next_value = model.value_model(next_obs)
+            next_state, next_obs, reward, op_done, speedup = env.step(state, action[0])
 
             if 'curiosity' in cfg.exploration:
                 next_state_latent, next_state_latent_hat, _ = model.icm_model(obs, next_obs, action_index)
                 intrinsic_reward = cfg.reward_scale * model.icm_model.forward_model.loss(next_state_latent, next_state_latent_hat).item()
                 reward = (1 - cfg.intrinsic_reward_integration) * reward + cfg.intrinsic_reward_integration * intrinsic_reward
 
-            stored_state.append(state)
-            stored_action_index.append(action_index[0])
-            stored_obs.append(obs)
-            stored_value.append(value.squeeze(-1))
-            stored_next_obs.append(next_obs)
-            stored_next_value.append(next_value.squeeze(-1))
-            stored_mu_action_log_p.append(mu_action_log_p)
-            stored_reward.append(torch.tensor(reward).unsqueeze(0))
+            if op_done:
+                next_state, tmp_next_obs, bench_done = env.get_next_op_state(next_state)
+
+            tc.append((
+                num_loops,
+                action_index,
+                obs,
+                next_obs,
+                action_bev_log_p.item(),
+                reward,
+                bench_done
+            ))
 
             if op_done:
-                next_state, next_obs, bench_done = env.get_next_op_state(next_state)
+                next_obs = tmp_next_obs
 
-            stored_done.append(torch.tensor(bench_done).unsqueeze(0).float())
-
-            log_entropy.append(entropy.item())
-            log_rewards.append(reward)
+            fl['train/entropy'].append(entropy.item())
+            fl['train/reward'].append(reward)
             if 'curiosity' in cfg.exploration:
-                log_intrinsic_rewards.append(intrinsic_reward)
+                fl['train/intrinsic_reward'].append(intrinsic_reward)
             if speedup is not None:
-                log_speedups.append(speedup)
-                if state.operation_features.operation_type not in log_op_speedups:
-                    log_op_speedups[state.operation_features.operation_type] = []
-                log_op_speedups[state.operation_features.operation_type].append(speedup)
+                fl['train/speedup'].append(speedup)
+                fl[f'train/{state.operation_features.operation_type}_speedup'].append(speedup)
 
             state = next_state
             obs = next_obs
-        log_final_speedups.append(speedup)
+        fl['train/final_speedup'].append(speedup)
 
-    fl['train/entropy'].extend(log_entropy)
-    fl['train/reward'].extend(log_rewards)
-    fl['train/speedup'].extend(log_speedups)
-    fl['train/final_speedup'].extend(log_final_speedups)
-    for op_type, speedups in log_op_speedups.items():
-        fl[f'train/{op_type}_speedup'].extend(speedups)
-    if 'curiosity' in cfg.exploration:
-        fl['train/intrinsic_reward'].extend(log_intrinsic_rewards)
-
-    stored_obs_tensor = torch.concatenate(stored_obs)
-    stored_value_tensor = torch.concatenate(stored_value)
-    stored_next_obs_tensor = torch.concatenate(stored_next_obs)
-    stored_next_value_tensor = torch.concatenate(stored_next_value)
-    stored_mu_action_log_p_tensor = torch.concatenate(stored_mu_action_log_p)
-    stored_reward_tensor = torch.concatenate(stored_reward)
-    stored_done_tensor = torch.concatenate(stored_done)
-
-    trajectory = Trajectory(
-        states=stored_state,
-        actions=stored_action_index,
-        obs=stored_obs_tensor,
-        values=stored_value_tensor,
-        next_obs=stored_next_obs_tensor,
-        next_values=stored_next_value_tensor,
-        mu_action_log_p=stored_mu_action_log_p_tensor,
-        rewards=stored_reward_tensor,
-        done=stored_done_tensor,
-    )
-
-    return trajectory
+    return tc.to_trajectory()
 
 
-def shuffle_ppo_data(stored_action_index: list[tuple[str, Optional[Union[list[int], int]]]], stored_states: list[OperationState], *tensors: torch.Tensor):
-    """Shuffle the PPO data.
-
-    Args:
-        stored_action_index (list[tuple[str, Optional[Union[list[int], int]]]]): The action indices to shuffle.
-        stored_states (list[OperationState]): The states to shuffle.
-        *tensors (torch.Tensor): The tensors to shuffle.
-
-    Returns:
-        list[tuple[str, Optional[Union[list[int], int]]]]: The shuffled action indices.
-        list[OperationState]: The shuffled states.
-        tuple[torch.Tensor]: The shuffled tensors.
-    """
-
-    permutation = torch.randperm(len(stored_action_index))
-
-    stored_action_index = [stored_action_index[i] for i in permutation]
-    stored_states = [stored_states[i] for i in permutation]
-
-    return stored_action_index, stored_states, *shuffle_tensors(*tensors, permutation=permutation)
-
-
-def shuffle_tensors(*tensors: torch.Tensor, permutation: Optional[torch.Tensor] = None):
-    """Shuffle the tensors.
-
-    Args:
-        *tensors (torch.Tensor): The tensors to shuffle.
-
-    Returns:
-        tuple[torch.Tensor]: The shuffled tensors.
-    """
-    permutation = torch.randperm(tensors[0].shape[0]) if permutation is None else permutation
-    return tuple(tensor[permutation] for tensor in tensors)
-
-
-def compute_gae(done: torch.Tensor, rewards: torch.Tensor, values: torch.Tensor, next_values: torch.Tensor, gamma: float = 0.99, lambda_: float = 0.95) -> torch.Tensor:
-    """Compute the Generalized Advantage Estimation.
-
-    Args:
-        done (torch.Tensor): done flags.
-        rewards (torch.Tensor): rewards.
-        values (torch.Tensor): values.
-        next_values (torch.Tensor): values of the next state.
-        gamma (float): discount factor. Defaults to 0.99.
-        lambda_ (float): GAE factor. Defaults to 0.95.
-
-    Returns:
-        torch.Tensor: advantages.
-        torch.Tensor: returns.
-    """
-    assert len(values) == len(next_values) == len(rewards) == len(done)
-
-    advantages = torch.zeros(done.shape[0], dtype=torch.float32)
-    last_advantage = 0
-
-    for t in reversed(range(done.shape[0])):
-        mask = 1.0 - done[t]
-        last_value = next_values[t] * mask
-        last_advantage = last_advantage * mask
-
-        delta = rewards[t] + gamma * last_value - values[t]
-        last_advantage = delta + gamma * lambda_ * last_advantage
-
-        advantages[t] = last_advantage
-    # returns = advantages + values
-
-    return advantages
-
-
-def compute_returns(done: torch.Tensor, rewards: torch.Tensor, values: torch.Tensor, off_policy_rates: torch.Tensor, gamma: float = 0.99) -> torch.Tensor:
-    """Compute the returns.
-
-    Args:
-        done (torch.Tensor): done flags.
-        rewards (torch.Tensor): rewards.
-        gamma (float): discount factor. Defaults to 1.
-
-    Returns:
-        torch.Tensor: returns.
-    """
-    assert len(rewards) == len(done)
-
-    returns = torch.zeros(done.shape[0], dtype=torch.float32)
-    last_return = 0
-
-    for t in reversed(range(done.shape[0])):
-        mask = 1.0 - done[t]
-        last_return = last_return * mask
-
-        last_return = values[t] + (rewards[t] + gamma * last_return - values[t]) * off_policy_rates[t]
-
-        returns[t] = last_return
-
-    return returns
-
-
-def compute_rho(action_log_p: torch.Tensor, mu_action_log_p: torch.Tensor) -> torch.Tensor:
-    """Compute the off-policy rate (rho) for the current policy.
-
-    Args:
-        action_log_p (torch.Tensor): The action log probabilities of the current policy.
-        mu_action_log_p (torch.Tensor): The action log probabilities of the behavior policy.
-
-    Returns:
-        torch.Tensor: The off-policy rate.
-    """
-    off_policy_rate = torch.exp(torch.clamp(action_log_p - mu_action_log_p, -80.0, 80.0))
-    if 'epsilon' not in cfg.exploration and not cfg.reuse_experience:
-        assert (off_policy_rate == 1).all(), 'off_policy_rate should be 1 since behavior policy is the same as the current policy.'
-
-    return off_policy_rate
-
-
-def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Optimizer, device: torch.device = torch.device('cpu')):
+def ppo_update(trajectory: TrajectoryData, model: Model, optimizer: torch.optim.Optimizer, device: torch.device = torch.device('cpu')):
     """Update the model using PPO.
 
     Args:
-        trajectory (Trajectory): The trajectory to use.
+        trajectory (TrajectoryData): The trajectory to use.
         model (Model): The model to update.
         optimizer (torch.optim.Optimizer): The optimizer to use.
         device (torch.device): The device to use. Defaults to torch.device('cpu').
@@ -310,83 +88,36 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
     Returns:
         float: The average loss.
     """
-
-    log_policy_loss: list[float] = []
-    log_entropy_loss: list[float] = []
-    log_value_loss: list[float] = []
-    log_curiosity_loss: list[float] = []
-    # log_clip_frac: list[float] = []
-    log_approx_kl: list[float] = []
-    log_clip_factor: list[float] = []
+    trajectory.update_attributes(model)
 
     ppo_trange = trange(cfg.ppo_epochs, desc='PPO Epochs')
     for _ in ppo_trange:
-        stored_states = trajectory.states
-        stored_action_index = trajectory.actions
-        stored_obs = trajectory.obs
-        stored_values = trajectory.values
-        stored_next_obs = trajectory.next_obs
-        stored_next_values = trajectory.next_values
-        stored_mu_action_log_p = trajectory.mu_action_log_p
-        stored_rewards = trajectory.rewards
-        stored_done = trajectory.done
 
-        stored_action_log_p, _, _ = model(stored_obs, [len(state.operation_features.nested_loops) for state in stored_states], actions=stored_action_index)
-        stored_off_policy_rate = compute_rho(stored_action_log_p, stored_mu_action_log_p)
-
-        stored_advantages = compute_gae(stored_done, stored_rewards, stored_values, stored_next_values)
-        stored_returns = compute_returns(stored_done, stored_rewards, stored_values, stored_off_policy_rate)
-
-        max_abs_adv = stored_advantages.abs().max()
-        if cfg.normalize_adv == 'max-abs' and max_abs_adv > 0:
-            stored_advantages = stored_advantages / max_abs_adv
-
-        (
-            stored_action_index,
-            stored_states,
-            stored_obs,
-            stored_values,
-            stored_next_obs,
-            stored_mu_action_log_p,
-            stored_action_log_p,
-            stored_off_policy_rate,
-            stored_advantages,
-            stored_returns
-        ) = shuffle_ppo_data(
-            stored_action_index,
-            stored_states,
-            stored_obs,
-            stored_values,
-            stored_next_obs,
-            stored_mu_action_log_p,
-            stored_action_log_p,
-            stored_off_policy_rate,
-            stored_advantages,
-            stored_returns
-        )
-
-        len_trajectory = len(stored_action_index)
-        for i in range(0, len_trajectory, cfg.ppo_batch_size):
-            betch_end = min(i + cfg.ppo_batch_size, len_trajectory)
-
-            actions = stored_action_index[i:betch_end]
-            states = stored_states[i:betch_end]
-            obs = stored_obs[i:betch_end]
-            values = stored_values[i:betch_end]
-            next_obs = stored_next_obs[i:betch_end]
-            mu_actions_log_p = stored_mu_action_log_p[i:betch_end]
-            actions_log_p = stored_action_log_p[i:betch_end]
-            off_policy_rates = stored_off_policy_rate[i:betch_end]
-            advantages = stored_advantages[i:betch_end]
-            returns = stored_returns[i:betch_end]
-
+        for (
+            num_loops,
+            actions_index,
+            obs,
+            next_obs,
+            actions_bev_log_p,
+            _, _,
+            values,
+            _,
+            actions_old_log_p,
+            off_policy_rates,
+            returns,
+            advantages,
+        ) in trajectory.loader(cfg.ppo_batch_size):
+            # Advantages batch normalization
+            max_abs_adv = advantages.abs().max()
             if cfg.normalize_adv == 'standard':
                 advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+            elif cfg.normalize_adv == 'max-abs' and max_abs_adv > 0:
+                advantages = advantages / max_abs_adv
 
             with torch.enable_grad():
-                new_actions_log_p, new_values, entropy = model(obs, [len(state.operation_features.nested_loops) for state in states], actions=actions)
+                actions_log_p, new_values, entropy = model(obs, num_loops, actions_index)
 
-                policy_loss = model.policy_model.loss(new_actions_log_p, mu_actions_log_p, off_policy_rates, advantages)
+                policy_loss = model.policy_model.loss(actions_log_p, actions_bev_log_p, off_policy_rates, advantages)
                 loss = policy_loss
 
                 if cfg.value_epochs == 0:
@@ -394,15 +125,15 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
                     loss += cfg.value_coef * value_loss
 
                 if 'curiosity' in cfg.exploration:
-                    next_states_latent, next_states_latent_hat, action_logits = model.icm_model(obs, next_obs, actions)
-                    curiosity_loss = model.icm_model.loss(next_states_latent, next_states_latent_hat, action_logits, actions)
+                    next_states_latent, next_states_latent_hat, action_logits = model.icm_model(obs, next_obs, actions_index)
+                    curiosity_loss = model.icm_model.loss(next_states_latent, next_states_latent_hat, action_logits, actions_index)
                     loss += cfg.curiosity_coef * curiosity_loss
                 if 'entropy' in cfg.exploration:
                     entropy_loss = -entropy.mean()
                     loss += cfg.entropy_coef * entropy_loss
 
             # clip_frac = (torch.abs((ratios - 1.0)) > 0.2).float().mean()
-            approx_kl = (actions_log_p - new_actions_log_p).pow(2).mean() / 2
+            approx_kl = (actions_old_log_p - actions_log_p).pow(2).mean() / 2
 
             optimizer.zero_grad()
             try:
@@ -418,29 +149,19 @@ def ppo_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Opti
                 'policy_loss': policy_loss.item(),
                 'value_loss': value_loss.item() if cfg.value_epochs == 0 else None
             })
-            log_policy_loss.append(policy_loss.item())
+            fl['train_ppo/policy_loss'].append(policy_loss.item())
             # log_clip_frac.append(clip_frac.item())
-            log_clip_factor.append(clip_factor.item())
-            log_approx_kl.append(approx_kl.item())
+            fl['train_ppo/clip_factor'].append(clip_factor.item())
+            fl['train_ppo/approx_kl'].append(approx_kl.item())
             if cfg.value_epochs == 0:
-                log_value_loss.append(value_loss.item())
+                fl['train_ppo/value_loss'].append(value_loss.item())
             if 'curiosity' in cfg.exploration:
-                log_curiosity_loss.append(curiosity_loss.item())
+                fl['train_ppo/curiosity_loss'].append(curiosity_loss.item())
             if 'entropy' in cfg.exploration:
-                log_entropy_loss.append(entropy_loss.item())
-
-    fl['train_ppo/policy_loss'].extend(log_policy_loss)
-    fl['train_ppo/clip_factor'].extend(log_clip_factor)
-    fl['train_ppo/approx_kl'].extend(log_approx_kl)
-    if cfg.value_epochs == 0:
-        fl['train_ppo/value_loss'].extend(log_value_loss)
-    if 'curiosity' in cfg.exploration:
-        fl['train_ppo/curiosity_loss'].extend(log_curiosity_loss)
-    if 'entropy' in cfg.exploration:
-        fl['train_ppo/entropy_loss'].extend(log_entropy_loss)
+                fl['train_ppo/entropy_loss'].append(entropy_loss.item())
 
 
-def value_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Optimizer, device: torch.device = torch.device('cpu')):
+def value_update(trajectory: TrajectoryData, model: Model, optimizer: torch.optim.Optimizer, device: torch.device = torch.device('cpu')):
     """Update the value model using the trajectory.
 
     Args:
@@ -449,34 +170,20 @@ def value_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Op
         optimizer (torch.optim.Optimizer): The optimizer to use.
         device (torch.device): The device to use. Defaults to torch.device('cpu').
     """
-    log_loss: list[float] = []
-    log_clip_factor: list[float] = []
+    trajectory.update_attributes(model)
 
     value_trange = trange(cfg.value_epochs, desc='Value Epochs')
     for _ in value_trange:
-        stored_obs = trajectory.obs
-        stored_values = trajectory.values
-        stored_rewards = trajectory.rewards
-        stored_done = trajectory.done
-        stored_states = trajectory.states
-        stored_action_index = trajectory.actions
-        stored_mu_action_log_p = trajectory.mu_action_log_p
 
-        stored_action_log_p, _, _ = model(stored_obs, [len(state.operation_features.nested_loops) for state in stored_states], actions=stored_action_index)
-        stored_off_policy_rate = compute_rho(stored_action_log_p, stored_mu_action_log_p)
-
-        stored_returns = compute_returns(stored_done, stored_rewards, stored_values, stored_off_policy_rate)
-
-        stored_obs, stored_values, stored_returns = shuffle_tensors(stored_obs, stored_values, stored_returns)
-
-        len_trajectory = stored_values.shape[0]
-        for i in range(0, len_trajectory, cfg.value_batch_size):
-            betch_end = min(i + cfg.value_batch_size, len_trajectory)
-
-            obs = stored_obs[i:betch_end]
-            values = stored_values[i:betch_end]
-            returns = stored_returns[i:betch_end]
-
+        for (
+            _, _,
+            obs,
+            _, _, _, _,
+            values,
+            _, _, _,
+            returns,
+            _,
+        ) in trajectory.loader(cfg.value_batch_size):
             with torch.enable_grad():
                 new_values = model.value_model(obs)
 
@@ -492,31 +199,8 @@ def value_update(trajectory: Trajectory, model: Model, optimizer: torch.optim.Op
 
             # Logging
             value_trange.set_postfix({'loss': loss.item()})
-            log_loss.append(loss.item())
-            log_clip_factor.append(clip_factor.item())
-
-    fl['train_value/loss'].extend(log_loss)
-    fl['train_value/clip_factor'].extend(log_clip_factor)
-
-
-def update_trajectory_values(trajectory: Trajectory, model: Model, device: torch.device = torch.device('cpu')):
-    """Update the values in the trajectory after fitting the value model.
-
-    Args:
-        trajectory (Trajectory): The trajectory to update.
-        model (Model): The model to use.
-        device (torch.device): The device to use. Defaults to torch.device('cpu').
-    """
-    stored_obs = trajectory.obs
-    stored_next_obs = trajectory.next_obs
-
-    # Update the values in the trajectory
-    stored_values = model.value_model(stored_obs)
-    stored_next_values = model.value_model(stored_next_obs)
-
-    # Update the trajectory
-    trajectory.values = stored_values
-    trajectory.next_values = stored_next_values
+            fl['train_value/loss'].append(loss.item())
+            fl['train_value/clip_factor'].append(clip_factor.item())
 
 
 def evaluate_benchmark(model: Model, env: Env, device: torch.device = torch.device('cpu')):
@@ -528,13 +212,6 @@ def evaluate_benchmark(model: Model, env: Env, device: torch.device = torch.devi
         neptune_logs (Optional[neptune.Run]): The neptune run to log to if any. Defaults to None.
         device (torch.device): The device to use. Defaults to torch.device('cpu').
     """
-
-    log_entropy: list[float] = []
-    log_reward: list[float] = []
-    log_cumulative_reward: list[float] = []
-    log_final_speedup: list[float] = []
-    log_op_speedups: dict[str, list[float]] = {}
-
     speedup_values: list[float] = []
     nbr_benchmarks = len(env.benchmarks_data)
     eval_trange = trange(nbr_benchmarks, desc='Evaluation')
@@ -547,20 +224,18 @@ def evaluate_benchmark(model: Model, env: Env, device: torch.device = torch.devi
 
         while not bench_done:
             # Select the action using the model
-            action, _, _, entropy = model.sample(obs, [len(state.operation_features.nested_loops)], greedy=True)
+            action, _, _, _, entropy = model.sample(obs, torch.tensor([len(state.operation_features.nested_loops)]), greedy=True)
+            assert len(action) == 1
 
             # Apply the action and get the next state
-            assert len(action) == 1
             next_state, next_obs, reward, op_done, speedup = env.step(state, action[0])
 
-            log_entropy.append(entropy.item())
+            fl['eval/entropy'].append(entropy.item())
             if op_done:
                 cumulative_reward += reward
-                log_reward.append(reward)
+                fl['eval/reward'].append(reward)
             if speedup is not None:
-                if state.operation_features.operation_type not in log_op_speedups:
-                    log_op_speedups[state.operation_features.operation_type] = []
-                log_op_speedups[state.operation_features.operation_type].append(speedup)
+                fl[f'eval/{state.operation_features.operation_type}_speedup'].append(speedup)
 
             if op_done:
                 bench_name = state.bench_name
@@ -589,17 +264,10 @@ def evaluate_benchmark(model: Model, env: Env, device: torch.device = torch.devi
             state = next_state
             obs = next_obs
 
-        log_cumulative_reward.append(cumulative_reward)
+        fl['eval/cumulative_reward'].append(cumulative_reward)
         assert speedup is not None
-        log_final_speedup.append(speedup)
+        fl['eval/final_speedup'].append(speedup)
         speedup_values.append(speedup)
 
     if len(speedup_values) > 0:
         fl['eval/average_speedup'].append(sum(speedup_values) / len(speedup_values))
-
-    fl['eval/entropy'].extend(log_entropy)
-    fl['eval/reward'].extend(log_reward)
-    fl['eval/cumulative_reward'].extend(log_cumulative_reward)
-    fl['eval/final_speedup'].extend(log_final_speedup)
-    for op_type, speedups in log_op_speedups.items():
-        fl[f'eval/{op_type}_speedup'].extend(speedups)
