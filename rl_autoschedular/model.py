@@ -195,7 +195,12 @@ class HiearchyModel(nn.Module):
         transformation_log_p = transformation_dist.log_prob(transformation_index)
         parallelization_log_p = parallelization_dist.log_prob(parallelization_index).sum(-1)
         tiling_log_p = tiling_dist.log_prob(tiling_index).sum(-1)
-        interchange_log_p = interchange_dist.log_prob(interchange_index)
+        if isinstance(interchange_dist, Normal):
+            # Special case in Normal distribution we need to consider all
+            # the interval [i,i+1), so we use log CDF instead of log P
+            interchange_log_p = (interchange_dist.cdf(interchange_index + 1) - interchange_dist.cdf(interchange_index)).log()
+        else:
+            interchange_log_p = interchange_dist.log_prob(interchange_index)
         fusion_log_p = fusion_dist.log_prob(fusion_index).sum(-1)
 
         if eps_dists is not None:
