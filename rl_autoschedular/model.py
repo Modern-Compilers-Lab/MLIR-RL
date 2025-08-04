@@ -192,7 +192,7 @@ class HiearchyModel(nn.Module):
         if isinstance(interchange_dist, Normal):
             # Special case in Normal distribution we need to consider all
             # the interval [i,i+1), so we use log CDF instead of log P
-            interchange_log_p = (interchange_dist.cdf(interchange_index + 1) - interchange_dist.cdf(interchange_index)).log()
+            interchange_log_p = (interchange_dist.cdf(interchange_index + 1) - interchange_dist.cdf(interchange_index) + 1e-8).log()
         else:
             interchange_log_p = interchange_dist.log_prob(interchange_index)
 
