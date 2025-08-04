@@ -35,7 +35,7 @@ def collect_trajectory(model: Model, env: Env, step: int, device: torch.device =
         bench_done = False
         while not bench_done:
             num_loops = len(state.operation_features.nested_loops)
-            action, action_index, action_bev_log_p, _, entropy = model.sample(obs, torch.tensor([num_loops]), eps=eps)
+            action, action_index, action_bev_log_p, entropy = model.sample(obs, torch.tensor([num_loops]), eps=eps)
             assert len(action) == 1 and action_index.size(0) == 1 and action_bev_log_p.size(0) == 1
 
             next_state, next_obs, reward, op_done, speedup = env.step(state, action[0])
@@ -224,7 +224,7 @@ def evaluate_benchmark(model: Model, env: Env, device: torch.device = torch.devi
 
         while not bench_done:
             # Select the action using the model
-            action, _, _, _, entropy = model.sample(obs, torch.tensor([len(state.operation_features.nested_loops)]), greedy=True)
+            action, _, _, entropy = model.sample(obs, torch.tensor([len(state.operation_features.nested_loops)]), greedy=True)
             assert len(action) == 1
 
             # Apply the action and get the next state
