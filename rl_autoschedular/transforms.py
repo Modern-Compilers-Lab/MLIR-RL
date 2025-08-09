@@ -1,11 +1,7 @@
 import os
 import re
 import subprocess
-from typing import Optional, Callable
 from utils.log import print_error
-from rl_autoschedular import config as cfg
-from rl_autoschedular.state import OperationState, OperationFeatures
-import multiprocessing
 
 
 # ====================================== Transform dialect functions ======================================
@@ -440,28 +436,6 @@ def transform_dialect_vectorize(code: str, operation_tag: str, tmp_file_path: st
     return result
 
 
-def transform_dialect_TV(code: str, operation_tag: str, tiling_sizes: list[int], vec_func: Callable[[str, str, str], str], tmp_file_path: str):
-    """Apply the tiling and vectorization transformation to the specified operation in the given code.
-
-    Args:
-        code (str): The code to apply the transformation to.
-        operation_tag (str): The tag of the operation to apply the transformation to.
-        tiling_sizes (list[int]): The tiling sizes to apply.
-        vec_func (Callable[[str, str, str], str]): The vectorization function to apply.
-        tmp_file_path (str): The path to the temporary file to write the code to.
-
-    Returns:
-        str: The code after applying the transformation.
-    """
-    if not code:
-        return code
-
-    code = transform_dialect_tile(code, operation_tag, tiling_sizes, tmp_file_path)
-    code = vec_func(code, operation_tag, tmp_file_path)
-
-    return code
-
-
 def transform_dialect_img2col(code: str, operation_tag: str, tmp_file_path: str):
     """Apply the img2col transformation to the specified operation in the given code.
 
@@ -511,112 +485,7 @@ module attributes {{transform.with_named_sequence}} {{
     return result
 
 
-def apply_transformation(state: OperationState, code: str, transformation: str, parameters: list) -> str:
-    """Apply the specified transformation to the given code.
-
-    Args:
-        state (OperationState): The operation state.
-        code (str): The code to apply the transformation to.
-        transformation (str): The transformation to apply.
-        parameters (list): The parameters of the transformation.
-
-    Returns:
-        str: The code after applying the transformation.
-    """
-    tmp_file = state.tmp_file
-
-    code = code.strip()
-
-    if transformation == 'tiling':
-        new_code = transform_dialect_tile(code, state.operation_tag, parameters, tmp_file)
-    elif transformation == 'parallelization':
-        parallel_params = [0 if state.operation_features.nested_loops[i].iterator_type == "reduction" else parameters[i] for i in range(len(parameters))]
-        tiling_params = [parameters[i] if state.operation_features.nested_loops[i].iterator_type == "reduction" else 0 for i in range(len(parameters))]
-        new_code = transform_dialect_tile(code, state.operation_tag, tiling_params, tmp_file)
-        new_code = transform_dialect_TP(new_code, state.operation_tag, parallel_params, tmp_file)
-    elif transformation == 'interchange':
-        new_code = transform_dialect_interchange(code, state.operation_tag, parameters, tmp_file)
-    elif transformation == 'vectorization':
-        is_legal = is_vectorizable(state.operation_features)
-
-        # Decompose pooling operation to make it vectorizable
-        if not is_legal and state.operation_features.operation_type == 'pooling':
-            # Tile the pooling operation for decomposition
-            tile_sizes = []
-            for i in range(len(state.operation_features.nested_loops)):
-                if i in [2, 4]:
-                    tile_sizes.append(1)
-                else:
-                    tile_sizes.append(0)
-            new_code = transform_dialect_tile(code, state.operation_tag, tile_sizes, tmp_file)
-
-            # Apply the decomposition
-            new_code = apply_conv2d_decomposition(new_code, state.operation_tag, tmp_file)
-
-            # Check if the decomposition was successful
-            # and if so, replace the old code
-            if new_code:
-                is_legal = True
-                code = new_code
-
-        # Apply the vectorization if eligible
-        if not is_legal:
-            raise Exception("Operation is not vectorizable")
-        new_code = transform_dialect_vectorize(code, state.operation_tag, tmp_file)
-    elif transformation == 'no_transformation':
-        new_code = code
-    else:
-        raise ValueError(f"Invalid transformation: {transformation}")
-
-    return new_code
-
-
-def apply_transformation_wrapper(state: OperationState, code: str, transformation: str, parameters: list, return_list):
-    """Wrapper function to apply the transformation with multiprocessing.
-
-    Args:
-        state (OperationState): The operation state.
-        code (str): The code to apply the transformation to.
-        transformation (str): The transformation to apply.
-        parameters (list): The parameters of the transformation.
-        return_list (list): The list to store the result of the transformation.
-    """
-    res = apply_transformation(state, code, transformation, parameters)
-    return_list.append(res)
-
-
-def apply_transformation_with_timeout(state: OperationState, code: str, transformation: str, parameters: list, timeout: Optional[float] = 20) -> str:
-    """Apply the specified transformation to the given code with a timeout.
-
-    Args:
-        state (OperationState): The operation state.
-        code (str): The code to apply the transformation to.
-        transformation (str): The transformation to apply.
-        parameters (list): The parameters of the transformation.
-        timeout (int): The timeout in seconds.
-
-    Returns:
-        str: The code after applying the transformation.
-    """
-    manager = multiprocessing.Manager()
-    return_list = manager.list()
-    process = multiprocessing.Process(target=apply_transformation_wrapper, args=(state, code, transformation, parameters, return_list))
-    process.start()
-    process.join(timeout)
-
-    if process.is_alive():
-        # The function is still running, terminate the process
-        process.terminate()
-        process.join()
-
-        return None
-    else:
-        # The function completed within the timeout
-        return return_list[0]
-
-
 # ========================================= Other functions =========================================
-
 
 def apply_conv2d_decomposition(code: str, operation_tag: str, tmp_file_path: str):
     """Apply the Conv2D decomposition transformation to the specified operation in the given code.
@@ -658,81 +527,3 @@ def apply_conv2d_decomposition(code: str, operation_tag: str, tmp_file_path: str
     result = re.sub(r"module attributes \{transform.with_named_sequence\} \{\s+\}", "", result)
 
     return result
-
-
-def get_ops_by_tags(code: str, operation_tags: list, tmp_file_path: str):
-    """Get operations by using tags in the specified code.
-
-    Args:
-        code (str): The code to apply the transformation to.
-        operation_tags (list): The list of tags of the operations to print.
-        tmp_file_path (str): The path to the temporary file to write the code to.
-
-    Returns:
-        dict[str, str]: containing for each opeartion tag the corresponding operation.
-    """
-    matchs = '\n'.join([f""" %op_{operation_tag} = transform.structured.match attributes{{tag = "{operation_tag}"}} in %arg1 : (!transform.any_op) -> !transform.any_op """ for operation_tag in operation_tags])
-    prints = '\n'.join([f""" transform.print %op_{operation_tag} {{name = "selected_{operation_tag}"}}: !transform.any_op """ for operation_tag in operation_tags])
-
-    code = code.strip()
-    transform_dilaect_code = f"""
-        module attributes {{transform.with_named_sequence}} {{
-            transform.named_sequence @__transform_main(%arg1: !transform.any_op {{transform.readonly}}) {{
-                {matchs}
-
-                {prints}
-
-                transform.yield
-            }}
-        }}"""
-
-    code = code + '\n' + transform_dilaect_code + '\n'
-
-    with open(tmp_file_path, "w") as file:
-        file.write(code)
-
-    result = os.popen(
-        f"{os.getenv('LLVM_BUILD_PATH')}/bin/mlir-opt {tmp_file_path} -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule -o {tmp_file_path}",
-    ).read()
-
-    lines = result.split('\n')
-    res = {}
-
-    i = 0
-    while i < len(lines):
-        if "[[[ IR printer: selected_" in lines[i]:
-            # TODO: Find out another way to do this (current solution may introduce bugs)
-            opreation_id = lines[i][25:-4]
-
-            operation = []
-            i += 1
-            while i < len(lines) and not (("[[[ IR printer: selected_" in lines[i]) or (" = affine_map<" in lines[i]) or ("module attributes" in lines[i])):
-                operation.append(lines[i])
-                i += 1
-
-            operation = '\n'.join(operation)
-            operation = ' '.join(operation.split(' ')[2:])
-            res[opreation_id] = operation
-
-        else:
-            i += 1
-
-    return res
-
-
-def is_vectorizable(operation_features: OperationFeatures) -> bool:
-    """Check if the operation is small enough for vectorization.
-
-    Args:
-        operation_features (OperationFeatures): The operation features.
-
-    Returns:
-        bool: Whether the operation is vectorizable or not.
-    """
-    if not operation_features.vectorizable:
-        return False
-
-    op_iter_space = 1
-    for nested_loop in operation_features.nested_loops:
-        op_iter_space *= nested_loop.upper_bound
-    return op_iter_space <= cfg.vect_size_limit

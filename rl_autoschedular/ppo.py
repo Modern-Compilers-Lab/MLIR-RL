@@ -2,6 +2,8 @@ import torch
 from rl_autoschedular.env import Env
 from rl_autoschedular.model import HiearchyModel as Model
 from rl_autoschedular.trajectory import TrajectoryCollector, TrajectoryData
+from rl_autoschedular.observation import Observation, NumLoops
+from rl_autoschedular.actions import ActionSpace
 from rl_autoschedular import config as cfg
 from rl_autoschedular import file_logger as fl
 from utils.log import print_error
@@ -30,26 +32,23 @@ def collect_trajectory(model: Model, env: Env, step: int, device: torch.device =
 
     traj_trange = trange(cfg.bench_count, desc='Trajectory')
     for _ in traj_trange:
-        state, obs = env.reset()
+        state = env.reset()
         traj_trange.set_postfix({'eps': eps, 'bench': state.bench_name})
         bench_done = False
         while not bench_done:
-            num_loops = len(state.operation_features.nested_loops)
-            action, action_index, action_bev_log_p, entropy = model.sample(obs, torch.tensor([num_loops]), eps=eps)
-            assert len(action) == 1 and action_index.size(0) == 1 and action_bev_log_p.size(0) == 1
+            obs = Observation.from_state(state)
+            action_index, action_bev_log_p, entropy = model.sample(obs, eps=eps)
+            assert action_index.size(0) == 1 and action_bev_log_p.size(0) == 1
+            action = ActionSpace.action_by_index(action_index[0], state)
 
-            next_state, next_obs, reward, op_done, speedup = env.step(state, action[0])
-
-            if 'curiosity' in cfg.exploration:
-                next_state_latent, next_state_latent_hat, _ = model.icm_model(obs, next_obs, action_index)
-                intrinsic_reward = cfg.reward_scale * model.icm_model.forward_model.loss(next_state_latent, next_state_latent_hat).item()
-                reward = (1 - cfg.intrinsic_reward_integration) * reward + cfg.intrinsic_reward_integration * intrinsic_reward
+            next_state, reward, op_done, speedup = env.step(state, action)
+            next_obs = Observation.from_state(next_state)
 
             if op_done:
-                next_state, tmp_next_obs, bench_done = env.get_next_op_state(next_state)
+                next_state, bench_done = env.get_next_op_state(next_state)
 
             tc.append((
-                num_loops,
+                Observation.get_part(obs, NumLoops).long().item(),
                 action_index,
                 obs,
                 next_obs,
@@ -58,19 +57,13 @@ def collect_trajectory(model: Model, env: Env, step: int, device: torch.device =
                 bench_done
             ))
 
-            if op_done:
-                next_obs = tmp_next_obs
-
             fl['train/entropy'].append(entropy.item())
             fl['train/reward'].append(reward)
-            if 'curiosity' in cfg.exploration:
-                fl['train/intrinsic_reward'].append(intrinsic_reward)
             if speedup is not None:
                 fl['train/speedup'].append(speedup)
-                fl[f'train/{state.operation_features.operation_type}_speedup'].append(speedup)
+                fl[f'train/{state.operation_features.operation_type.value}_speedup'].append(speedup)
 
             state = next_state
-            obs = next_obs
         fl['train/final_speedup'].append(speedup)
 
     return tc.to_trajectory()
@@ -93,46 +86,43 @@ def ppo_update(trajectory: TrajectoryData, model: Model, optimizer: torch.optim.
     ppo_trange = trange(cfg.ppo_epochs, desc='PPO Epochs')
     for _ in ppo_trange:
 
-        for (
-            num_loops,
-            actions_index,
-            obs,
-            next_obs,
-            actions_bev_log_p,
-            _, _,
-            values,
-            _,
-            actions_old_log_p,
-            off_policy_rates,
-            returns,
-            advantages,
-        ) in trajectory.loader(cfg.ppo_batch_size):
+        for batch in trajectory.loader(cfg.ppo_batch_size):
+            batch: tuple[torch.Tensor, ...]
+            (
+                _,
+                actions_index,
+                obs,
+                _,
+                actions_bev_log_p,
+                _, _,
+                values,
+                _,
+                actions_old_log_p,
+                off_policy_rates,
+                returns,
+                advantages,
+            ) = batch
             # Advantages batch normalization
             max_abs_adv = advantages.abs().max()
-            if cfg.normalize_adv == 'standard':
+            if cfg.normalize_adv == 'standard' and advantages.size(0) > 1:
                 advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
             elif cfg.normalize_adv == 'max-abs' and max_abs_adv > 0:
                 advantages = advantages / max_abs_adv
 
             with torch.enable_grad():
-                actions_log_p, new_values, entropy = model(obs, num_loops, actions_index)
+                actions_log_p, new_values, entropy = model(obs, actions_index)
 
-                policy_loss = model.policy_model.loss(actions_log_p, actions_bev_log_p, off_policy_rates, advantages)
+                policy_loss, clip_frac = model.policy_model.loss(actions_log_p, actions_bev_log_p, off_policy_rates, advantages)
                 loss = policy_loss
 
                 if cfg.value_epochs == 0:
                     value_loss = model.value_model.loss(new_values, values, returns)
                     loss += cfg.value_coef * value_loss
 
-                if 'curiosity' in cfg.exploration:
-                    next_states_latent, next_states_latent_hat, action_logits = model.icm_model(obs, next_obs, actions_index)
-                    curiosity_loss = model.icm_model.loss(next_states_latent, next_states_latent_hat, action_logits, actions_index)
-                    loss += cfg.curiosity_coef * curiosity_loss
                 if 'entropy' in cfg.exploration:
                     entropy_loss = -entropy.mean()
                     loss += cfg.entropy_coef * entropy_loss
 
-            # clip_frac = (torch.abs((ratios - 1.0)) > 0.2).float().mean()
             approx_kl = (actions_old_log_p - actions_log_p).pow(2).mean() / 2
 
             optimizer.zero_grad()
@@ -150,13 +140,11 @@ def ppo_update(trajectory: TrajectoryData, model: Model, optimizer: torch.optim.
                 'value_loss': value_loss.item() if cfg.value_epochs == 0 else None
             })
             fl['train_ppo/policy_loss'].append(policy_loss.item())
-            # log_clip_frac.append(clip_frac.item())
+            fl['train_ppo/clip_frac'].append(clip_frac.item())
             fl['train_ppo/clip_factor'].append(clip_factor.item())
             fl['train_ppo/approx_kl'].append(approx_kl.item())
             if cfg.value_epochs == 0:
                 fl['train_ppo/value_loss'].append(value_loss.item())
-            if 'curiosity' in cfg.exploration:
-                fl['train_ppo/curiosity_loss'].append(curiosity_loss.item())
             if 'entropy' in cfg.exploration:
                 fl['train_ppo/entropy_loss'].append(entropy_loss.item())
 
@@ -175,15 +163,17 @@ def value_update(trajectory: TrajectoryData, model: Model, optimizer: torch.opti
     value_trange = trange(cfg.value_epochs, desc='Value Epochs')
     for _ in value_trange:
 
-        for (
-            _, _,
-            obs,
-            _, _, _, _,
-            values,
-            _, _, _,
-            returns,
-            _,
-        ) in trajectory.loader(cfg.value_batch_size):
+        for batch in trajectory.loader(cfg.value_batch_size):
+            batch: tuple[torch.Tensor, ...]
+            (
+                _, _,
+                obs,
+                _, _, _, _,
+                values,
+                _, _, _,
+                returns,
+                _,
+            ) = batch
             with torch.enable_grad():
                 new_values = model.value_model(obs)
 
@@ -213,56 +203,39 @@ def evaluate_benchmark(model: Model, env: Env, device: torch.device = torch.devi
         device (torch.device): The device to use. Defaults to torch.device('cpu').
     """
     speedup_values: list[float] = []
-    nbr_benchmarks = len(env.benchmarks_data)
-    eval_trange = trange(nbr_benchmarks, desc='Evaluation')
+    eval_trange = trange(len(env.benchmarks_data), desc='Evaluation')
     for i in eval_trange:
         # Reset the environement with the specific benchmark
-        state, obs = env.reset(i)
-
+        state = env.reset(i)
         bench_done = False
         cumulative_reward = 0
-
         while not bench_done:
-            # Select the action using the model
-            action, _, _, entropy = model.sample(obs, torch.tensor([len(state.operation_features.nested_loops)]), greedy=True)
-            assert len(action) == 1
+            obs = Observation.from_state(state)
+            action_index, _, entropy = model.sample(obs, greedy=True)
+            assert action_index.size(0) == 1
+            action = ActionSpace.action_by_index(action_index[0], state)
 
-            # Apply the action and get the next state
-            next_state, next_obs, reward, op_done, speedup = env.step(state, action[0])
+            next_state, reward, op_done, speedup = env.step(state, action)
 
             fl['eval/entropy'].append(entropy.item())
             if op_done:
                 cumulative_reward += reward
                 fl['eval/reward'].append(reward)
             if speedup is not None:
-                fl[f'eval/{state.operation_features.operation_type}_speedup'].append(speedup)
+                fl[f'eval/{state.operation_features.operation_type.value}_speedup'].append(speedup)
 
             if op_done:
                 bench_name = state.bench_name
                 exec_time = next_state.exec_time
                 transformation_history = next_state.transformation_history.copy()
 
-                next_state, next_obs, bench_done = env.get_next_op_state(next_state)
+                next_state, bench_done = env.get_next_op_state(next_state)
                 if bench_done:
-                    optimizations_lines = []
-                    last_idx = 0
-                    for op in transformation_history:
-                        if op[0] == 'done':
-                            optimizations_lines.insert(last_idx, f"\t- operation {op[1][0]}:")
-                            last_idx = len(optimizations_lines)
-                        elif op[0] in ['no_transformation', 'vectorization']:
-                            optimizations_lines.append(f"\t\t- {op[0].replace('_', ' ')}()")
-                        elif op[0] == 'parallelization':
-                            optimizations_lines.append(f"\t\t- tiled parallelization({', '.join(map(str, op[1]))})")
-                        else:
-                            optimizations_lines.append(f"\t\t- {op[0]}({', '.join(map(str, op[1]))})")
-                    optimizations_lines_str = '\n'.join(optimizations_lines)
-                    print(f"\033[92m\n- Bench: {bench_name}\n- Schedule:\n{optimizations_lines_str}\n- Speedup: {speedup}\033[0m")
+                    print(f"\033[92m\n- Bench: {bench_name}\n- Schedule:\n{transformation_history}\n- Speedup: {speedup}\033[0m")
                     fl[f'eval/exec_time/{bench_name}'].append(exec_time)
                     fl[f'eval/speedup/{bench_name}'].append(speedup)
 
             state = next_state
-            obs = next_obs
 
         fl['eval/cumulative_reward'].append(cumulative_reward)
         assert speedup is not None

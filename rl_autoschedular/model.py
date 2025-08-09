@@ -1,8 +1,13 @@
 import torch
 import torch.nn as nn
-from torch.distributions import Categorical, Binomial, Normal, Distribution, Uniform
-from typing import Optional, Union
+from torch.distributions import Distribution
+from typing import Optional
 from rl_autoschedular import config as cfg
+from rl_autoschedular.actions import ActionSpace, Interchange
+from rl_autoschedular.observation import OpFeatures, ActionHistory, Observation, ObservationPart
+
+
+ACTIVATION = nn.ReLU if cfg.activation == 'relu' else nn.Tanh
 
 
 class HiearchyModel(nn.Module):
@@ -11,234 +16,81 @@ class HiearchyModel(nn.Module):
         """Initialize the model."""
         super(HiearchyModel, self).__init__()
 
-        N = cfg.num_transformations
-        L = cfg.max_num_loops
-        D = cfg.max_num_load_store_dim
-        SD = cfg.max_num_stores_loads
-        TS = cfg.num_tile_sizes
+        self.policy_model = PolicyModel([OpFeatures, ActionHistory])
+        self.value_model = ValueModel([OpFeatures, ActionHistory])
 
-        match cfg.interchange_mode:
-            case 'enumerate':
-                interchange_mask = 3 * L - 6
-                interchange_input = 0
-            case 'pointers':
-                interchange_mask = L
-                interchange_input = L
-            case 'continuous':
-                interchange_mask = 0
-                interchange_input = 0
+    def __call__(self, obs: torch.Tensor, actions_index: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        return super().__call__(obs, actions_index)
 
-        self.input_dim = 5 + L + L + 1 + L * D * SD + L * D + 5 + interchange_input + cfg.truncate * 3 * L
-        self.action_mask_size = N + 2 * L * (TS + 1) + interchange_mask
-
-        self.policy_model = PolicyModel(self.input_dim, self.action_mask_size)
-        self.value_model = ValueModel(self.input_dim, self.action_mask_size)
-
-        if 'curiosity' in cfg.exploration:
-            self.icm_model = ICMModel(self.input_dim, self.action_mask_size)
-
-    def __call__(self, obs: torch.Tensor, num_loops: torch.Tensor, actions_index: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        return super().__call__(obs, num_loops, actions_index)
-
-    def forward(self, obs: torch.Tensor, num_loops: torch.Tensor, actions_index: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, obs: torch.Tensor, actions_index: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Forward pass of the model.
 
         Args:
-            x (torch.Tensor): The input tensor.
+            obs (torch.Tensor): The input tensor.
+            actions_index (torch.Tensor): The list of actions.
 
         Returns:
             tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: The logits of the transformations, parallelizations, tilings, and interchanges.
         """
-        action_log_p, entropy = self.__calculate_dist_stats(
-            list(self.policy_model(obs, num_loops)),
-            list(decode_actions_index(actions_index))
-        )
+        actions_log_p, entropies = ActionSpace.distributions_stats(self.policy_model(obs), actions_index)
 
         values = self.value_model(obs)
 
-        return action_log_p, values, entropy
+        return actions_log_p, values, entropies
 
-    def sample(self, obs: torch.Tensor, num_loops: torch.Tensor, greedy: bool = False, eps: Optional[float] = None) -> tuple[list[tuple[str, Optional[Union[list[int], int]]]], torch.Tensor, torch.Tensor, torch.Tensor]:
+    def sample(self, obs: torch.Tensor, greedy: bool = False, eps: Optional[float] = None) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Sample an action from the model.
 
         Args:
             obs (torch.Tensor): The input tensor.
-            num_loops (torch.Tensor): The number of loops for each element in the batch.
+            greedy (bool): Whether to sample greedily.
+            eps (Optional[float]): Epsilon value for exploration. Defaults to None.
 
         Returns:
-            list[tuple[str, Optional[Union[list[int], int]]]]: list of actions.
+            torch.Tensor: Sampled actions index.
             torch.Tensor: actions log probability.
-            torch.Tensor: actions value.
             torch.Tensor: resulting entropy.
         """
         assert not greedy or eps is None, 'Cannot be greedy and explore at the same time.'
 
         # Model feedforward
-        transformation_dist, parallelization_dist, tiling_dist, interchange_dist = self.policy_model(obs, num_loops)
-
-        # Sample actions
-        if greedy:
-            # Get the indices of the maximum probability
-            transformation_index = transformation_dist.probs.argmax(-1)
-            parallelization_index = parallelization_dist.probs.argmax(-1)
-            tiling_index = tiling_dist.probs.argmax(-1)
-            if cfg.interchange_mode == 'continuous':
-                interchange_index = interchange_dist.mean.long()
-            else:
-                interchange_index = interchange_dist.probs.argmax(-1)
-        else:
-            if eps is not None:
-                transformation_eps_dist, parallelization_eps_dist, tiling_eps_dist, interchange_eps_dist = self.__create_uniform_distributions(obs, num_loops)
-            if eps is not None and torch.rand(1).item() < eps:
-                # Sample actions uniformly
-                transformation_index = transformation_eps_dist.sample()
-                parallelization_index = parallelization_eps_dist.sample()
-                tiling_index = tiling_eps_dist.sample()
-                interchange_index = interchange_eps_dist.sample().long()
-            else:
-                # Sample actions
-                transformation_index = transformation_dist.sample()
-                parallelization_index = parallelization_dist.sample()
-                tiling_index = tiling_dist.sample()
-                interchange_index = interchange_dist.sample().long()
-
-        if cfg.interchange_mode == 'continuous':
-            # Clamp interchange index to [0, num_loops! - 1]
-            total_count = (num_loops + 1).lgamma().exp().long()
-            interchange_index = interchange_index.clamp(torch.zeros_like(total_count, dtype=torch.int64), total_count - 1)
-
-        # Get raw actions from indices
-        actions = indices_to_raw_actions(transformation_index, parallelization_index, tiling_index, interchange_index, num_loops)
-        actions_index = encode_actions_index(transformation_index, parallelization_index, tiling_index, interchange_index)
-
-        # Calculate the log probabilities and entropies
-        action_log_p, entropy = self.__calculate_dist_stats(
-            [transformation_dist, parallelization_dist, tiling_dist, interchange_dist],
-            [transformation_index, parallelization_index, tiling_index, interchange_index],
-            eps_dists=[transformation_eps_dist, parallelization_eps_dist, tiling_eps_dist, interchange_eps_dist] if eps is not None else None,
+        distributions = self.policy_model(obs)
+        eps_distributions = ActionSpace.uniform_distributions(obs)
+        actions_index = ActionSpace.sample(
+            obs,
+            distributions,
+            eps_distributions,
+            uniform=eps is not None and torch.rand(1).item() < eps,
+            greedy=greedy
+        )
+        actions_log_p, entropies = ActionSpace.distributions_stats(
+            distributions,
+            actions_index,
+            eps_distributions=eps_distributions if eps is not None else None,
             eps=eps
         )
 
-        return actions, actions_index, action_log_p, entropy
-
-    def __create_uniform_distributions(self, obs: torch.Tensor, num_loops: torch.Tensor) -> tuple[Distribution, Distribution, Distribution, Distribution]:
-        """Create uniform distributions for the actions.
-
-        Args:
-            obs (torch.Tensor): The input tensor.
-
-        Returns:
-            tuple[Distribution, Distribution, Distribution, Distribution]: The uniform distributions for the transformations, parallelizations, tilings, and interchanges.
-        """
-        N = cfg.num_transformations
-        L = cfg.max_num_loops
-        TS = cfg.num_tile_sizes
-        batch_size = obs.shape[0]
-        action_mask = obs[:, -(self.action_mask_size):].bool()
-
-        transformation_logits = torch.zeros((batch_size, N), dtype=torch.float32)
-        parallelization_logits = torch.zeros((batch_size, L, TS + 1), dtype=torch.float32)
-        tiling_logits = torch.zeros((batch_size, L, TS + 1), dtype=torch.float32)
-        match cfg.interchange_mode:
-            case 'enumerate':
-                interchange_logits = torch.zeros((batch_size, 3 * L - 6), dtype=torch.float32)
-            case 'pointers':
-                interchange_logits = torch.zeros((batch_size, L), dtype=torch.float32)
-            case 'continuous':
-                interchange_logits = torch.zeros((batch_size, 1), dtype=torch.float32)
-
-        # Apply masks on logits
-        transformation_logits, parallelization_logits, tiling_logits, interchange_logits = apply_masks(transformation_logits, parallelization_logits, tiling_logits, interchange_logits, *extract_masks(action_mask))
-
-        # Create distributions with the masked probabilities
-        transformation_dist = Categorical(logits=transformation_logits)
-        parallelization_dist = Categorical(logits=parallelization_logits)
-        tiling_dist = Categorical(logits=tiling_logits)
-        if cfg.interchange_mode != 'continuous':
-            interchange_dist = Categorical(logits=interchange_logits)
-        else:
-            total_count = (num_loops + 1).lgamma().exp()
-            interchange_dist = Uniform(0.0, total_count)
-
-        return transformation_dist, parallelization_dist, tiling_dist, interchange_dist
-
-    def __calculate_dist_stats(self, dists: list[Distribution], indices: list[torch.Tensor], eps_dists: Optional[list[Distribution]] = None, eps: Optional[float] = None) -> tuple[torch.Tensor, torch.Tensor]:
-        """Calculate the log probabilities and entropies of the actions.
-
-        Args:
-            transformation_dist (Distribution): The transformation distribution.
-            parallelization_dist (Distribution): The parallelization distribution.
-            tiling_dist (Distribution): The tiling distribution.
-            interchange_dist (Distribution): The interchange distribution.
-            transformation_index (torch.Tensor): The transformation indices.
-            parallelization_index (torch.Tensor): The parallelization indices.
-            tiling_index (torch.Tensor): The tiling indices.
-            interchange_index (torch.Tensor): The interchange indices.
-
-        Returns:
-            torch.Tensor: The log probabilities
-            torch.Tensor: The entropies
-        """
-        assert (eps_dists is None) == (eps is None), 'eps_dists and eps must be both None or both not None.'
-
-        transformation_dist, parallelization_dist, tiling_dist, interchange_dist = dists
-        transformation_index, parallelization_index, tiling_index, interchange_index = indices
-
-        batch_size = transformation_index.shape[0]
-
-        transformation_log_p = transformation_dist.log_prob(transformation_index)
-        parallelization_log_p = parallelization_dist.log_prob(parallelization_index).sum(-1)
-        tiling_log_p = tiling_dist.log_prob(tiling_index).sum(-1)
-        if isinstance(interchange_dist, Normal):
-            # Special case in Normal distribution we need to consider all
-            # the interval [i,i+1), so we use log CDF instead of log P
-            interchange_log_p = (interchange_dist.cdf(interchange_index + 1) - interchange_dist.cdf(interchange_index) + 1e-8).log()
-        else:
-            interchange_log_p = interchange_dist.log_prob(interchange_index)
-
-        if eps_dists is not None:
-            transformation_eps_dist, parallelization_eps_dist, tiling_eps_dist, interchange_eps_dist = eps_dists
-            transformation_log_p = ((1 - eps) * transformation_log_p.exp() + eps * transformation_eps_dist.log_prob(transformation_index).exp()).log()
-            parallelization_log_p = ((1 - eps) * parallelization_log_p.exp() + eps * parallelization_eps_dist.log_prob(parallelization_index).sum(-1).exp()).log()
-            tiling_log_p = ((1 - eps) * tiling_log_p.exp() + eps * tiling_eps_dist.log_prob(tiling_index).sum(-1).exp()).log()
-            interchange_log_p = ((1 - eps) * interchange_log_p.exp() + eps * interchange_eps_dist.log_prob(interchange_index).exp()).log()
-
-        # Calculate the total log probability
-        action_log_p = transformation_log_p
-        action_log_p[transformation_index == 1] += parallelization_log_p[transformation_index == 1]
-        action_log_p[transformation_index == 2] += tiling_log_p[transformation_index == 2]
-        action_log_p[transformation_index == 3] += interchange_log_p[transformation_index == 3]
-
-        # Calculate the entropy
-        entropy = transformation_dist.entropy()
-        entropy[transformation_index == 1] += parallelization_dist.entropy().sum(-1)[transformation_index == 1]
-        entropy[transformation_index == 2] += tiling_dist.entropy().sum(-1)[transformation_index == 2]
-        if not isinstance(interchange_dist, Binomial) or batch_size == 1:
-            entropy[transformation_index == 3] += interchange_dist.entropy()[transformation_index == 3]
-
-        return action_log_p, entropy
+        return actions_index, actions_log_p, entropies
 
 
 class ValueModel(nn.Module):
     """Value model for MLIR code optimization."""
-    def __init__(self, input_dim: int, action_mask_size: int):
+    def __init__(self, obs_parts: list[type[ObservationPart]]):
         """Initialize the model.
 
         Args:
-            input_dim (int): The input dimension.
+            obs_parts (list[type[ObservationPart]]): List of observation parts to be used in the model.
         """
         super(ValueModel, self).__init__()
 
-        self.input_dim = input_dim
-        self.action_mask_size = action_mask_size
-        activation_layer = nn.ReLU if cfg.activation == 'relu' else nn.Tanh
+        self.obs_parts = obs_parts
         self.network = nn.Sequential(
-            nn.Linear(self.input_dim, 512),
-            activation_layer(),
+            nn.Linear(sum(part.size() for part in obs_parts), 512),
+            ACTIVATION(),
             nn.Linear(512, 512),
-            activation_layer(),
+            ACTIVATION(),
             nn.Linear(512, 512),
-            activation_layer(),
+            ACTIVATION(),
             nn.Linear(512, 1),
         )
 
@@ -254,7 +106,7 @@ class ValueModel(nn.Module):
         Returns:
             torch.Tensor: The value tensor.
         """
-        return self.network(obs[:, :-(self.action_mask_size)]).squeeze(-1)
+        return self.network(Observation.get_parts(obs, *self.obs_parts)).squeeze(-1)
 
     def loss(self, new_values: torch.Tensor, values: torch.Tensor, returns: torch.Tensor) -> torch.Tensor:
         """Calculate the value loss.
@@ -275,117 +127,57 @@ class ValueModel(nn.Module):
 
 class PolicyModel(nn.Module):
     """Policy model for MLIR code optimization."""
-    def __init__(self, input_dim: int, action_mask_size: int):
+    def __init__(self, obs_parts: list[type[ObservationPart]]):
         """Initialize the model.
 
         Args:
-            input_dim (int): The input dimension.
+            obs_parts (list[type[ObservationPart]]): List of observation parts to be used in the model.
         """
         super(PolicyModel, self).__init__()
 
-        self.input_dim = input_dim
-        self.action_mask_size = action_mask_size
-        activation_layer = nn.ReLU if cfg.activation == 'relu' else nn.Tanh
-        N = cfg.num_transformations
-        L = cfg.max_num_loops
-        TS = cfg.num_tile_sizes
-
-        match cfg.interchange_mode:
-            case 'enumerate':
-                interchange_layer = nn.Linear(512, 3 * L - 6)
-            case 'pointers':
-                interchange_layer = nn.Linear(512, L)
-            case 'continuous':
-                interchange_layer = nn.Linear(512, 1)
-                if cfg.interchange_distribution == 'normal':
-                    self.interchange_logstd = nn.Parameter(torch.zeros(1))
+        self.obs_parts = obs_parts
+        Interchange.log_std = nn.Parameter(torch.zeros(1))
 
         self.backbone = nn.Sequential(
-            nn.Linear(self.input_dim, 512),
-            activation_layer(),
+            nn.Linear(sum(part.size() for part in obs_parts), 512),
+            ACTIVATION(),
             nn.Linear(512, 512),
-            activation_layer(),
+            ACTIVATION(),
             nn.Linear(512, 512),
-            activation_layer(),
+            ACTIVATION(),
         )
 
-        self.transformation_fc = nn.Linear(512, N)
-        self.parallelization_fc = nn.Linear(512, L * (TS + 1))
-        self.tiling_fc = nn.Linear(512, L * (TS + 1))
-        self.interchange_fc = interchange_layer
+        output_sizes = [ActionSpace.size()] + [action.network_output_size() for action in ActionSpace.supported_actions]
+        self.heads = [nn.Linear(512, output_size) if output_size else None for output_size in output_sizes]
 
         if cfg.new_architecture:
-            self.transformation_fc = nn.Sequential(
-                nn.Linear(512, 512),
-                activation_layer(),
-                self.transformation_fc,
-            )
+            self.heads = [
+                nn.Sequential(
+                    nn.Linear(512, 512),
+                    ACTIVATION(),
+                    head
+                ) if head else None
+                for head in self.heads
+            ]
 
-            self.parallelization_fc = nn.Sequential(
-                nn.Linear(512, 512),
-                activation_layer(),
-                self.parallelization_fc,
-            )
+    def __call__(self, obs: torch.Tensor,) -> list[Optional[Distribution]]:
+        return super().__call__(obs)
 
-            self.tiling_fc = nn.Sequential(
-                nn.Linear(512, 512),
-                activation_layer(),
-                self.tiling_fc,
-            )
-
-            self.interchange_fc = nn.Sequential(
-                nn.Linear(512, 512),
-                activation_layer(),
-                self.interchange_fc,
-            )
-
-    def __call__(self, obs: torch.Tensor, num_loops: torch.Tensor) -> tuple[Distribution, Distribution, Distribution, Distribution]:
-        return super().__call__(obs, num_loops)
-
-    def forward(self, obs: torch.Tensor, num_loops: torch.Tensor) -> tuple[Distribution, Distribution, Distribution, Distribution]:
+    def forward(self, obs: torch.Tensor) -> list[Optional[Distribution]]:
         """Forward pass of the model.
 
         Args:
-            x (torch.Tensor): The input tensor.
+            obs (torch.Tensor): The input tensor.
 
         Returns:
             tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: The logits of the transformations, parallelizations, tilings, and interchanges.
         """
-        L = cfg.max_num_loops
-        TS = cfg.num_tile_sizes
-        batch_size = obs.shape[0]
+        embedded = self.backbone(Observation.get_parts(obs, *self.obs_parts))
+        actions_logits = [head(embedded) if head else None for head in self.heads]
 
-        x = obs[:, :-(self.action_mask_size)]
-        action_mask = obs[:, -(self.action_mask_size):].bool()
+        return ActionSpace.distributions(obs, *actions_logits)
 
-        # Model feedforward
-        x = self.backbone(x)
-
-        transformation_logits = self.transformation_fc(x)
-        parallelization_logits = self.parallelization_fc(x).reshape(batch_size, L, TS + 1)
-        tiling_logits = self.tiling_fc(x).reshape(batch_size, L, TS + 1)
-        interchange_logits = self.interchange_fc(x)
-
-        # Apply masks on logits
-        transformation_logits, parallelization_logits, tiling_logits, interchange_logits = apply_masks(transformation_logits, parallelization_logits, tiling_logits, interchange_logits, *extract_masks(action_mask))
-
-        # Create distributions with the masked probabilities
-        transformation_dist = Categorical(logits=transformation_logits)
-        parallelization_dist = Categorical(logits=parallelization_logits)
-        tiling_dist = Categorical(logits=tiling_logits)
-        if cfg.interchange_mode != 'continuous':
-            interchange_dist = Categorical(logits=interchange_logits)
-        else:
-            interchange_logit = interchange_logits.squeeze(-1)
-            if cfg.interchange_distribution == 'binomial':
-                total_count = (num_loops + 1).lgamma().exp().long()
-                interchange_dist = Binomial(total_count, logits=interchange_logit)
-            else:
-                interchange_dist = Normal(interchange_logit, self.interchange_logstd.clamp(-1, 1).exp())
-
-        return transformation_dist, parallelization_dist, tiling_dist, interchange_dist
-
-    def loss(self, actions_log_p: torch.Tensor, actions_bev_log_p: torch.Tensor, off_policy_rates: torch.Tensor, advantages: torch.Tensor, clip_range: float = 0.2) -> torch.Tensor:
+    def loss(self, actions_log_p: torch.Tensor, actions_bev_log_p: torch.Tensor, off_policy_rates: torch.Tensor, advantages: torch.Tensor, clip_range: float = 0.2) -> tuple[torch.Tensor, torch.Tensor]:
         """Calculate the policy loss.
 
         Args:
@@ -397,430 +189,10 @@ class PolicyModel(nn.Module):
 
         Returns:
             torch.Tensor: The policy loss.
+            float: The ratio clip fraction (for logging purposes)
         """
         ratios = torch.exp(torch.clamp(actions_log_p - actions_bev_log_p, -80.0, 80.0))
         surr1 = ratios * advantages
         surr2 = torch.clamp(ratios, (1 - clip_range) * off_policy_rates, (1 + clip_range) * off_policy_rates) * advantages
-        return - torch.min(surr1, surr2).mean()
-
-
-class ICMModel(nn.Module):
-    """Inverse Curiosity Model for MLIR code optimization."""
-    def __init__(self, input_dim: int, action_mask_size: int):
-        """Initialize the model.
-
-        Args:
-            input_dim (int): The input dimension.
-        """
-        super(ICMModel, self).__init__()
-
-        self.input_dim = input_dim
-        self.action_mask_size = action_mask_size
-        activation_layer = nn.ReLU if cfg.activation == 'relu' else nn.Tanh
-
-        self.encoder = nn.Sequential(
-            nn.Linear(self.input_dim, 512),
-            activation_layer(),
-            nn.Linear(512, 512),
-            activation_layer(),
-            nn.Linear(512, 512),
-        )
-
-        self.forward_model = ForwardModel()
-        self.inverse_model = InverseModel()
-
-    def __call__(self, obs: torch.Tensor, next_obs: torch.Tensor, actions_index: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]:
-        return super().__call__(obs, next_obs, actions_index)
-
-    def forward(self, obs: torch.Tensor, next_obs: torch.Tensor, actions_index: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]:
-        """Forward pass of the model.
-
-        Args:
-            obs (torch.Tensor): The input tensor.
-            next_obs (torch.Tensor): The next input tensor.
-            actions_index (torch.Tensor): The list of actions.
-
-        Returns:
-            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: The logits of the transformations, parallelizations, tilings, and interchanges.
-        """
-        x = obs[:, :-(self.action_mask_size)]
-        next_x = next_obs[:, :-(self.action_mask_size)]
-        action_mask = obs[:, -(self.action_mask_size):].bool()
-
-        state_latent = self.encoder(x)
-        next_state_latent = self.encoder(next_x)
-
-        next_state_latent_hat = self.forward_model(state_latent, actions_index)
-        action_logits_hat = self.inverse_model(state_latent, next_state_latent, action_mask)
-
-        return next_state_latent, next_state_latent_hat, action_logits_hat
-
-    def loss(self, next_states_latent: torch.Tensor, next_states_latent_hat: torch.Tensor, action_logits: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor], actions_index: torch.Tensor) -> torch.Tensor:
-        """Calculate the ICM loss.
-
-        Args:
-            next_states_latent (torch.Tensor): The next latent state tensor.
-            next_states_latent_hat (torch.Tensor): The predicted next latent state tensor.
-            action_logits (tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]): The predicted logits of the actions.
-            actions_index (list[tuple[str, Optional[Union[list[int], int]]]): The list of actions.
-
-        Returns:
-            torch.Tensor: The ICM loss.
-        """
-        return cfg.forward_weight * self.forward_model.loss(next_states_latent, next_states_latent_hat) + (1 - cfg.forward_weight) * self.inverse_model.loss(action_logits, actions_index)
-
-
-class ForwardModel(nn.Module):
-    """Forward model for Inverse Curiosity Model."""
-    def __init__(self):
-        """Initialize the model."""
-        super(ForwardModel, self).__init__()
-
-        N = cfg.num_transformations
-        L = cfg.max_num_loops
-        TS = cfg.num_tile_sizes
-        activation_layer = nn.ReLU if cfg.activation == 'relu' else nn.Tanh
-
-        self.transformation_encoder = nn.Embedding(N, 8)
-        self.parallelization_encoder = nn.Embedding(TS + 1, 8)
-        self.tiling_encoder = nn.Embedding(TS + 1, 8)
-        match cfg.interchange_mode:
-            case 'enumerate':
-                self.interchange_encoder = nn.Embedding(3 * L - 6, 8)
-            case 'pointers':
-                self.interchange_encoder = nn.Embedding(L, 8)
-            case 'continuous':
-                self.interchange_encoder = nn.Linear(1, 8)
-        self.action_encoder = nn.Sequential(
-            nn.Linear(16 * (L + 1), 512),
-            activation_layer(),
-            nn.Linear(512, 512),
-            activation_layer(),
-            nn.Linear(512, 512),
-        )
-
-        self.network = nn.Sequential(
-            nn.Linear(512 + 512, 512),
-            activation_layer(),
-            nn.Linear(512, 512),
-            activation_layer(),
-            nn.Linear(512, 512),
-        )
-
-    def __call__(self, state_latent: torch.Tensor, actions_index: torch.Tensor) -> torch.Tensor:
-        return super().__call__(state_latent, actions_index)
-
-    def forward(self, state_latent: torch.Tensor, actions_index: torch.Tensor) -> torch.Tensor:
-        """Forward pass of the model.
-
-        Args:
-            state_latent (torch.Tensor): The latent state tensor.
-            actions_index (torch.Tensor): The list of actions.
-
-        Returns:
-            torch.Tensor: The predicted latent state tensor.
-        """
-        batch_size = state_latent.shape[0]
-
-        transformation_index, parallelization_index, tiling_index, interchange_index = decode_actions_index(actions_index)
-
-        transformation_latent = self.transformation_encoder(transformation_index)
-        parallelization_latent = self.parallelization_encoder(parallelization_index).reshape(batch_size, -1)
-        tiling_latent = self.tiling_encoder(tiling_index).reshape(batch_size, -1)
-        interchange_latent = self.interchange_encoder(interchange_index)
-
-        action_latent = torch.cat((transformation_latent, parallelization_latent, tiling_latent, interchange_latent), dim=-1)
-
-        action_latent = self.action_encoder(action_latent)
-
-        x = torch.cat((action_latent, state_latent), dim=-1)
-        x = self.network(x)
-
-        return x
-
-    def loss(self, next_states_latent: torch.Tensor, next_states_latent_hat: torch.Tensor) -> torch.Tensor:
-        """Calculate the forward model loss.
-
-        Args:
-            next_states_latent (torch.Tensor): The next latent state tensor.
-            next_states_latent_hat (torch.Tensor): The predicted next latent state tensor.
-
-        Returns:
-            torch.Tensor: The forward model loss.
-        """
-        return 0.5 * (next_states_latent_hat - next_states_latent).norm(2, dim=-1).pow(2).mean()
-
-
-class InverseModel(nn.Module):
-    """Inverse model for Inverse Curiosity Model."""
-    def __init__(self):
-        """Initialize the model.
-
-        Args:
-            input_dim (int): The input dimension.
-        """
-        super(InverseModel, self).__init__()
-        self.disc_loss = nn.CrossEntropyLoss(reduction='none')
-        self.cont_loss = nn.MSELoss(reduction='none')
-
-        N = cfg.num_transformations
-        L = cfg.max_num_loops
-        TS = cfg.num_tile_sizes
-        activation_layer = nn.ReLU if cfg.activation == 'relu' else nn.Tanh
-
-        match cfg.interchange_mode:
-            case 'enumerate':
-                interchange_layer = nn.Linear(512, 3 * L - 6)
-            case 'pointers':
-                interchange_layer = nn.Linear(512, L)
-            case 'continuous':
-                interchange_layer = nn.Linear(512, 1)
-
-        self.backbone = nn.Sequential(
-            nn.Linear(512 * 2, 512),
-            activation_layer(),
-            nn.Linear(512, 512),
-            activation_layer(),
-            nn.Linear(512, 512),
-        )
-
-        self.transformation_fc = nn.Linear(512, N)
-        self.parallelization_fc = nn.Linear(512, L * (TS + 1))
-        self.tiling_fc = nn.Linear(512, L * (TS + 1))
-        self.interchange_fc = interchange_layer
-
-    def __call__(self, state_latent: torch.Tensor, next_state_latent: torch.Tensor, action_mask: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        return super().__call__(state_latent, next_state_latent, action_mask)
-
-    def forward(self, state_latent: torch.Tensor, next_state_latent: torch.Tensor, action_mask: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Forward pass of the model.
-
-        Args:
-            state_latent (torch.Tensor): The latent state tensor.
-            next_state_latent (torch.Tensor): The next latent state tensor.
-
-        Returns:
-            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: The logits of the transformations, parallelizations, tilings, and interchanges.
-        """
-        L = cfg.max_num_loops
-        TS = cfg.num_tile_sizes
-        batch_size = state_latent.shape[0]
-
-        x = torch.cat((state_latent, next_state_latent), dim=-1)
-
-        x = self.backbone(x)
-
-        transformation_logits = self.transformation_fc(x)
-        parallelization_logits = self.parallelization_fc(x).reshape(batch_size, L, TS + 1)
-        tiling_logits = self.tiling_fc(x).reshape(batch_size, L, TS + 1)
-        interchange_logits = self.interchange_fc(x)
-
-        return apply_masks(transformation_logits, parallelization_logits, tiling_logits, interchange_logits, *extract_masks(action_mask))
-
-    def loss(self, action_logits: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor], actions_index: torch.Tensor) -> torch.Tensor:
-        """Calculate the inverse model loss.
-
-        Args:
-            action_logits (tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]): The predicted logits of the actions.
-            actions_index (torch.Tensor): The list of actions.
-
-        Returns:
-            torch.Tensor: The inverse model loss.
-        """
-        L = cfg.max_num_loops
-        TS = cfg.num_tile_sizes
-        batch_size = actions_index.size(0)
-
-        transformation_index, parallelization_index, tiling_index, interchange_index = decode_actions_index(actions_index)
-        transformation_logits_hat, parallelization_logits_hat, tiling_logits_hat, interchange_logits_hat = action_logits
-
-        transformation_loss = self.disc_loss(transformation_logits_hat, transformation_index)
-        parallelization_loss = self.disc_loss(parallelization_logits_hat.reshape(batch_size * L, TS + 1), parallelization_index.reshape(-1)).reshape(batch_size, L).sum(-1)
-        tiling_loss = self.disc_loss(tiling_logits_hat.reshape(batch_size * L, TS + 1), tiling_index.reshape(-1)).reshape(batch_size, L).sum(-1)
-        if cfg.interchange_mode == 'continuous':
-            interchange_loss = self.cont_loss(interchange_logits_hat.squeeze(-1), interchange_index.float())
-        else:
-            interchange_loss = self.disc_loss(interchange_logits_hat, interchange_index)
-
-        loss = transformation_loss
-        loss[transformation_index == 1] += parallelization_loss[transformation_index == 1]
-        loss[transformation_index == 2] += tiling_loss[transformation_index == 2]
-        loss[transformation_index == 3] += interchange_loss[transformation_index == 3]
-
-        return loss.mean()
-
-
-def extract_masks(action_mask: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Extract masks from the action mask tensor.
-
-    Args:
-        action_mask (torch.Tensor): The action mask tensor.
-
-    Returns:
-        tuple[Tensor, Tensor, Tensor, Tensor]: The masks for the transformations, parallelizations, tilings, and interchanges.
-    """
-    batch_size = action_mask.shape[0]
-    N = cfg.num_transformations
-    L = cfg.max_num_loops
-    TS = cfg.num_tile_sizes
-    TP_BEGIN = N
-    T_BEGIN = TP_BEGIN + L * (TS + 1)
-    I_BEGIN = T_BEGIN + L * (TS + 1)
-
-    transform_mask = action_mask[:, :N]
-    TP_mask = action_mask[:, TP_BEGIN:T_BEGIN].reshape(batch_size, L, TS + 1)
-    T_mask = action_mask[:, T_BEGIN:I_BEGIN].reshape(batch_size, L, TS + 1)
-    if cfg.interchange_mode == 'continuous':
-        I_mask = torch.ones((batch_size, 1), dtype=torch.bool)
-    else:
-        I_mask = action_mask[:, I_BEGIN:]
-
-    return transform_mask, TP_mask, T_mask, I_mask
-
-
-def apply_masks(*args: torch.Tensor, value: float = -torch.inf) -> list[torch.Tensor]:
-    """Apply masks to the logits tensors.
-
-    Args:
-        args (torch.Tensor): The logits tensors followed by the action mask tensors.
-
-    Returns:
-        torch.Tensor: The masked logits tensors.
-    """
-    args_count = len(args)
-    assert args_count % 2 == 0, 'The number of arguments must be even.'
-    logits = args[:args_count // 2]
-    action_masks = args[args_count // 2:]
-    masked_logits = []
-    for logit, action_mask in zip(logits, action_masks):
-        masked_logits.append(logit.where(action_mask, value))
-
-    return masked_logits
-
-
-def transformation_to_int(transformation: str) -> int:
-    """Convert a transformation string to an integer.
-
-    Args:
-        transformation (str): The transformation string.
-
-    Returns:
-        int: The transformation integer.
-    """
-    return {
-        'no_transformation': 0,
-        'parallelization': 1,
-        'tiling': 2,
-        'interchange': 3,
-        'vectorization': 4,
-    }[transformation]
-
-
-def int_to_transformation(transformation: int) -> str:
-    """Convert an integer to a transformation string.
-
-    Args:
-        transformation (int): The transformation integer.
-
-    Returns:
-        str: The transformation string.
-    """
-    return {
-        0: 'no_transformation',
-        1: 'parallelization',
-        2: 'tiling',
-        3: 'interchange',
-        4: 'vectorization',
-    }[transformation]
-
-
-def decode_actions_index(index: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Convert actions index to separate indices
-    Args:
-        torch.Tensor: the actions index
-    Returns:
-        tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: The indices tensors for the transformations, parallelizations, tilings, and interchanges.
-    """
-    L = cfg.max_num_loops
-    TP_BEGIN = 1
-    T_BEGIN = TP_BEGIN + L
-    I_BEGIN = T_BEGIN + L
-
-    transformation_index = index[:, 0]
-    parallelization_index = index[:, TP_BEGIN:T_BEGIN]
-    tiling_index = index[:, T_BEGIN:I_BEGIN]
-    interchange_index = index[:, I_BEGIN]
-
-    return transformation_index, parallelization_index, tiling_index, interchange_index
-
-
-def encode_actions_index(transformation_index: torch.Tensor, parallelization_index: torch.Tensor, tiling_index: torch.Tensor, interchange_index: torch.Tensor) -> torch.Tensor:
-    """Convert separate indices to actions index
-    Args:
-        torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor: The indices tensors for the transformations, parallelizations, tilings, and interchanges.
-    Returns:
-        torch.Tensor: the action index
-    """
-    return torch.cat((
-        transformation_index.unsqueeze(-1),
-        parallelization_index,
-        tiling_index,
-        interchange_index.unsqueeze(-1),
-    ), dim=-1)
-
-
-def raw_actions_to_indices(actions: list[tuple[str, Optional[Union[list[int], int]]]]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Convert a list of actions to tensor of indices.
-
-    Args:
-        actions (Optional[list[tuple[str, Optional[Union[list[int], int]]]]): The list of actions.
-
-    Returns:
-        tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: The indices tensors for the transformations, parallelizations, tilings, and interchanges.
-    """
-    L = cfg.max_num_loops
-    batch_size = len(actions)
-    transformation_index = torch.tensor([transformation_to_int(name) for name, _ in actions], dtype=torch.int64)
-
-    parallelization_index = torch.zeros((batch_size, L), dtype=torch.int64)
-    tiling_index = torch.zeros((batch_size, L), dtype=torch.int64)
-    interchange_index = torch.zeros((batch_size,), dtype=torch.int64)
-    for i, action in enumerate(actions):
-        action_name, parameters = action
-        match action_name:
-            case 'parallelization':
-                parallelization_index[i, :len(parameters)] = torch.tensor(parameters)
-            case 'tiling':
-                tiling_index[i, :len(parameters)] = torch.tensor(parameters)
-            case 'interchange':
-                interchange_index[i] = parameters
-
-    return transformation_index, parallelization_index, tiling_index, interchange_index
-
-
-def indices_to_raw_actions(transformation_index: torch.Tensor, parallelization_index: torch.Tensor, tiling_index: torch.Tensor, interchange_index: torch.Tensor, num_loops: torch.Tensor) -> list[tuple[str, Optional[Union[list[int], int]]]]:
-    """Convert tensor indices to a list of actions.
-
-    Args:
-        transformation_index (torch.Tensor): The transformation indices.
-        parallelization_index (torch.Tensor): The parallelization indices.
-        tiling_index (torch.Tensor): The tiling indices.
-        interchange_index (torch.Tensor): The interchange indices.
-
-    Returns:
-        list[tuple[str, Optional[Union[list[int], int]]]]: The list of actions.
-    """
-    actions = []
-    for i in range(transformation_index.shape[0]):
-        transformation = int_to_transformation(transformation_index[i].item())
-        parameters = None
-        match transformation:
-            case 'parallelization':
-                parameters = parallelization_index[i, :num_loops[i]].tolist()
-            case 'tiling':
-                parameters = tiling_index[i, :num_loops[i]].tolist()
-            case 'interchange':
-                parameters = interchange_index[i].item()
-        actions.append((transformation, parameters))
-
-    return actions
+        clip_frac = (torch.abs((ratios - 1)) > clip_range).float().mean()
+        return - torch.min(surr1, surr2).mean(), clip_frac

@@ -103,6 +103,7 @@ def evaluate_code_with_bindings(code: str) -> tuple[Optional[int], Union[Excepti
         pm.run(module.operation)
     execution_engine = ExecutionEngine(
         module,
+        opt_level=3,
         shared_libs=os.getenv("MLIR_SHARED_LIBS", "").split(","),
     )
 
@@ -304,30 +305,11 @@ def __get_code_cache_key(state: OperationState, bench_data: BenchmarkFeatures) -
     Returns:
         str: the code cache key.
     """
-    trans_codes = {
-        'no_transformation': 'N',
-        'parallelization': 'P',
-        'tiling': 'T',
-        'interchange': 'I',
-        'vectorization': 'V'
-    }
-
     ops_codes = [''] * len(bench_data.operation_tags)
-    code = ''
-    for transformation, parameters in state.transformation_history:
-        if transformation == 'done':
-            ops_codes[parameters[0]] = code
-            code = ''
-            continue
+    for i, seq in enumerate(reversed(state.transformation_history)):
+        ops_codes[i] = ''.join(map(str, seq))
 
-        params_str = ','.join([str(p) for p in parameters])
-        code += f'{trans_codes[transformation]}({params_str})'
-
-    assert transformation != 'done'
-    last_op_idx = bench_data.operation_tags.index(state.operation_tag)
-    ops_codes[last_op_idx] = code
-
-    return '|'.join(ops_codes)
+    return '|'.join(reversed(ops_codes))
 
 
 def __create_inputs(code) -> list[np.ndarray]:

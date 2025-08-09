@@ -1,9 +1,25 @@
 from dataclasses import dataclass
-from typing import Literal, Optional
-import numpy as np
+from typing import TYPE_CHECKING, Optional
+from enum import Enum
+import re
+import os
+import subprocess
+
+if TYPE_CHECKING:
+    from rl_autoschedular.actions.base import Action
 
 
-OperationType = Literal["generic", "matmul", "conv_2d", "pooling", "add"]
+class OperationType(Enum):
+    Generic = 'generic'
+    Matmul = 'matmul'
+    Conv2D = 'conv_2d'
+    Pooling = 'pooling'
+    Add = 'add'
+
+
+class IteratorType(Enum):
+    Parallel = 'parallel'
+    Reduction = 'reduction'
 
 
 @dataclass
@@ -17,7 +33,7 @@ class NestedLoopFeatures:
     """The upper bound of the loop."""
     step: int
     """The loop step."""
-    iterator_type: Literal["parallel", "reduction"]
+    iterator_type: IteratorType
     """The type of the loop iterator."""
 
     def copy(self):
@@ -93,20 +109,16 @@ class OperationState:
     """The latest validated benchmark code (if not in inference, this will always be the original code)."""
     transformed_code: str
     """The operation string with wrapping and transformations."""
-    actions: np.ndarray
-    """Action parameters for parallelization, tiling and interchange. The shape is (truncate, 3, MAX_NUM_LOOPS)."""
-    action_mask: np.ndarray
-    """Mask for the actions. The shape is (5 + L + L) where L = MAX_NUM_LOOPS."""
     step_count: int
     """The current step in the list of transformations applied to the operation."""
     exec_time: int
     """Execution time of the operation in nanoseconds."""
-    transformation_history: list[tuple[str, list[int]]]
+    transformation_history: list[list['Action']]
     """List of transformations with their parameters applied to the operation."""
-    interchange_permutation: list[int]
-    """Current permutation of the interchange transformation (used only)."""
     tmp_file: str
     """Temporary file to store the MLIR code."""
+    terminal: bool
+    """Flag that determines if the state is terminal"""
 
     def copy(self):
         """Copy the current OperationState object."""
@@ -116,25 +128,158 @@ class OperationState:
             self.operation_features.copy(),
             self.validated_code,
             self.transformed_code,
-            self.actions.copy(),
-            self.action_mask.copy(),
             self.step_count,
             self.exec_time,
-            [(transformation, params.copy()) for transformation, params in self.transformation_history],
-            self.interchange_permutation.copy(),
-            self.tmp_file
+            [seq.copy() for seq in self.transformation_history],
+            self.tmp_file,
+            self.terminal
         )
 
-    def last_op_history_index(self) -> Optional[int]:
-        """Get the index of the beginning of the history of the last operation."""
-        history_len = len(self.transformation_history)
-        if history_len == 0:
-            return None
-        if self.transformation_history[-1][0] == 'done':
-            return None
-        i = history_len - 1
-        while i > 0 and self.transformation_history[i][0] != 'done':
-            i -= 1
-        if self.transformation_history[i][0] == 'done':
-            return i + 1
-        return i
+
+def extract_bench_features_from_code(bench_name: str, code: str, root_execution_time: int):
+    """Extract benchmark features from the given code.
+
+    Args:
+        bench_name (str): the benchmark name
+        code (str): the code to extract features from
+        root_execution_time (int): the root execution time
+        execution_time (int): the execution time
+
+    Returns:
+        BenchmarkFeatures: the extracted benchmark features
+    """
+    result = subprocess.run(
+        f'{os.getenv("AST_DUMPER_BIN_PATH")} -',
+        shell=True,
+        input=code.encode('utf-8'),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+    raw_ast_info = result.stdout.decode('utf-8')
+
+    return __extract_bench_features_from_ast_result(bench_name, raw_ast_info, root_execution_time)
+
+
+def extract_bench_features_from_file(bench_name: str, file_path: str, root_execution_time: int):
+    """Extract benchmark features from the code in the file.
+
+    Args:
+        bench_name (str): the benchmark name
+        file_path (str): the file path
+        root_execution_time (int): the root execution time
+        execution_time (int): the execution time
+
+    Returns:
+        BenchmarkFeatures: the extracted benchmark features
+    """
+    result = subprocess.run(
+        f'{os.getenv("AST_DUMPER_BIN_PATH")} {file_path}',
+        shell=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+    raw_ast_info = result.stdout.decode('utf-8')
+
+    return __extract_bench_features_from_ast_result(bench_name, raw_ast_info, root_execution_time)
+
+
+def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str, root_execution_time: int):
+    """Extracts benchmark features from the code's AST result and execution time.
+
+    Args:
+        bench_name (str): the benchmark name
+        raw_ast_info (str): the raw AST information
+        root_execution_time (int): the root execution time
+        execution_time (int): the execution time
+
+    Returns:
+        BenchmarkFeatures: extracted benchmark features
+    """
+    info, full_code = raw_ast_info.split("########################################")
+    operations_lines, _ = info.split('#BEGIN_GRAPH')
+
+    operations_blocks = operations_lines.split('#START_OPERATION')
+    operations_blocks = [block.strip() for block in operations_blocks if block]
+
+    ops_tags = []
+    operations = {}
+    for operation_block in operations_blocks:
+        raw_operation, rest = operation_block.split("#START_VECTORIZABLE")
+        operation_type = __get_operation_type(raw_operation)
+        if operation_type is None:
+            continue
+
+        nested_loops = []
+        op_count = {}
+        load_data: list[list[str]] = []
+        store_data: list[str] = []
+
+        vectorizable_str, rest = rest.split("#START_NESTED_LOOPS")
+        assert vectorizable_str.strip() in ["true", "false"], f"Vectorizable string is not valid: {vectorizable_str}"
+        vectorizable = vectorizable_str.strip() == "true"
+
+        nested_loops_str, rest = rest.split("#START_LOAD_DATA")
+        for nested_loop_str in nested_loops_str.strip().split("\n"):
+            if not nested_loop_str:
+                continue
+            arg, low, high, step, iter = nested_loop_str.strip().split(" ")
+            nested_loops.append(NestedLoopFeatures(
+                arg=f'%{arg}',
+                lower_bound=int(low),
+                upper_bound=int(high),
+                step=int(step),
+                iterator_type=IteratorType(iter)
+            ))
+
+        loads_data_str, rest = rest.split("#START_STORE_DATA")
+        loads_data_str = re.sub(r'd\d+', lambda m: f'%{m.group()}', loads_data_str)
+        for load_data_str in loads_data_str.strip().split("\n"):
+            if not load_data_str:
+                continue
+            load_data.append(load_data_str.split(", "))
+
+        store_data_str, rest = rest.split("#START_OP_COUNT")
+        store_data_str = re.sub(r'd\d+', lambda m: f'%{m.group()}', store_data_str)
+        store_data_list = store_data_str.strip().split("\n")
+        assert len(store_data_list) == 1, f"Store data list is not of length 1: {store_data_list}"
+        store_data = store_data_list[0].split(", ")
+
+        ops_count_str, rest = rest.split("#START_TAG")
+        for op_count_str in ops_count_str.strip().split("\n"):
+            op, count = op_count_str.strip().split(" ")
+            op_count[op] = int(count)
+
+        operation_tag = rest.strip().split("\n")[0]
+        ops_tags.append(operation_tag)
+        operations[operation_tag] = OperationFeatures(
+            raw_operation=raw_operation,
+            operation_type=operation_type,
+            op_count=op_count,
+            load_data=load_data,
+            store_data=store_data,
+            nested_loops=nested_loops,
+            vectorizable=vectorizable
+        )
+
+    return BenchmarkFeatures(
+        bench_name=bench_name,
+        code=full_code,
+        operation_tags=ops_tags,
+        operations=operations,
+        root_exec_time=root_execution_time,
+    )
+
+
+def __get_operation_type(raw_operation: str) -> Optional[OperationType]:
+    """Get the operation type from the raw operation string.
+
+    Args:
+        raw_operation (str): The raw operation string.
+
+    Returns:
+        Optional[OperationType]: The operation type or None if not found.
+    """
+    for operation_type in OperationType:
+        if f'linalg.{operation_type.value}' in raw_operation:
+            return operation_type
+    return None

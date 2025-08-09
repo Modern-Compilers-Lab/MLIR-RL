@@ -14,30 +14,22 @@ class Config(metaclass=Singleton):
     """The max number of dimensions in load/store buffers"""
     num_tile_sizes: int
     """The number of tile sizes"""
-    num_transformations: int
-    """The number of transformations"""
     vect_size_limit: int
     """Vectorization size limit to prevent large sizes vectorization"""
-    init_action_mask: list[bool]
-    """The initial action mask"""
+    order: list[list[str]]
+    """The order of actions that needs to bo followed"""
     interchange_mode: Literal['enumerate', 'pointers', 'continuous']
     """The method used for interchange action"""
-    interchange_distribution: Literal['binomial', 'normal']
-    """The distribution used for continuous interchange action"""
-    exploration: list[Literal['entropy', 'epsilon', 'curiosity']]
+    exploration: list[Literal['entropy', 'epsilon']]
     """The exploration method"""
     init_epsilon: float
     """The initial epsilon value for epsilon greedy exploration"""
-    reverse_history: bool
-    """Flag to indicate if the history should be reversed or not"""
     new_architecture: bool
     """Flag to indicate if the new architecture should be used or not"""
-    normalize_bounds: bool
+    normalize_bounds: Literal['none', 'max', 'log']
     """Flag to indicate if the upper bounds in the input should be normalized or not"""
     normalize_adv: Literal['none', 'standard', 'max-abs']
     """The advantage normalization method"""
-    force_vector: bool
-    """Flag to force vectorization"""
     sparse_reward: bool
     """Flag to enable sparse reward"""
     split_ops: bool
@@ -64,14 +56,6 @@ class Config(metaclass=Singleton):
     """Value coefficient"""
     entropy_coef: float
     """Entropy coefficient"""
-    reward_scale: float
-    """Reward scale"""
-    intrinsic_reward_integration: float
-    """Intrinsic reward integration"""
-    forward_weight: float
-    """Forward weight"""
-    curiosity_coef: float
-    """Curiosity weight"""
     lr: float
     """Learning rate"""
     truncate: int
@@ -98,18 +82,14 @@ class Config(metaclass=Singleton):
         self.max_num_loops = 7
         self.max_num_load_store_dim = 7
         self.num_tile_sizes = 7
-        self.num_transformations = 5
         self.vect_size_limit = 512
-        self.init_action_mask = [False, True, False, False, False, False]
+        self.order = []
+        self.interchange_mode = "enumerate"
         self.exploration = ["entropy"]
         self.init_epsilon = 0.1
-        self.interchange_mode = "enumerate"
-        self.interchange_distribution = "binomial"
-        self.reverse_history = True
         self.new_architecture = False
-        self.normalize_bounds = True
+        self.normalize_bounds = 'max'
         self.normalize_adv = 'standard'
-        self.force_vector = True
         self.sparse_reward = True
         self.split_ops = False
         self.reuse_experience = False
@@ -123,10 +103,6 @@ class Config(metaclass=Singleton):
         self.value_batch_size = 32
         self.value_coef = 0.5
         self.entropy_coef = 0.01
-        self.reward_scale = 0.01
-        self.intrinsic_reward_integration = 0.01
-        self.forward_weight = 0.2
-        self.curiosity_coef = 1
         self.lr = 0.001
         self.truncate = 5
         self.json_file = ""
@@ -147,18 +123,14 @@ class Config(metaclass=Singleton):
         self.max_num_loops = config["max_num_loops"]
         self.max_num_load_store_dim = config["max_num_load_store_dim"]
         self.num_tile_sizes = config["num_tile_sizes"]
-        self.num_transformations = config["num_transformations"]
         self.vect_size_limit = config["vect_size_limit"]
-        self.init_action_mask = config["init_action_mask"]
+        self.order = config["order"]
         self.interchange_mode = config["interchange_mode"]
-        self.interchange_distribution = config["interchange_distribution"]
         self.exploration = config["exploration"]
         self.init_epsilon = config["init_epsilon"]
-        self.reverse_history = config["reverse_history"]
         self.new_architecture = config["new_architecture"]
         self.normalize_bounds = config["normalize_bounds"]
         self.normalize_adv = config["normalize_adv"]
-        self.force_vector = config["force_vector"]
         self.sparse_reward = config["sparse_reward"]
         self.split_ops = config["split_ops"]
         self.reuse_experience = config["reuse_experience"]
@@ -172,10 +144,6 @@ class Config(metaclass=Singleton):
         self.value_batch_size = config["value_batch_size"]
         self.value_coef = config["value_coef"]
         self.entropy_coef = config["entropy_coef"]
-        self.reward_scale = config["reward_scale"]
-        self.intrinsic_reward_integration = config["intrinsic_reward_integration"]
-        self.forward_weight = config["forward_weight"]
-        self.curiosity_coef = config["curiosity_coef"]
         self.lr = config["lr"]
         self.truncate = config["truncate"]
         self.json_file = config["json_file"]
@@ -194,18 +162,14 @@ class Config(metaclass=Singleton):
             "max_num_loops": self.max_num_loops,
             "max_num_load_store_dim": self.max_num_load_store_dim,
             "num_tile_sizes": self.num_tile_sizes,
-            "num_transformations": self.num_transformations,
             "vect_size_limit": self.vect_size_limit,
-            "init_action_mask": self.init_action_mask,
+            "order": self.order,
             "interchange_mode": self.interchange_mode,
-            "interchange_distribution": self.interchange_distribution,
             "exploration": self.exploration,
             "init_epsilon": self.init_epsilon,
-            "reverse_history": self.reverse_history,
             "new_architecture": self.new_architecture,
             "normalize_bounds": self.normalize_bounds,
             "normalize_adv": self.normalize_adv,
-            "force_vector": self.force_vector,
             "sparse_reward": self.sparse_reward,
             "split_ops": self.split_ops,
             "reuse_experience": self.reuse_experience,
@@ -219,10 +183,6 @@ class Config(metaclass=Singleton):
             "value_batch_size": self.value_batch_size,
             "value_coef": self.value_coef,
             "entropy_coef": self.entropy_coef,
-            "reward_scale": self.reward_scale,
-            "intrinsic_reward_integration": self.intrinsic_reward_integration,
-            "forward_weight": self.forward_weight,
-            "curiosity_coef": self.curiosity_coef,
             "lr": self.lr,
             "truncate": self.truncate,
             "json_file": self.json_file,
