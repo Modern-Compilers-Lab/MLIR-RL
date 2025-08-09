@@ -290,11 +290,11 @@ class Env:
             float: The calculated reward.
         """
 
-        if old < new * 2:
-            return math.log(old / (new * 2))
-        else:
-            return old / (new * 2) - 1
-        # return math.log10(old / new)
+        # if old < new * 2:
+        #     return math.log(old / (new * 2))
+        # else:
+        #     return old / (new * 2) - 1
+        return math.log10(old / new)
 
     def __update_state_infos(self, state: OperationState, action: Action):
         """Update state infos after applying a transformation.

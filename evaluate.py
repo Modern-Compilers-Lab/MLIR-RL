@@ -13,9 +13,6 @@ from rl_autoschedular import file_logger as fl
 from utils.log import print_info, print_success
 from rl_autoschedular.ppo import evaluate_benchmark
 
-# Set target device
-# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-device = torch.device("cpu")
 torch.set_grad_enabled(False)
 torch.set_num_threads(4)
 
@@ -50,5 +47,4 @@ for model_file in files_tqdm:
     evaluate_benchmark(
         model,
         eval_env,
-        device,
     )

@@ -148,17 +148,21 @@ class PolicyModel(nn.Module):
         )
 
         output_sizes = [ActionSpace.size()] + [action.network_output_size() for action in ActionSpace.supported_actions]
-        self.heads = [nn.Linear(512, output_size) if output_size else None for output_size in output_sizes]
+        self.heads_attributes = [f'head_{i}' for i in range(len(output_sizes))]
 
-        if cfg.new_architecture:
-            self.heads = [
-                nn.Sequential(
+        for head_attr, output_size in zip(self.heads_attributes, output_sizes):
+            if not output_size:
+                setattr(self, head_attr, None)
+                continue
+
+            head = nn.Linear(512, output_size)
+            if cfg.new_architecture:
+                head = nn.Sequential(
                     nn.Linear(512, 512),
                     ACTIVATION(),
                     head
-                ) if head else None
-                for head in self.heads
-            ]
+                )
+            setattr(self, head_attr, head)
 
     def __call__(self, obs: torch.Tensor,) -> list[Optional[Distribution]]:
         return super().__call__(obs)
@@ -173,7 +177,8 @@ class PolicyModel(nn.Module):
             tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: The logits of the transformations, parallelizations, tilings, and interchanges.
         """
         embedded = self.backbone(Observation.get_parts(obs, *self.obs_parts))
-        actions_logits = [head(embedded) if head else None for head in self.heads]
+        heads: list[Optional[nn.Module]] = [getattr(self, attr) for attr in self.heads_attributes]
+        actions_logits = [head(embedded) if head else None for head in heads]
 
         return ActionSpace.distributions(obs, *actions_logits)
 

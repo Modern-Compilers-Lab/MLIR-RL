@@ -6,18 +6,18 @@ from rl_autoschedular.observation import Observation, NumLoops
 from rl_autoschedular.actions import ActionSpace
 from rl_autoschedular import config as cfg
 from rl_autoschedular import file_logger as fl
+from rl_autoschedular import device
 from utils.log import print_error
 from tqdm import trange
 
 
-def collect_trajectory(model: Model, env: Env, step: int, device: torch.device = torch.device('cpu')):
+def collect_trajectory(model: Model, env: Env, step: int):
     """Collect a trajectory using the model and the environment.
 
     Args:
         model (MyModel): The model to use.
         env (Env): The environment to use.
-        neptune_logs (neptune.Run): The neptune run to log to if any. Defaults to None.
-        device (torch.device): The device to use. Defaults to torch.device('cpu').
+        step (int): The current step of the main loop
 
     Returns:
         TrejectoryData: The collected trajectory.
@@ -36,13 +36,13 @@ def collect_trajectory(model: Model, env: Env, step: int, device: torch.device =
         traj_trange.set_postfix({'eps': eps, 'bench': state.bench_name})
         bench_done = False
         while not bench_done:
-            obs = Observation.from_state(state)
+            obs = Observation.from_state(state).to(device)
             action_index, action_bev_log_p, entropy = model.sample(obs, eps=eps)
             assert action_index.size(0) == 1 and action_bev_log_p.size(0) == 1
             action = ActionSpace.action_by_index(action_index[0], state)
 
             next_state, reward, op_done, speedup = env.step(state, action)
-            next_obs = Observation.from_state(next_state)
+            next_obs = Observation.from_state(next_state).to(device)
 
             if op_done:
                 next_state, bench_done = env.get_next_op_state(next_state)
@@ -69,14 +69,13 @@ def collect_trajectory(model: Model, env: Env, step: int, device: torch.device =
     return tc.to_trajectory()
 
 
-def ppo_update(trajectory: TrajectoryData, model: Model, optimizer: torch.optim.Optimizer, device: torch.device = torch.device('cpu')):
+def ppo_update(trajectory: TrajectoryData, model: Model, optimizer: torch.optim.Optimizer):
     """Update the model using PPO.
 
     Args:
         trajectory (TrajectoryData): The trajectory to use.
         model (Model): The model to update.
         optimizer (torch.optim.Optimizer): The optimizer to use.
-        device (torch.device): The device to use. Defaults to torch.device('cpu').
 
     Returns:
         float: The average loss.
@@ -149,14 +148,13 @@ def ppo_update(trajectory: TrajectoryData, model: Model, optimizer: torch.optim.
                 fl['train_ppo/entropy_loss'].append(entropy_loss.item())
 
 
-def value_update(trajectory: TrajectoryData, model: Model, optimizer: torch.optim.Optimizer, device: torch.device = torch.device('cpu')):
+def value_update(trajectory: TrajectoryData, model: Model, optimizer: torch.optim.Optimizer):
     """Update the value model using the trajectory.
 
     Args:
         trajectory (Trajectory): The trajectory to use.
         model (Model): The model to update.
         optimizer (torch.optim.Optimizer): The optimizer to use.
-        device (torch.device): The device to use. Defaults to torch.device('cpu').
     """
     trajectory.update_attributes(model)
 
@@ -193,14 +191,12 @@ def value_update(trajectory: TrajectoryData, model: Model, optimizer: torch.opti
             fl['train_value/clip_factor'].append(clip_factor.item())
 
 
-def evaluate_benchmark(model: Model, env: Env, device: torch.device = torch.device('cpu')):
+def evaluate_benchmark(model: Model, env: Env):
     """Evaluate the benchmark using the model.
 
     Args:
         model (Model): The model to use.
         env (Env): The environment to use.
-        neptune_logs (Optional[neptune.Run]): The neptune run to log to if any. Defaults to None.
-        device (torch.device): The device to use. Defaults to torch.device('cpu').
     """
     speedup_values: list[float] = []
     eval_trange = trange(len(env.benchmarks_data), desc='Evaluation')

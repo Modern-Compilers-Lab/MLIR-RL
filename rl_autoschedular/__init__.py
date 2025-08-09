@@ -1,6 +1,8 @@
 from utils.config import Config
 from utils.file_logger import FileLogger
+import torch
 
+device = torch.device("cpu")
 
 # Load global configuration
 config = Config()

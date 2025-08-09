@@ -10,6 +10,7 @@ import os
 from tqdm import trange
 from rl_autoschedular import config as cfg
 from rl_autoschedular import file_logger as fl
+from rl_autoschedular import device
 from rl_autoschedular.trajectory import TrajectoryData
 from utils.log import print_info, print_success
 from typing import Optional
@@ -20,9 +21,6 @@ from rl_autoschedular.ppo import (
     evaluate_benchmark
 )
 
-# Set target device
-# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-device = torch.device("cpu")
 torch.set_grad_enabled(False)
 torch.set_num_threads(4)
 if cfg.debug:
@@ -37,7 +35,7 @@ eval_env = Env(is_training=False, tmp_file=env.tmp_file)
 print_success(f"Environments initialized: {env.tmp_file}")
 
 # Set model
-model = Model()
+model = Model().to(device)
 optimizer = torch.optim.Adam(
     model.parameters(),
     lr=cfg.lr
@@ -51,7 +49,6 @@ for step in trange(cfg.nb_iterations, desc='Main loop'):
         model,
         env,
         step,
-        device,
     )
 
     # Extend trajectory with previous trajectory
@@ -66,14 +63,12 @@ for step in trange(cfg.nb_iterations, desc='Main loop'):
             trajectory,
             model,
             optimizer,
-            device,
         )
 
     ppo_update(
         trajectory,
         model,
         optimizer,
-        device,
     )
 
     if (step + 1) % 5 == 0:
@@ -90,5 +85,10 @@ for step in trange(cfg.nb_iterations, desc='Main loop'):
         evaluate_benchmark(
             model,
             eval_env,
-            device,
         )
+
+print_info('- Evaluating benchmark -')
+evaluate_benchmark(
+    model,
+    eval_env,
+)

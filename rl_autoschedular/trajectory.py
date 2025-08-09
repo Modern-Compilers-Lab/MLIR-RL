@@ -1,6 +1,7 @@
 import torch
 from torch.utils.data import Dataset, DataLoader
 from rl_autoschedular import config as cfg
+from rl_autoschedular import device
 from rl_autoschedular.model import HiearchyModel as Model
 
 
@@ -28,7 +29,7 @@ T_data_timestep = tuple[
 DYNAMIC_ATTRS = ['values', 'next_values', 'actions_old_log_p', 'off_policy_rates', 'returns', 'advantages']
 
 
-class TrajectoryData(Dataset[T_data_timestep]):
+class TrajectoryData(Dataset):
     """Dataset to store the trajectory data."""
 
     num_loops: torch.Tensor
@@ -96,7 +97,7 @@ class TrajectoryData(Dataset[T_data_timestep]):
         """
         return self.obs.size(0)
 
-    def __getitem__(self, idx: int) -> T_data_timestep:
+    def __getitem__(self, idx: int):
         """Get a single timestep from the trajectory.
 
         Args:
@@ -106,20 +107,20 @@ class TrajectoryData(Dataset[T_data_timestep]):
             tuple: A tuple containing the timestep data.
         """
         return (
-            self.num_loops[idx].item(),
+            self.num_loops[idx],
             self.actions_index[idx],
             self.obs[idx],
             self.next_obs[idx],
-            self.actions_bev_log_p[idx].item(),
-            self.rewards[idx].item(),
-            self.done[idx].item(),
+            self.actions_bev_log_p[idx],
+            self.rewards[idx],
+            self.done[idx],
 
-            self.values[idx].item(),
-            self.next_values[idx].item(),
-            self.actions_old_log_p[idx].item(),
-            self.off_policy_rates[idx].item(),
-            self.returns[idx].item(),
-            self.advantages[idx].item(),
+            self.values[idx],
+            self.next_values[idx],
+            self.actions_old_log_p[idx],
+            self.off_policy_rates[idx],
+            self.returns[idx],
+            self.advantages[idx],
         )
 
     def __add__(self, other: 'TrajectoryData'):
@@ -218,7 +219,7 @@ class TrajectoryData(Dataset[T_data_timestep]):
         Returns:
             torch.Tensor: returns.
         """
-        self.returns = torch.zeros(len(self), dtype=torch.float32)
+        self.returns = torch.zeros(len(self), dtype=torch.float32, device=device)
         last_return = 0
 
         for t in reversed(range(len(self))):
@@ -240,7 +241,7 @@ class TrajectoryData(Dataset[T_data_timestep]):
             torch.Tensor: advantages.
             torch.Tensor: returns.
         """
-        self.advantages = torch.zeros(len(self), dtype=torch.float32)
+        self.advantages = torch.zeros(len(self), dtype=torch.float32, device=device)
         last_advantage = 0
 
         for t in reversed(range(len(self))):
@@ -303,13 +304,13 @@ class TrajectoryCollector:
             TrajectoryData: The trajectory containing all collected data.
         """
         return TrajectoryData(
-            num_loops=torch.tensor(self.num_loops, dtype=torch.int64),
-            actions_index=torch.cat(self.actions_index),
-            obs=torch.cat(self.obs),
-            next_obs=torch.cat(self.next_obs),
-            actions_bev_log_p=torch.tensor(self.actions_bev_log_p, dtype=torch.float32),
-            rewards=torch.tensor(self.rewards, dtype=torch.float32),
-            done=torch.tensor(self.done, dtype=torch.bool)
+            num_loops=torch.tensor(self.num_loops, dtype=torch.int64, device=device),
+            actions_index=torch.cat(self.actions_index).to(device),
+            obs=torch.cat(self.obs).to(device),
+            next_obs=torch.cat(self.next_obs).to(device),
+            actions_bev_log_p=torch.tensor(self.actions_bev_log_p, dtype=torch.float32, device=device),
+            rewards=torch.tensor(self.rewards, dtype=torch.float32, device=device),
+            done=torch.tensor(self.done, dtype=torch.bool, device=device),
         )
 
     def reset(self):

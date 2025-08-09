@@ -12,7 +12,6 @@ from rl_autoschedular.ppo import evaluate_benchmark
 
 
 # Configure torch
-device = torch.device("cpu")
 torch.set_grad_enabled(False)
 torch.set_num_threads(4)
 
@@ -31,5 +30,4 @@ model.load_state_dict(torch.load(model_path, weights_only=True))
 evaluate_benchmark(
     model,
     eval_env,
-    device,
 )
