@@ -119,10 +119,12 @@ class ValueModel(nn.Module):
         Returns:
             torch.Tensor: The value loss.
         """
-        vclip = values + torch.clamp(new_values - values, -0.2, 0.2)
-        vloss1 = (returns - vclip).pow(2)
-        vloss2 = (returns - new_values).pow(2)
-        return 0.5 * torch.max(vloss1, vloss2).mean()
+        if cfg.value_clip:
+            vclip = values + torch.clamp(new_values - values, -0.2, 0.2)
+            vloss1 = (returns - vclip).pow(2)
+            vloss2 = (returns - new_values).pow(2)
+            return torch.max(vloss1, vloss2).mean()
+        return (returns - new_values).pow(2).mean()
 
 
 class PolicyModel(nn.Module):

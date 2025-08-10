@@ -54,6 +54,8 @@ class Config(metaclass=Singleton):
     """Batch size for value update"""
     value_coef: float
     """Value coefficient"""
+    value_clip: bool
+    """Clip value loss or not"""
     entropy_coef: float
     """Entropy coefficient"""
     lr: float
@@ -102,6 +104,7 @@ class Config(metaclass=Singleton):
         self.value_epochs = 32
         self.value_batch_size = 32
         self.value_coef = 0.5
+        self.value_clip = False
         self.entropy_coef = 0.01
         self.lr = 0.001
         self.truncate = 5
@@ -143,6 +146,7 @@ class Config(metaclass=Singleton):
         self.value_epochs = config["value_epochs"]
         self.value_batch_size = config["value_batch_size"]
         self.value_coef = config["value_coef"]
+        self.value_clip = config["value_clip"]
         self.entropy_coef = config["entropy_coef"]
         self.lr = config["lr"]
         self.truncate = config["truncate"]
@@ -182,6 +186,7 @@ class Config(metaclass=Singleton):
             "value_epochs": self.value_epochs,
             "value_batch_size": self.value_batch_size,
             "value_coef": self.value_coef,
+            "value_clip": self.value_clip,
             "entropy_coef": self.entropy_coef,
             "lr": self.lr,
             "truncate": self.truncate,
