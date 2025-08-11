@@ -30,19 +30,17 @@ def collect_trajectory(model: Model, env: Env, step: int):
         final_eps = 0.001
         eps = final_eps + (cfg.init_epsilon - final_eps) * (1 - ratio)
 
-    traj_trange = trange(cfg.bench_count, desc='Trajectory')
-    for _ in traj_trange:
+    for _ in trange(cfg.bench_count, desc='Trajectory'):
         state = env.reset()
-        traj_trange.set_postfix({'eps': eps, 'bench': state.bench_name})
         bench_done = False
         while not bench_done:
-            obs = Observation.from_state(state).to(device)
-            action_index, action_bev_log_p, entropy = model.sample(obs, eps=eps)
+            obs = Observation.from_state(state)
+            action_index, action_bev_log_p, entropy = model.sample(obs.to(device), eps=eps)
             assert action_index.size(0) == 1 and action_bev_log_p.size(0) == 1
             action = ActionSpace.action_by_index(action_index[0], state)
 
             next_state, reward, op_done, speedup = env.step(state, action)
-            next_obs = Observation.from_state(next_state).to(device)
+            next_obs = Observation.from_state(next_state)
 
             if op_done:
                 next_state, bench_done = env.get_next_op_state(next_state)
@@ -84,9 +82,8 @@ def ppo_update(trajectory: TrajectoryData, model: Model, optimizer: torch.optim.
 
     ppo_trange = trange(cfg.ppo_epochs, desc='PPO Epochs')
     for _ in ppo_trange:
-
-        for batch in trajectory.loader(cfg.ppo_batch_size):
-            batch: tuple[torch.Tensor, ...]
+        for batch in trajectory.loader(cfg.ppo_batch_size, 2 * cfg.truncate * cfg.bench_count):
+            batch: list[torch.Tensor] = [e.to(device, non_blocking=True) for e in batch]
             (
                 _,
                 actions_index,
@@ -101,7 +98,6 @@ def ppo_update(trajectory: TrajectoryData, model: Model, optimizer: torch.optim.
                 returns,
                 advantages,
             ) = batch
-            # Advantages batch normalization
             max_abs_adv = advantages.abs().max()
             if cfg.normalize_adv == 'standard' and advantages.size(0) > 1:
                 advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
@@ -160,9 +156,8 @@ def value_update(trajectory: TrajectoryData, model: Model, optimizer: torch.opti
 
     value_trange = trange(cfg.value_epochs, desc='Value Epochs')
     for _ in value_trange:
-
-        for batch in trajectory.loader(cfg.value_batch_size):
-            batch: tuple[torch.Tensor, ...]
+        for batch in trajectory.loader(cfg.value_batch_size, 2 * cfg.truncate * cfg.bench_count):
+            batch: list[torch.Tensor] = [e.to(device, non_blocking=True) for e in batch]
             (
                 _, _,
                 obs,

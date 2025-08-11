@@ -1,7 +1,7 @@
 import torch
-from torch.utils.data import Dataset, DataLoader
-from rl_autoschedular import config as cfg
-from rl_autoschedular import device
+from torch.utils.data import Dataset, DataLoader, Sampler
+from typing import Iterator
+from rl_autoschedular import config as cfg, device
 from rl_autoschedular.model import HiearchyModel as Model
 
 
@@ -15,22 +15,58 @@ T_timestep = tuple[
     bool,  # done
 ]
 
-T_data_timestep = tuple[
-    *T_timestep,
-
-    float,  # value
-    float,  # next_value
-    float,  # action_old_log_p
-    float,  # off_policy_rate
-    float,  # return
-    float,  # advantage
-]
-
 DYNAMIC_ATTRS = ['values', 'next_values', 'actions_old_log_p', 'off_policy_rates', 'returns', 'advantages']
 
 
+class TopKAdvantageSampler(Sampler[int]):
+    """
+    A Sampler that yields a random permutation of the indices
+    corresponding to the top-K highest advantage values in a trajectory.
+
+    Args:
+        data_source (TrajectoryData): The dataset, which must have a `get_all_advantages` method.
+        num_samples (int): The maximum number of samples to take batches from.
+    """
+    def __init__(self, data_source: 'TrajectoryData', num_samples: int):
+        self.data_source = data_source
+        self.num_samples = num_samples
+
+        # Get all advantage values from the dataset
+        advantages = self.data_source.advantages
+
+        # Ensure we don't request more samples than available
+        self.num_samples = min(self.num_samples, advantages.size(0))
+
+        _, self.top_k_indices = torch.topk(advantages.abs(), k=self.num_samples)
+
+    def __iter__(self) -> Iterator[int]:
+        """
+        Returns an iterator over shuffled indices of the top-k samples.
+        This is called by the DataLoader at the start of each epoch.
+        """
+        # Shuffle the top-k indices to ensure random order
+        shuffled_indices = self.top_k_indices[torch.randperm(self.num_samples)]
+
+        # Yield the indices one by one
+        yield from shuffled_indices.tolist()
+
+    def __len__(self) -> int:
+        """The total number of samples to be drawn."""
+        return self.num_samples
+
+
 class TrajectoryData(Dataset):
-    """Dataset to store the trajectory data."""
+    """Dataset to store the trajectory data.
+
+    Args:
+            num_loops (torch.Tensor): Number of loops in the trajectory.
+            actions_index (torch.Tensor): Actions indices in the trajectory.
+            obs (torch.Tensor): Observations in the trajectory.
+            next_obs (torch.Tensor): Observations of next states in the trajectory.
+            actions_bev_log_p (torch.Tensor): Action log probabilities following behavioral policy.
+            rewards (torch.Tensor): Rewards in the trajectory.
+            done (torch.Tensor): Done flags in the trajectory.
+    """
 
     num_loops: torch.Tensor
     """Number of loops in the trajectory."""
@@ -70,17 +106,6 @@ class TrajectoryData(Dataset):
         rewards: torch.Tensor,
         done: torch.Tensor
     ):
-        """Initialize the trajectory data.
-
-        Args:
-            num_loops (torch.Tensor): Number of loops in the trajectory.
-            actions_index (torch.Tensor): Actions indices in the trajectory.
-            obs (torch.Tensor): Observations in the trajectory.
-            next_obs (torch.Tensor): Observations of next states in the trajectory.
-            actions_bev_log_p (torch.Tensor): Action log probabilities following behavioral policy.
-            rewards (torch.Tensor): Rewards in the trajectory.
-            done (torch.Tensor): Done flags in the trajectory.
-        """
         self.num_loops = num_loops
         self.actions_index = actions_index
         self.obs = obs
@@ -150,17 +175,23 @@ class TrajectoryData(Dataset):
 
         return self_other
 
-    def loader(self, batch_size: int, shuffle: bool = True):
+    def loader(self, batch_size: int, num_samples: int):
         """Create a DataLoader for the trajectory.
 
         Args:
-            batch_size (int, optional): Batch size for the DataLoader. Defaults to cfg.ppo_batch_size.
-            shuffle (bool, optional): Whether to shuffle the data. Defaults to True.
+            batch_size (int): Batch size for the DataLoader.
+            num_samples (int): Maximum number of samples to take batches from.
 
         Returns:
             DataLoader: The DataLoader for the trajectory.
         """
-        return DataLoader(self, batch_size=batch_size, shuffle=shuffle)
+        return DataLoader(
+            self,
+            batch_size=batch_size,
+            sampler=TopKAdvantageSampler(self, num_samples),
+            num_workers=4,
+            pin_memory=True,
+        )
 
     def copy(self) -> 'TrajectoryData':
         """Copy the trajectory.
@@ -191,8 +222,10 @@ class TrajectoryData(Dataset):
         Args:
             model (Model): The model to use for updating the attributes.
         """
-        self.actions_old_log_p, self.values, _ = model(self.obs, self.actions_index)
-        self.next_values = model.value_model(self.next_obs)
+        actions_old_log_p, values, _ = model(self.obs.to(device), self.actions_index)
+        next_values = model.value_model(self.next_obs.to(device))
+
+        self.actions_old_log_p, self.values, self.next_values = actions_old_log_p.cpu(), values.cpu(), next_values.cpu()
 
         self.__compute_rho()
         self.__compute_returns()
@@ -206,7 +239,8 @@ class TrajectoryData(Dataset):
         """
         self.off_policy_rates = torch.exp(torch.clamp(self.actions_old_log_p - self.actions_bev_log_p, -80.0, 80.0))
         if 'epsilon' not in cfg.exploration and not cfg.reuse_experience:
-            assert (self.off_policy_rates == 1).all(), 'off_policy_rates should be 1 since behavior policy is the same as the current policy.'
+            assert self.off_policy_rates.allclose(torch.ones(1)), 'off_policy_rates should be 1 since behavior policy is the same as the current policy.'
+            self.off_policy_rates = torch.ones_like(self.off_policy_rates)
 
     def __compute_returns(self, gamma: float = 0.99) -> torch.Tensor:
         """Compute the returns.
@@ -219,14 +253,14 @@ class TrajectoryData(Dataset):
         Returns:
             torch.Tensor: returns.
         """
-        self.returns = torch.zeros(len(self), dtype=torch.float32, device=device)
+        self.returns = torch.zeros(len(self), dtype=torch.float32)
         last_return = 0
 
         for t in reversed(range(len(self))):
             mask = ~self.done[t]
             last_return = last_return * mask
 
-            last_return = self.values[t] + (self.rewards[t] + gamma * last_return - self.values[t]) * self.off_policy_rates[t]
+            last_return = self.values[t] + (self.rewards[t] + gamma * last_return - self.values[t]) * self.off_policy_rates[t].clamp_max(1)
 
             self.returns[t] = last_return
 
@@ -241,7 +275,7 @@ class TrajectoryData(Dataset):
             torch.Tensor: advantages.
             torch.Tensor: returns.
         """
-        self.advantages = torch.zeros(len(self), dtype=torch.float32, device=device)
+        self.advantages = torch.zeros(len(self), dtype=torch.float32)
         last_advantage = 0
 
         for t in reversed(range(len(self))):
@@ -304,13 +338,13 @@ class TrajectoryCollector:
             TrajectoryData: The trajectory containing all collected data.
         """
         return TrajectoryData(
-            num_loops=torch.tensor(self.num_loops, dtype=torch.int64, device=device),
-            actions_index=torch.cat(self.actions_index).to(device),
-            obs=torch.cat(self.obs).to(device),
-            next_obs=torch.cat(self.next_obs).to(device),
-            actions_bev_log_p=torch.tensor(self.actions_bev_log_p, dtype=torch.float32, device=device),
-            rewards=torch.tensor(self.rewards, dtype=torch.float32, device=device),
-            done=torch.tensor(self.done, dtype=torch.bool, device=device),
+            num_loops=torch.tensor(self.num_loops, dtype=torch.int64),
+            actions_index=torch.cat(self.actions_index),
+            obs=torch.cat(self.obs),
+            next_obs=torch.cat(self.next_obs),
+            actions_bev_log_p=torch.tensor(self.actions_bev_log_p, dtype=torch.float32),
+            rewards=torch.tensor(self.rewards, dtype=torch.float32),
+            done=torch.tensor(self.done, dtype=torch.bool),
         )
 
     def reset(self):

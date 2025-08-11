@@ -9,6 +9,7 @@ import multiprocessing
 from rl_autoschedular import config as cfg
 from rl_autoschedular.state import OperationState, BenchmarkFeatures
 from utils.log import print_alert
+from statistics import median
 import json
 import re
 
@@ -118,13 +119,15 @@ def evaluate_code_with_bindings(code: str) -> tuple[Optional[int], Union[Excepti
     delta_arg = (ctypes.c_int64 * 1)(0)
     args.append(delta_arg)
 
+    times = []
     try:
-        execution_engine.invoke("main", *args)
-        execution_engine.invoke("main", *args)
+        for _ in range(5):
+            execution_engine.invoke("main", *args)
+            times.append(delta_arg[0])
     except Exception as e:
         return None, e
 
-    return delta_arg[0], True
+    return median(times), True
 
 
 def evaluate_code_with_bindings_wrapper(code: str, exec_times, assertions):

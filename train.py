@@ -7,10 +7,7 @@ from rl_autoschedular.env import Env
 from rl_autoschedular.model import HiearchyModel as Model
 import torch
 import os
-from tqdm import trange
-from rl_autoschedular import config as cfg
-from rl_autoschedular import file_logger as fl
-from rl_autoschedular import device
+from rl_autoschedular import config as cfg, file_logger as fl, device
 from rl_autoschedular.trajectory import TrajectoryData
 from utils.log import print_info, print_success
 from typing import Optional
@@ -22,7 +19,7 @@ from rl_autoschedular.ppo import (
 )
 
 torch.set_grad_enabled(False)
-torch.set_num_threads(4)
+torch.set_num_threads(int(os.getenv("OMP_NUM_THREADS", "4")))
 if cfg.debug:
     torch.autograd.set_detect_anomaly(True)
 
@@ -44,7 +41,8 @@ print_success("Model initialized")
 
 # Start training
 old_trajectory: Optional[TrajectoryData] = None
-for step in trange(cfg.nb_iterations, desc='Main loop'):
+for step in range(cfg.nb_iterations):
+    print_info(f"- Main Loop {step + 1}/{cfg.nb_iterations} ({100 * (step + 1) / cfg.nb_iterations:.2f}%)")
     trajectory = collect_trajectory(
         model,
         env,

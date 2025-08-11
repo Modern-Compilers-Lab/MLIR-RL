@@ -57,18 +57,12 @@ class Tiling(Action):
         for i, action in enumerate(state.transformation_history[0]):
             if not isinstance(action, Tiling):
                 continue
-            if i >= cfg.truncate:
-                break
 
             for j, param in enumerate(action.parameters):
-                if j >= cfg.max_num_loops:
-                    break
                 if param == 0:
                     history[i, j, 0] = 1
                 else:
                     ts_index = int(math.log2(param))
-                    if ts_index >= cfg.num_tile_sizes:
-                        continue
                     history[i, j, ts_index + 1] = 1
 
         return history.reshape(-1)

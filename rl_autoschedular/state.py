@@ -1,9 +1,12 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 from enum import Enum
+from rl_autoschedular import config as cfg
 import re
 import os
 import subprocess
+
+from utils.log import print_error
 
 if TYPE_CHECKING:
     from rl_autoschedular.actions.base import Action
@@ -204,9 +207,15 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
     ops_tags = []
     operations = {}
     for operation_block in operations_blocks:
-        raw_operation, rest = operation_block.split("#START_VECTORIZABLE")
+        rest, operation_tag = operation_block.split("#START_TAG")
+        operation_tag = operation_tag.strip().split("\n")[0]
+        log_info = f"- Bench: {bench_name} - Operation: {operation_tag}"
+
+        raw_operation, rest = rest.split("#START_VECTORIZABLE")
         operation_type = __get_operation_type(raw_operation)
         if operation_type is None:
+            print_error(log_info)
+            print_error("Unsupported operation type:", raw_operation.split("\n")[0])
             continue
 
         nested_loops = []
@@ -230,6 +239,10 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
                 step=int(step),
                 iterator_type=IteratorType(iter)
             ))
+        if len(nested_loops) > cfg.max_num_loops:
+            print_error(log_info)
+            print_error(f"Number of loops {len(nested_loops)} is not supported")
+            continue
 
         loads_data_str, rest = rest.split("#START_STORE_DATA")
         loads_data_str = re.sub(r'd\d+', lambda m: f'%{m.group()}', loads_data_str)
@@ -237,19 +250,28 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
             if not load_data_str:
                 continue
             load_data.append(load_data_str.split(", "))
+        if any(len(load) > cfg.max_num_load_store_dim for load in load_data):
+            print_error(log_info)
+            print_error(f"Number of load dims {len(load_data[-1])} is not supported")
+            continue
+        if len(load_data) > cfg.max_num_stores_loads:
+            # We ignore this overflow, because there are many cases with a huge number of loads
+            load_data = load_data[:cfg.max_num_stores_loads]
 
-        store_data_str, rest = rest.split("#START_OP_COUNT")
+        store_data_str, ops_count_str = rest.split("#START_OP_COUNT")
         store_data_str = re.sub(r'd\d+', lambda m: f'%{m.group()}', store_data_str)
         store_data_list = store_data_str.strip().split("\n")
         assert len(store_data_list) == 1, f"Store data list is not of length 1: {store_data_list}"
         store_data = store_data_list[0].split(", ")
+        if len(store_data) > cfg.max_num_load_store_dim:
+            print_error(log_info)
+            print_error(f"Number of store dims {len(store_data)} is not supported")
+            continue
 
-        ops_count_str, rest = rest.split("#START_TAG")
         for op_count_str in ops_count_str.strip().split("\n"):
             op, count = op_count_str.strip().split(" ")
             op_count[op] = int(count)
 
-        operation_tag = rest.strip().split("\n")[0]
         ops_tags.append(operation_tag)
         operations[operation_tag] = OperationFeatures(
             raw_operation=raw_operation,

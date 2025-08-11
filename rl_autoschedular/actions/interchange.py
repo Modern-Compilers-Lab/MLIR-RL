@@ -1,6 +1,6 @@
 from .base import Action
 from rl_autoschedular import config as cfg
-from rl_autoschedular.state import OperationState
+from rl_autoschedular.state import OperationState, OperationType
 from rl_autoschedular.transforms import transform_dialect_interchange
 from typing import Optional
 from enum import Enum
@@ -100,14 +100,8 @@ class Interchange(Action):
         for i, action in enumerate(state.transformation_history[0]):
             if not isinstance(action, Interchange):
                 continue
-            if i >= cfg.truncate:
-                break
 
             for j, param in enumerate(action.parameters):
-                if j >= cfg.max_num_loops:
-                    break
-                if param >= cfg.max_num_loops:
-                    continue
                 history[i, j, param] = 1
 
         return history.reshape(-1)
@@ -184,6 +178,10 @@ class Interchange(Action):
         new_operation_features = operation_features.copy()
         for i, j in enumerate(self.parameters):
             new_operation_features.nested_loops[i] = operation_features.nested_loops[j]
+
+        # In case an interchange was applied to pooling, vectorization is no longer possible
+        if operation_features.operation_type == OperationType.Pooling and self.parameters != list(range(len(self.parameters))):
+            new_operation_features.vectorizable = False
 
         return new_operation_features
 

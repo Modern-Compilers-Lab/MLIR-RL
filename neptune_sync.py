@@ -1,3 +1,7 @@
+# Load environment variables
+from dotenv import load_dotenv
+load_dotenv(override=True)
+
 import neptune
 from neptune import Run
 import os

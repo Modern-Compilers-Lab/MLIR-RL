@@ -393,11 +393,21 @@ def transform_dialect_vectorize(code: str, operation_tag: str, tmp_file_path: st
 
     transform_dialect_code = f"""
     module attributes {{transform.with_named_sequence}} {{
-        transform.named_sequence @__transform_main(%variant_op: !transform.any_op {{transform.readonly}}) {{
-            %op_{operation_tag} = transform.structured.match attributes{{tag = "{operation_tag}"}} in %variant_op : (!transform.any_op) -> !transform.any_op
+        transform.named_sequence @__transform_main(%arg0: !transform.any_op {{transform.consumed}}) {{
+            %all_loops = transform.structured.match interface{{LoopLikeInterface}} in %arg0 : (!transform.any_op) -> !transform.any_op
+            transform.apply_licm to %all_loops : !transform.any_op
+            %f1 = transform.structured.match ops{{["func.func"]}} in %arg0 : (!transform.any_op) -> !transform.any_op
+            transform.apply_patterns to %f1 {{transform.apply_patterns.canonicalization}} : !transform.any_op
+            transform.structured.eliminate_empty_tensors %arg0 : !transform.any_op
+            %empty = transform.structured.match ops{{["tensor.empty"]}} in %arg0 : (!transform.any_op) -> !transform.any_op
+            %empty1 = transform.cast %empty : !transform.any_op to !transform.op<"tensor.empty">
+            transform.bufferization.empty_tensor_to_alloc_tensor %empty1 : (!transform.op<"tensor.empty">) -> !transform.op<"bufferization.alloc_tensor">
+            %arg1 = transform.bufferization.one_shot_bufferize layout{{IdentityLayoutMap}} %arg0 {{bufferize_function_boundaries = true}} : (!transform.any_op) -> !transform.any_op
+
+            %op_{operation_tag} = transform.structured.match attributes{{tag = "{operation_tag}"}} in %arg1 : (!transform.any_op) -> !transform.any_op
             transform.structured.vectorize %op_{operation_tag} : !transform.any_op
 
-            %f = transform.structured.match ops{{[\"func.func\"]}} in %variant_op : (!transform.any_op) -> !transform.any_op
+            %f = transform.structured.match ops{{["func.func"]}} in %arg1 : (!transform.any_op) -> !transform.any_op
             transform.apply_patterns to %f {{
                 transform.apply_patterns.vector.transfer_permutation_patterns
                 transform.apply_patterns.vector.reduction_to_contract
