@@ -9,13 +9,14 @@ import torch
 import os
 from tqdm import tqdm
 from rl_autoschedular import config as cfg
-from rl_autoschedular import file_logger as fl
+from utils.file_logger import FileLogger
 from utils.log import print_info, print_success
 from rl_autoschedular.ppo import evaluate_benchmark
 
 torch.set_grad_enabled(False)
 torch.set_num_threads(4)
 
+fl = FileLogger()
 print_info(f"Config: {cfg}")
 print_success(f'Logging to: {fl.run_dir}')
 

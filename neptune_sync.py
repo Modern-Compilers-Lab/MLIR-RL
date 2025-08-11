@@ -60,7 +60,7 @@ if __name__ == '__main__':
                 for filename in filenames:
                     files.append(os.path.join(relative_root, filename) if relative_root else filename)
             for file in files:
-                if file == 'tags':
+                if file == 'tags' or file.endswith('.pt'):
                     continue
                 if file not in runs_counters[run]:
                     runs_counters[run][file] = 0

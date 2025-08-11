@@ -3,36 +3,41 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 
 # Import modules
-from rl_autoschedular.env import Env
-from rl_autoschedular.model import HiearchyModel as Model
-import torch
 import os
-from rl_autoschedular import config as cfg, file_logger as fl, device
+import torch
+from utils.dask_manager import DaskManager
+from utils.file_logger import FileLogger
+from rl_autoschedular.model import HiearchyModel as Model
+from rl_autoschedular import config as cfg, device
 from rl_autoschedular.trajectory import TrajectoryData
+from rl_autoschedular.ppo import collect_trajectory, ppo_update, value_update, evaluate_benchmarks
+from rl_autoschedular.benchmarks import Benchmarks
 from utils.log import print_info, print_success
 from typing import Optional
-from rl_autoschedular.ppo import (
-    collect_trajectory,
-    ppo_update,
-    value_update,
-    evaluate_benchmark
-)
+from time import time
 
+
+# Initialize dask in order to allocate jobs
+dm = DaskManager()
+
+# Setup torch
 torch.set_grad_enabled(False)
 torch.set_num_threads(int(os.getenv("OMP_NUM_THREADS", "4")))
 if cfg.debug:
     torch.autograd.set_detect_anomaly(True)
 
+# Load data
+train_size = dm.load_train_data(Benchmarks())
+eval_size = dm.load_eval_data(Benchmarks(is_training=False))
+
+# Prepare logging
+fl = FileLogger()
 print_info(f"Config: {cfg}")
 print_success(f'Logging to: {fl.run_dir}')
 
-# Set environments
-env = Env(is_training=True)
-eval_env = Env(is_training=False, tmp_file=env.tmp_file)
-print_success(f"Environments initialized: {env.tmp_file}")
-
-# Set model
+# Initiate model
 model = Model().to(device)
+torch.save(model.state_dict(), fl.last_model_path)
 optimizer = torch.optim.Adam(
     model.parameters(),
     lr=cfg.lr
@@ -41,13 +46,14 @@ print_success("Model initialized")
 
 # Start training
 old_trajectory: Optional[TrajectoryData] = None
+time_ms = 0
 for step in range(cfg.nb_iterations):
-    print_info(f"- Main Loop {step + 1}/{cfg.nb_iterations} ({100 * (step + 1) / cfg.nb_iterations:.2f}%)")
-    trajectory = collect_trajectory(
-        model,
-        env,
-        step,
-    )
+    print_info(f"- Main Loop {step + 1}/{cfg.nb_iterations} ({100 * (step + 1) / cfg.nb_iterations:.2f}%) ({time_ms}ms)")
+
+    start = time()
+
+    # Collect trajectory using the model
+    trajectory = collect_trajectory(train_size, step)
 
     # Extend trajectory with previous trajectory
     if cfg.reuse_experience:
@@ -57,36 +63,29 @@ for step in range(cfg.nb_iterations):
 
     # Fit value model to trajectory rewards
     if cfg.value_epochs > 0:
-        value_update(
-            trajectory,
-            model,
-            optimizer,
-        )
+        value_update(trajectory, model, optimizer)
 
-    ppo_update(
-        trajectory,
-        model,
-        optimizer,
-    )
+    # Update policy model with PPO
+    ppo_update(trajectory, model, optimizer)
 
+    # Save the model
+    torch.save(model.state_dict(), fl.last_model_path)
     if (step + 1) % 5 == 0:
         torch.save(
             model.state_dict(),
             os.path.join(
-                env.tmp_file.replace('.mlir', ''),
-                f'model_{step}.pth'
+                fl.models_dir,
+                f'model_{step}.pt'
             )
         )
 
     if (step + 1) % 1000 == 0:
-        print_info('- Evaluating benchmark -')
-        evaluate_benchmark(
-            model,
-            eval_env,
-        )
+        print_info('- Evaluating benchmarks -')
+        evaluate_benchmarks(eval_size)
 
-print_info('- Evaluating benchmark -')
-evaluate_benchmark(
-    model,
-    eval_env,
-)
+    end = time()
+    time_ms = int((end - start) * 1000)
+
+if (step + 1) % 1000 != 0:
+    print_info('- Evaluating benchmarks -')
+    evaluate_benchmarks(eval_size)

@@ -317,6 +317,17 @@ class TrajectoryCollector:
         self.rewards = []
         self.done = []
 
+    def __add__(self, other: 'TrajectoryCollector'):
+        self.num_loops.extend(other.num_loops)
+        self.actions_index.extend(other.actions_index)
+        self.obs.extend(other.obs)
+        self.next_obs.extend(other.next_obs)
+        self.actions_bev_log_p.extend(other.actions_bev_log_p)
+        self.rewards.extend(other.rewards)
+        self.done.extend(other.done)
+
+        return self
+
     def append(self, timestep: T_timestep):
         """Append a single timestep to the trajectory.
 

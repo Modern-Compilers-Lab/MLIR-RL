@@ -1,29 +1,24 @@
 from rl_autoschedular import config as cfg
-from rl_autoschedular.state import OperationState, BenchmarkFeatures, extract_bench_features_from_file
+from rl_autoschedular.state import OperationState, BenchmarkFeatures
+from rl_autoschedular.benchmarks import Benchmarks
 from typing import Optional
 from rl_autoschedular.evaluation import evaluate_code
 from rl_autoschedular.actions import Action
 from utils.log import print_error
-from tqdm import tqdm
 import random
 import string
-import json
-import os
 import math
 
 
 class Env:
     """RL Environment class"""
 
-    benchmarks_data: list[BenchmarkFeatures]
+    benchmark_data: BenchmarkFeatures
     """Lists for each benchmark the benchmark's name and its features."""
     tmp_file: str
     """The temporary file to store the intermediate representations."""
     is_training: bool
     """Flag indicating if the environment is in training mode or evaluation mode."""
-
-    __bench_index: int
-    """The index of the current benchmark."""
 
     def __init__(self, is_training: bool = True, tmp_file: Optional[str] = None):
         """Initialize the environment.
@@ -39,38 +34,9 @@ class Env:
             tmp_file = f"tmp-debug/{random_str}.mlir" if cfg.debug else f"tmp/{random_str}.mlir"
         with open(tmp_file, "w") as file:
             file.write("")
-        os.makedirs(tmp_file.replace(".mlir", ""), exist_ok=True)
         self.tmp_file = tmp_file
 
-        # Load benchmark names and execution times from json file
-        bench_json_file = cfg.json_file
-
-        # If we are in evaluation mode, use the evaluation json file if provided
-        if cfg.eval_json_file and not is_training:
-            bench_json_file = cfg.eval_json_file
-
-        with open(bench_json_file) as file:
-            benchmarks_json: dict[str, int] = json.load(file)
-
-        # Build benchmark features
-        self.benchmarks_data = []
-        for bench_name, root_exec_time in tqdm(benchmarks_json.items(), desc="Extracting benchmark features", unit="bench"):
-            bench_file = os.path.join(cfg.benchmarks_folder_path, bench_name + ".mlir")
-            benchmark_data = extract_bench_features_from_file(bench_name, bench_file, root_exec_time)
-
-            if cfg.split_ops and is_training and len(benchmark_data.operation_tags) > 1:
-                # Split benchmarks with more than one operation into multiple benchmarks
-                for tag in benchmark_data.operation_tags:
-                    # Create a new benchmark data with only the current operation
-                    new_bench_data = benchmark_data.copy()
-                    new_bench_data.bench_name = f"{benchmark_data.bench_name}_{tag}"
-                    new_bench_data.operation_tags = [tag]
-                    new_bench_data.operations = {tag: new_bench_data.operations[tag]}
-                    self.benchmarks_data.append(new_bench_data)
-            else:
-                self.benchmarks_data.append(benchmark_data)
-
-    def reset(self, bench_idx: Optional[int] = None) -> OperationState:
+    def reset(self, benchs: Benchmarks, bench_idx: Optional[int] = None) -> OperationState:
         """Reset the environment.
 
         Args:
@@ -78,13 +44,11 @@ class Env:
 
         Returns:
             OperationState: The initial state of the environment.
-            torch.Tensor: The observation vector of the initial state.
         """
         # Get the benchmark
-        if bench_idx is not None:
-            self.__bench_index = bench_idx
-        else:
-            self.__bench_index = random.randint(0, len(self.benchmarks_data) - 1)
+        if bench_idx is None:
+            bench_idx = random.randint(0, len(benchs) - 1)
+        self.benchmark_data = benchs[bench_idx]
 
         return self.__init_op_state(-1)
 
@@ -133,7 +97,7 @@ class Env:
 
         # Evaluate the code (since the operation is done)
         try:
-            new_exec_time, exec_succeeded = evaluate_code(next_state, self.__current_bench_data)
+            new_exec_time, exec_succeeded = evaluate_code(next_state, self.benchmark_data)
             if isinstance(exec_succeeded, Exception):
                 raise exec_succeeded
             if not exec_succeeded or new_exec_time is None:
@@ -153,12 +117,12 @@ class Env:
             # Sparse reward: reward is given only if the benchmark is done
             # and it's calculated compared to the root execution time
             if self.__bench_is_done(next_state):
-                reward = self.__action_reward(trans_succeeded, exec_succeeded, new_exec_time, self.__current_bench_data.root_exec_time)
+                reward = self.__action_reward(trans_succeeded, exec_succeeded, new_exec_time, self.benchmark_data.root_exec_time)
             else:
                 reward = 0.0
         else:
             reward = self.__action_reward(trans_succeeded, exec_succeeded, new_exec_time, next_state.exec_time)
-        speedup = (self.__current_bench_data.root_exec_time / new_exec_time) if new_exec_time is not None else 1.0
+        speedup = (self.benchmark_data.root_exec_time / new_exec_time) if new_exec_time is not None else 1.0
 
         # Update the state infos to reflect the execution
         self.__update_state_exec_infos(next_state, new_exec_time)
@@ -181,8 +145,8 @@ class Env:
 
         # Build a new state that points to the next operation
         new_op_index = self.__current_op_index(state) - 1
-        new_op_tag = self.__current_bench_data.operation_tags[new_op_index]
-        new_op_features = self.__current_bench_data.operations[new_op_tag]
+        new_op_tag = self.benchmark_data.operation_tags[new_op_index]
+        new_op_features = self.benchmark_data.operations[new_op_tag]
         next_state = OperationState(
             bench_name=state.bench_name,
             operation_tag=new_op_tag,  # New operation tag
@@ -208,32 +172,23 @@ class Env:
             OperationState: The new operation state.
             torch.Tensor: The observation vector of the new operation state.
         """
-        operation_tag = self.__current_bench_data.operation_tags[operation_idx]
-        operation_features = self.__current_bench_data.operations[operation_tag]
+        operation_tag = self.benchmark_data.operation_tags[operation_idx]
+        operation_features = self.benchmark_data.operations[operation_tag]
 
         state = OperationState(
-            bench_name=self.__current_bench_data.bench_name,
+            bench_name=self.benchmark_data.bench_name,
             operation_tag=operation_tag,
             operation_features=operation_features.copy(),
-            validated_code=self.__current_bench_data.code,
-            transformed_code=self.__current_bench_data.code,
+            validated_code=self.benchmark_data.code,
+            transformed_code=self.benchmark_data.code,
             step_count=0,
-            exec_time=self.__current_bench_data.root_exec_time,
+            exec_time=self.benchmark_data.root_exec_time,
             transformation_history=[[]],
             tmp_file=self.tmp_file,
             terminal=False,
         )
 
         return state
-
-    @property
-    def __current_bench_data(self) -> BenchmarkFeatures:
-        """Get the current benchmark data.
-
-        Returns:
-            BenchmarkFeatures: The current benchmark data.
-        """
-        return self.benchmarks_data[self.__bench_index]
 
     def __current_op_index(self, state: OperationState) -> int:
         """Get the index of the current operation.
@@ -244,7 +199,7 @@ class Env:
         Returns:
             int: The index of the current operation.
         """
-        return self.__current_bench_data.operation_tags.index(state.operation_tag)
+        return self.benchmark_data.operation_tags.index(state.operation_tag)
 
     def __bench_is_done(self, state: OperationState) -> bool:
         """Check if the benchmark is done.

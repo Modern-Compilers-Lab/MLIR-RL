@@ -22,7 +22,7 @@ class Interchange(Action):
     symbol = 'I'
     method = InterchangeMethod(cfg.interchange_mode)
     parameters: list[int]
-    log_std: Optional[torch.Tensor] = None
+    log_std = torch.nn.Parameter(torch.zeros(1))
 
     def __init__(self, parameters: list[int], state: Optional[OperationState] = None):
         if state:
@@ -113,7 +113,6 @@ class Interchange(Action):
                 return Categorical(logits=logits)
             case InterchangeMethod.ContinuousEncoding:
                 logit = logits.squeeze(-1)
-                assert cls.log_std is not None, 'log_std must be set for continuous encoding'
                 return Normal(logit, cls.log_std.clamp(-1, 1).exp())
 
     @classmethod

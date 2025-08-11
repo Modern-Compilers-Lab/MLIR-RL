@@ -4,14 +4,21 @@ from rl_autoschedular.model import HiearchyModel as Model
 from rl_autoschedular.trajectory import TrajectoryCollector, TrajectoryData
 from rl_autoschedular.observation import Observation, NumLoops
 from rl_autoschedular.actions import ActionSpace
-from rl_autoschedular import config as cfg
-from rl_autoschedular import file_logger as fl
-from rl_autoschedular import device
+from rl_autoschedular.benchmarks import Benchmarks
+from rl_autoschedular import config as cfg, device
+from utils.file_logger import FileLogger
 from utils.log import print_error
+from utils.dask_manager import DaskManager
+from dask.distributed import print
+from typing import Optional
 from tqdm import trange
+from time import time
+
+T_collection = tuple[TrajectoryCollector, list[float], list[float], list[float], dict[str, list[float]]]
+T_evaluation = tuple[list[float], list[float], list[float], list[float], dict[str, list[float]], dict[str, tuple[int, float]]]
 
 
-def collect_trajectory(model: Model, env: Env, step: int):
+def collect_trajectory(data_size: int, step: int):
     """Collect a trajectory using the model and the environment.
 
     Args:
@@ -22,7 +29,9 @@ def collect_trajectory(model: Model, env: Env, step: int):
     Returns:
         TrejectoryData: The collected trajectory.
     """
+    dm = DaskManager()
     tc = TrajectoryCollector()
+    fl = FileLogger()
 
     eps = None
     if 'epsilon' in cfg.exploration:
@@ -30,39 +39,24 @@ def collect_trajectory(model: Model, env: Env, step: int):
         final_eps = 0.001
         eps = final_eps + (cfg.init_epsilon - final_eps) * (1 - ratio)
 
-    for _ in trange(cfg.bench_count, desc='Trajectory'):
-        state = env.reset()
-        bench_done = False
-        while not bench_done:
-            obs = Observation.from_state(state)
-            action_index, action_bev_log_p, entropy = model.sample(obs.to(device), eps=eps)
-            assert action_index.size(0) == 1 and action_bev_log_p.size(0) == 1
-            action = ActionSpace.action_by_index(action_index[0], state)
+    print(f"Trajectory collection using {dm.num_workers} workers...", end=' ')
+    start = time()
+    indices = torch.randperm(data_size)[:cfg.bench_count].long().tolist()
+    params = [(dm.remote_train_data, indices[i:cfg.bench_count:dm.num_workers], fl.last_model_path, eps) for i in range(dm.num_workers)]
+    futures = dm.client.map(__collect_benchs, *zip(*params))
+    results: list[T_collection] = dm.client.gather(futures)
+    end = time()
+    time_ms = int((end - start) * 1000)
+    print(f"{time_ms}ms")
 
-            next_state, reward, op_done, speedup = env.step(state, action)
-            next_obs = Observation.from_state(next_state)
-
-            if op_done:
-                next_state, bench_done = env.get_next_op_state(next_state)
-
-            tc.append((
-                Observation.get_part(obs, NumLoops).long().item(),
-                action_index,
-                obs,
-                next_obs,
-                action_bev_log_p.item(),
-                reward,
-                bench_done
-            ))
-
-            fl['train/entropy'].append(entropy.item())
-            fl['train/reward'].append(reward)
-            if speedup is not None:
-                fl['train/speedup'].append(speedup)
-                fl[f'train/{state.operation_features.operation_type.value}_speedup'].append(speedup)
-
-            state = next_state
-        fl['train/final_speedup'].append(speedup)
+    tc = sum([r[0] for r in results], tc)
+    for _, entropies, rewards, speedups, ops_speedups in results:
+        fl['train/entropy'].extend(entropies)
+        fl['train/reward'].extend(rewards)
+        fl['train/speedup'].extend(speedups)
+        fl['train/final_speedup'].append(speedups[-1])
+        for op_type, op_speedups in ops_speedups.items():
+            fl[f'train/{op_type}_speedup'].extend(op_speedups)
 
     return tc.to_trajectory()
 
@@ -78,6 +72,7 @@ def ppo_update(trajectory: TrajectoryData, model: Model, optimizer: torch.optim.
     Returns:
         float: The average loss.
     """
+    fl = FileLogger()
     trajectory.update_attributes(model)
 
     ppo_trange = trange(cfg.ppo_epochs, desc='PPO Epochs')
@@ -152,6 +147,7 @@ def value_update(trajectory: TrajectoryData, model: Model, optimizer: torch.opti
         model (Model): The model to update.
         optimizer (torch.optim.Optimizer): The optimizer to use.
     """
+    fl = FileLogger()
     trajectory.update_attributes(model)
 
     value_trange = trange(cfg.value_epochs, desc='Value Epochs')
@@ -186,18 +182,103 @@ def value_update(trajectory: TrajectoryData, model: Model, optimizer: torch.opti
             fl['train_value/clip_factor'].append(clip_factor.item())
 
 
-def evaluate_benchmark(model: Model, env: Env):
+def evaluate_benchmarks(data_size: int):
     """Evaluate the benchmark using the model.
 
     Args:
         model (Model): The model to use.
         env (Env): The environment to use.
     """
-    speedup_values: list[float] = []
-    eval_trange = trange(len(env.benchmarks_data), desc='Evaluation')
-    for i in eval_trange:
-        # Reset the environement with the specific benchmark
-        state = env.reset(i)
+    dm = DaskManager()
+    fl = FileLogger()
+
+    print("Evaluation started...")
+    start = time()
+    params = [(dm.remote_eval_data, list(range(i, data_size, dm.num_workers)), fl.last_model_path) for i in range(dm.num_workers)]
+    futures = dm.client.map(__evaluate_benchs, *zip(*params))
+    results: list[T_evaluation] = dm.client.gather(futures)
+    end = time()
+    time_ms = int((end - start) * 1000)
+    print(f"Evaluation time: {time_ms}ms")
+
+    all_speedups = []
+    for entropies, rewards, cumulative_rewards, final_speedups, ops_speedups, benchs_stats in results:
+        fl['eval/entropy'].extend(entropies)
+        fl['eval/reward'].extend(rewards)
+        fl['eval/cumulative_reward'].extend(cumulative_rewards)
+        fl['eval/final_speedup'].extend(final_speedups)
+        all_speedups.extend(final_speedups)
+        for op_type, op_speedups in ops_speedups.items():
+            fl[f'eval/{op_type}_speedup'].extend(op_speedups)
+        for bench_name, (exec_time, speedup) in benchs_stats.items():
+            fl[f'eval/exec_time/{bench_name}'].append(exec_time)
+            fl[f'eval/speedup/{bench_name}'].append(speedup)
+    if len(all_speedups) > 0:
+        fl['eval/average_speedup'].append(sum(all_speedups) / len(all_speedups))
+
+
+def __collect_benchs(benchs: Benchmarks, indices: list[int], last_model_path: str, eps: Optional[float]) -> T_collection:
+    entropies = []
+    rewards = []
+    speedups = []
+    ops_speedups: dict[str, list[float]] = {}
+    tc = TrajectoryCollector()
+    env = Env(is_training=False)
+    model = Model()
+    model.load_state_dict(torch.load(last_model_path, weights_only=True))
+
+    for idx in indices:
+        state = env.reset(benchs, idx)
+        bench_done = False
+        while not bench_done:
+            obs = Observation.from_state(state)
+            action_index, action_bev_log_p, entropy = model.sample(obs, eps=eps)
+            assert action_index.size(0) == 1 and action_bev_log_p.size(0) == 1
+            action = ActionSpace.action_by_index(action_index[0], state)
+
+            next_state, reward, op_done, speedup = env.step(state, action)
+            next_obs = Observation.from_state(next_state)
+
+            if op_done:
+                next_state, bench_done = env.get_next_op_state(next_state)
+
+            tc.append((
+                Observation.get_part(obs, NumLoops).long().item(),
+                action_index,
+                obs,
+                next_obs,
+                action_bev_log_p.item(),
+                reward,
+                bench_done
+            ))
+
+            entropies.append(entropy.item())
+            rewards.append(reward)
+            if speedup is not None:
+                speedups.append(speedup)
+                op_type = state.operation_features.operation_type.value
+                if op_type not in ops_speedups:
+                    ops_speedups[op_type] = []
+                ops_speedups[op_type].append(speedup)
+
+            state = next_state
+
+    return tc, entropies, rewards, speedups, ops_speedups
+
+
+def __evaluate_benchs(benchs: Benchmarks, indices: list[int], last_model_path: str) -> T_evaluation:
+    entropies = []
+    rewards = []
+    cumulative_rewards = []
+    final_speedups = []
+    ops_speedups: dict[str, list[float]] = {}
+    benchs_stats: dict[str, tuple[int, float]] = {}
+    env = Env()
+    model = Model()
+    model.load_state_dict(torch.load(last_model_path, weights_only=True))
+
+    for idx in indices:
+        state = env.reset(benchs, idx)
         bench_done = False
         cumulative_reward = 0
         while not bench_done:
@@ -208,12 +289,15 @@ def evaluate_benchmark(model: Model, env: Env):
 
             next_state, reward, op_done, speedup = env.step(state, action)
 
-            fl['eval/entropy'].append(entropy.item())
+            entropies.append(entropy.item())
             if op_done:
                 cumulative_reward += reward
-                fl['eval/reward'].append(reward)
+                rewards.append(reward)
             if speedup is not None:
-                fl[f'eval/{state.operation_features.operation_type.value}_speedup'].append(speedup)
+                op_type = state.operation_features.operation_type.value
+                if op_type not in ops_speedups:
+                    ops_speedups[op_type] = []
+                ops_speedups[op_type].append(speedup)
 
             if op_done:
                 bench_name = state.bench_name
@@ -222,16 +306,13 @@ def evaluate_benchmark(model: Model, env: Env):
 
                 next_state, bench_done = env.get_next_op_state(next_state)
                 if bench_done:
-                    print(f"\033[92m\n- Bench: {bench_name}\n- Schedule:\n{transformation_history}\n- Speedup: {speedup}\033[0m")
-                    fl[f'eval/exec_time/{bench_name}'].append(exec_time)
-                    fl[f'eval/speedup/{bench_name}'].append(speedup)
+                    print(f"- Bench: {bench_name}\n- Schedule:\n{transformation_history}\n- Speedup: {speedup}")
+                    benchs_stats[bench_name] = (exec_time, speedup)
 
             state = next_state
 
-        fl['eval/cumulative_reward'].append(cumulative_reward)
+        cumulative_rewards.append(cumulative_reward)
         assert speedup is not None
-        fl['eval/final_speedup'].append(speedup)
-        speedup_values.append(speedup)
+        final_speedups.append(speedup)
 
-    if len(speedup_values) > 0:
-        fl['eval/average_speedup'].append(sum(speedup_values) / len(speedup_values))
+    return entropies, rewards, cumulative_rewards, final_speedups, ops_speedups, benchs_stats

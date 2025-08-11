@@ -1,5 +1,4 @@
 from utils.config import Config
-from utils.file_logger import FileLogger
 import torch
 
 device = torch.device("cpu")
@@ -8,5 +7,3 @@ device = torch.device("cpu")
 config = Config()
 if not config.loaded:
     config.load_from_json()
-
-file_logger = FileLogger(config.results_dir, ['ppo'] + config.tags)

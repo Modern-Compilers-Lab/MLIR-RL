@@ -138,7 +138,7 @@ class PolicyModel(nn.Module):
         super(PolicyModel, self).__init__()
 
         self.obs_parts = obs_parts
-        Interchange.log_std = nn.Parameter(torch.zeros(1))
+        self.log_std = Interchange.log_std
 
         self.backbone = nn.Sequential(
             nn.Linear(sum(part.size() for part in obs_parts), 512),
