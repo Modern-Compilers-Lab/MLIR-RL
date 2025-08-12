@@ -14,7 +14,6 @@ class FileLogger(metaclass=Singleton):
         self.run_dir = os.path.join(dir_path, f'run_{self.run_id}')
         os.makedirs(self.run_dir, exist_ok=True)
         self.models_dir = os.path.join(self.run_dir, 'models')
-        self.last_model_path = os.path.join(self.run_dir, 'last_model.pt')
         os.makedirs(self.models_dir, exist_ok=True)
         with open(os.path.join(self.run_dir, 'tags'), 'w') as f:
             f.write('\n'.join(tags))
@@ -23,7 +22,7 @@ class FileLogger(metaclass=Singleton):
 
     def __getitem__(self, path: str):
         assert path != 'tags', "Cannot access tags file this way"
-        assert path.split('/')[0] != 'models', "Models directory is reserved to torch models"
+        assert not path.startswith('models/'), "Models directory is reserved to torch models"
         if path not in self.files_dict:
             full_path = os.path.join(self.run_dir, path)
             os.makedirs(os.path.dirname(full_path), exist_ok=True)

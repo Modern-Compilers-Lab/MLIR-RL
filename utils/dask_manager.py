@@ -47,11 +47,11 @@ class DaskManager(metaclass=Singleton):
 
     def load_train_data(self, benchs: 'Benchmarks'):
         self.remote_train_data = self.client.scatter(benchs, broadcast=True)
-        return len(benchs)
+        return benchs
 
     def load_eval_data(self, benchs: 'Benchmarks') -> int:
         self.remote_eval_data = self.client.scatter(benchs, broadcast=True)
-        return len(benchs)
+        return benchs
 
     def close(self):
         self.client.close()

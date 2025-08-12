@@ -15,26 +15,23 @@ class Env:
 
     benchmark_data: BenchmarkFeatures
     """Lists for each benchmark the benchmark's name and its features."""
-    tmp_file: str
+    tmp_file: Optional[str]
     """The temporary file to store the intermediate representations."""
-    is_training: bool
-    """Flag indicating if the environment is in training mode or evaluation mode."""
 
-    def __init__(self, is_training: bool = True, tmp_file: Optional[str] = None):
+    def __init__(self, create_tmp_file: bool = True):
         """Initialize the environment.
 
         Args:
             tmp_file (Optional[str]): The temporary file to store the intermediate representations. Defaults to None.
         """
-        self.is_training = is_training
-
         # Generate a random file to be used in order to apply the transformations and evaluate the code
-        if tmp_file is None:
+        self.tmp_file = None
+        if create_tmp_file:
             random_str = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
             tmp_file = f"tmp-debug/{random_str}.mlir" if cfg.debug else f"tmp/{random_str}.mlir"
-        with open(tmp_file, "w") as file:
-            file.write("")
-        self.tmp_file = tmp_file
+            with open(tmp_file, "w") as file:
+                file.write("")
+            self.tmp_file = tmp_file
 
     def reset(self, benchs: Benchmarks, bench_idx: Optional[int] = None) -> OperationState:
         """Reset the environment.
@@ -50,9 +47,9 @@ class Env:
             bench_idx = random.randint(0, len(benchs) - 1)
         self.benchmark_data = benchs[bench_idx]
 
-        return self.__init_op_state(-1)
+        return self.__init_op_state(bench_idx, -1)
 
-    def step(self, state: OperationState, action: Action) -> tuple[OperationState, float, bool, Optional[float]]:
+    def step(self, state: OperationState, action: Action) -> OperationState:
         """Take a step in the environment.
 
         Args:
@@ -68,36 +65,77 @@ class Env:
         # Copy the current state to introduce the changes throughout the function
         next_state = state.copy()
 
-        # Attempt to apply the transformation to the code
-        # - If the transformation fails: punish the agent, reset the code, and mark the operation as done
-        new_transformed_code, trans_succeeded = action.apply(next_state)
-        if not trans_succeeded:
-            print_error("Transformation Failed:", action)
-            reward = self.__action_reward(trans_succeeded)
-            self.__remove_invalid_trans(next_state)
-            return next_state, reward, True, 1.0
-
-        # Register the new code (transformation succeeded)
-        next_state.transformed_code = new_transformed_code
-
         # Update the state infos to reflect the transformation
         self.__update_state_infos(next_state, action)
 
-        # The operation is done if:
-        # - The transformation is terminal
-        # - Maximum number of steps is reached
-        op_done = action.terminal or next_state.step_count == cfg.truncate
+        # Check is state is terminal
+        next_state.terminal = action.terminal or next_state.step_count == cfg.truncate
 
-        # If the operation is not done, return the updated state with a reward of 0
-        if not op_done:
-            return next_state, 0.0, False, None
+        return next_state
 
-        # Mark the state as terminal
-        next_state.terminal = True
+    def get_next_op_state(self, state: OperationState) -> Optional[OperationState]:
+        """Get the state that represents the next operation (can be from another benchmark).
+
+        Args:
+            state (OperationState): The current state.
+
+        Returns:
+            Optional[OperationState]: The next state. If None then bench is done.
+        """
+        # Reset to another benchmark if the current benchmark is done (reached first operation)
+        if self.__bench_is_done(state):
+            return None
+
+        # Build a new state that points to the next operation
+        new_op_index = self.__current_op_index(state) - 1
+        new_op_tag = self.benchmark_data.operation_tags[new_op_index]
+        new_op_features = self.benchmark_data.operations[new_op_tag]
+        next_state = OperationState(
+            bench_idx=state.bench_idx,
+            bench_name=state.bench_name,
+            operation_tag=new_op_tag,  # New operation tag
+            operation_features=new_op_features.copy(),  # New operation features
+            transformed_code=None,
+            step_count=0,  # Reset step count
+            transformation_history=[[]] + state.transformation_history,  # Start new sequence
+            tmp_file=self.tmp_file,
+            terminal=False,
+        )
+
+        return next_state
+
+    def apply_sequence(self, state: OperationState) -> tuple[list[float], float]:
+        # These parameters are invalid at this point
+        state.operation_features = None
+        state.step_count = None
+
+        rewards: list[float] = []
+        state.transformed_code = self.benchmark_data.code
+        for i, seq in enumerate(state.transformation_history):
+            state.operation_tag = self.benchmark_data.operation_tags[i]
+            seq_already_failed = False
+            for action in seq:
+                if seq_already_failed:
+                    rewards.append(rewards[-1])
+                    continue
+
+                # Attempt to apply the transformation to the code
+                # - If the transformation fails: punish the agent, reset the code, and mark the operation as done
+                new_transformed_code, trans_succeeded = action.apply(state)
+                if not trans_succeeded:
+                    print_error("Transformation Failed:", action)
+                    rewards.append(self.__action_reward(trans_succeeded))
+                    seq_already_failed = True
+                    continue
+
+                # Update transformed code
+                state.transformed_code = new_transformed_code
+
+                rewards.append(0.0)
 
         # Evaluate the code (since the operation is done)
         try:
-            new_exec_time, exec_succeeded = evaluate_code(next_state, self.benchmark_data)
+            new_exec_time, exec_succeeded = evaluate_code(state, self.benchmark_data)
             if isinstance(exec_succeeded, Exception):
                 raise exec_succeeded
             if not exec_succeeded or new_exec_time is None:
@@ -106,63 +144,18 @@ class Env:
             print_error(f"\n\nError while evaluating the code: {e}")
             print_error("Exception type:", type(e).__name__)
             print_error("Call stack:", e.__traceback__)
-            print_error("Bench:", next_state.bench_name)
-            print_error("Transformations:", next_state.transformation_history)
+            print_error("Bench:", state.bench_name)
+            print_error("Transformations:", state.transformation_history)
             exec_succeeded = False
             new_exec_time = None
 
-        # Next state and reward will take into consideration whether execution succeeded or not
-        # i.e: if execution failed: punish the agent, reset the code, and mark the operation as done
-        if cfg.sparse_reward:
-            # Sparse reward: reward is given only if the benchmark is done
-            # and it's calculated compared to the root execution time
-            if self.__bench_is_done(next_state):
-                reward = self.__action_reward(trans_succeeded, exec_succeeded, new_exec_time, self.benchmark_data.root_exec_time)
-            else:
-                reward = 0.0
-        else:
-            reward = self.__action_reward(trans_succeeded, exec_succeeded, new_exec_time, next_state.exec_time)
+        # The reward will take into consideration whether execution succeeded or not
+        rewards[-1] = self.__action_reward(trans_succeeded, exec_succeeded, new_exec_time, self.benchmark_data.root_exec_time)
         speedup = (self.benchmark_data.root_exec_time / new_exec_time) if new_exec_time is not None else 1.0
 
-        # Update the state infos to reflect the execution
-        self.__update_state_exec_infos(next_state, new_exec_time)
+        return rewards, speedup
 
-        return next_state, reward, True, speedup
-
-    def get_next_op_state(self, state: OperationState) -> tuple[Optional[OperationState], bool]:
-        """Get the state that represents the next operation (can be from another benchmark).
-
-        Args:
-            state (OperationState): The current state.
-
-        Returns:
-            OperationState: The next state.
-            bool: Flag indicating if the benchmark is done.
-        """
-        # Reset to another benchmark if the current benchmark is done (reached first operation)
-        if self.__bench_is_done(state):
-            return None, True
-
-        # Build a new state that points to the next operation
-        new_op_index = self.__current_op_index(state) - 1
-        new_op_tag = self.benchmark_data.operation_tags[new_op_index]
-        new_op_features = self.benchmark_data.operations[new_op_tag]
-        next_state = OperationState(
-            bench_name=state.bench_name,
-            operation_tag=new_op_tag,  # New operation tag
-            operation_features=new_op_features,  # New operation features
-            validated_code=state.validated_code,
-            transformed_code=state.transformed_code,
-            step_count=0,  # Reset step count
-            exec_time=state.exec_time,
-            transformation_history=[[]] + state.transformation_history,  # Start new sequence
-            tmp_file=self.tmp_file,
-            terminal=False,
-        )
-
-        return next_state, False
-
-    def __init_op_state(self, operation_idx: int) -> OperationState:
+    def __init_op_state(self, bench_idx: int, operation_idx: int) -> OperationState:
         """Create a new operation state.
 
         Args:
@@ -176,13 +169,12 @@ class Env:
         operation_features = self.benchmark_data.operations[operation_tag]
 
         state = OperationState(
+            bench_idx=bench_idx,
             bench_name=self.benchmark_data.bench_name,
             operation_tag=operation_tag,
             operation_features=operation_features.copy(),
-            validated_code=self.benchmark_data.code,
-            transformed_code=self.benchmark_data.code,
+            transformed_code=None,
             step_count=0,
-            exec_time=self.benchmark_data.root_exec_time,
             transformation_history=[[]],
             tmp_file=self.tmp_file,
             terminal=False,
@@ -279,32 +271,3 @@ class Env:
         # Increase count only if action was applied
         if action.ready:
             state.step_count += 1
-
-    def __update_state_exec_infos(self, state: OperationState, new_exec_time: Optional[int]):
-        """Update the state execution infos after evaluating the code.
-
-        Args:
-            state (OperationState): The current state.
-            new_exec_time (Optional[int]): The new execution time.
-        """
-        # If the execution failed, reset the transformation sequence
-        if new_exec_time is None:
-            self.__remove_invalid_trans(state)
-            return
-
-        # Mark the code as validated
-        state.validated_code = state.transformed_code
-
-        # Update the execution time
-        state.exec_time = new_exec_time
-
-    def __remove_invalid_trans(self, state: OperationState):
-        """Remove the latest invalid transformations and reset the transformation sequence.
-
-        Args:
-            state (OperationState): The current state.
-        """
-        # Reset the code to the last validated code
-        state.transformed_code = state.validated_code
-
-        state.transformation_history[0] = []

@@ -26,6 +26,7 @@ class Interchange(Action):
 
     def __init__(self, parameters: list[int], state: Optional[OperationState] = None):
         if state:
+            # Case of unprocessed parameters
             assert len(parameters) == 1, 'uncompatible parameters for constructor call'
             parameter = parameters[0]
             num_loops = len(state.operation_features.nested_loops)

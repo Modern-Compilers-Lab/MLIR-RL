@@ -9,10 +9,14 @@ class Vectorization(Action):
 
     symbol = 'V'
     parameters: None
+    requires_decomposition: bool
     terminal = True
 
-    def __init__(self):
+    def __init__(self, state: OperationState):
         super().__init__()
+        if state.operation_features.operation_type == OperationType.Pooling:
+            assert len(state.operation_features.nested_loops) == 6
+            self.requires_decomposition = True
 
     @classmethod
     def is_allowed(cls, state):
@@ -28,7 +32,7 @@ class Vectorization(Action):
         code = state.transformed_code
 
         # Decompose pooling operation to make it vectorizable
-        if state.operation_features.operation_type == OperationType.Pooling:
+        if self.requires_decomposition:
             code, decomposed = self.__decompose_pooling(state)
             if not decomposed:
                 raise Exception("Pooling decomposition not successful")
@@ -39,8 +43,6 @@ class Vectorization(Action):
 
     @staticmethod
     def __decompose_pooling(state: OperationState) -> tuple[str, bool]:
-        assert len(state.operation_features.nested_loops) == 6
-
         # Tile the pooling operation for decomposition
         tile_sizes = [0, 0, 1, 0, 1, 0]
         new_code = transform_dialect_tile(state.transformed_code, state.operation_tag, tile_sizes, state.tmp_file)

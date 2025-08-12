@@ -102,20 +102,18 @@ class BenchmarkFeatures:
 
 @dataclass
 class OperationState:
+    bench_idx: int
+    """The benchmark's index."""
     bench_name: str
     """The benchmark's name."""
     operation_tag: str
     """Tag used to identify the operation in the MLIR code."""
     operation_features: OperationFeatures
     """Features of the operation."""
-    validated_code: str
-    """The latest validated benchmark code (if not in inference, this will always be the original code)."""
     transformed_code: str
     """The operation string with wrapping and transformations."""
     step_count: int
     """The current step in the list of transformations applied to the operation."""
-    exec_time: int
-    """Execution time of the operation in nanoseconds."""
     transformation_history: list[list['Action']]
     """List of transformations with their parameters applied to the operation."""
     tmp_file: str
@@ -126,13 +124,12 @@ class OperationState:
     def copy(self):
         """Copy the current OperationState object."""
         return OperationState(
+            self.bench_idx,
             self.bench_name,
             self.operation_tag,
             self.operation_features.copy(),
-            self.validated_code,
             self.transformed_code,
             self.step_count,
-            self.exec_time,
             [seq.copy() for seq in self.transformation_history],
             self.tmp_file,
             self.terminal

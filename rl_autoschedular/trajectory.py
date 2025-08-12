@@ -189,8 +189,8 @@ class TrajectoryData(Dataset):
             self,
             batch_size=batch_size,
             sampler=TopKAdvantageSampler(self, num_samples),
-            num_workers=4,
-            pin_memory=True,
+            num_workers=4,  # TODO: This value needs testing
+            pin_memory=device.type.startswith('cuda'),
         )
 
     def copy(self) -> 'TrajectoryData':

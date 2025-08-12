@@ -26,25 +26,28 @@ def evaluate_code(state: OperationState, bench_data: BenchmarkFeatures) -> tuple
         Optional[float]: the execution time in seconds.
         Union[Exception, bool]: the assertion result or an exception if an error occurred.
     """
-    tmp_folder, tmp_file = state.tmp_file.split('/')
-    tmp_folder = os.path.join(tmp_folder, 'exec')
-    tmp_file = tmp_file.replace('.mlir', '.json')
-    tmp_exec_file = os.path.join(tmp_folder, tmp_file)
-    if not os.path.exists(tmp_exec_file):
-        os.makedirs(os.path.dirname(tmp_exec_file), exist_ok=True)
-        with open(tmp_exec_file, "w") as file:
-            json.dump({}, file)
+    # TODO: Restore this cache functionnality (First we need to prevent the creation
+    # TODO: of a new cache file each time a worker starts `ppo.py:270`)
 
-    code_cache_key = __get_code_cache_key(state, bench_data)
-    cache_exec_time = __check_execution_cache(state.bench_name, code_cache_key, tmp_exec_file)
-    if cache_exec_time is not None:
-        return cache_exec_time, True
+    # tmp_folder, tmp_file = state.tmp_file.split('/')
+    # tmp_folder = os.path.join(tmp_folder, 'exec')
+    # tmp_file = tmp_file.replace('.mlir', '.json')
+    # tmp_exec_file = os.path.join(tmp_folder, tmp_file)
+    # if not os.path.exists(tmp_exec_file):
+    #     os.makedirs(os.path.dirname(tmp_exec_file), exist_ok=True)
+    #     with open(tmp_exec_file, "w") as file:
+    #         json.dump({}, file)
+
+    # code_cache_key = __get_code_cache_key(state, bench_data)
+    # cache_exec_time = __check_execution_cache(state.bench_name, code_cache_key, tmp_exec_file)
+    # if cache_exec_time is not None:
+    #     return cache_exec_time, True
     # print_alert('Cache miss')
 
     real_exec_time, success = evaluate_code_with_bindings(state.transformed_code)
 
-    if success and real_exec_time is not None:
-        __update_execution_cache(state.bench_name, code_cache_key, real_exec_time, tmp_exec_file)
+    # if success and real_exec_time is not None:
+    #     __update_execution_cache(state.bench_name, code_cache_key, real_exec_time, tmp_exec_file)
 
     return real_exec_time, success
 
@@ -310,6 +313,7 @@ def __get_code_cache_key(state: OperationState, bench_data: BenchmarkFeatures) -
     """
     ops_codes = [''] * len(bench_data.operation_tags)
     for i, seq in enumerate(reversed(state.transformation_history)):
+        # TODO: There might be edge cases where part of a seq is invalid `env.py:125`
         ops_codes[i] = ''.join(map(str, seq))
 
     return '|'.join(reversed(ops_codes))

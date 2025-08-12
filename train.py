@@ -10,7 +10,7 @@ from utils.file_logger import FileLogger
 from rl_autoschedular.model import HiearchyModel as Model
 from rl_autoschedular import config as cfg, device
 from rl_autoschedular.trajectory import TrajectoryData
-from rl_autoschedular.ppo import collect_trajectory, ppo_update, value_update, evaluate_benchmarks
+from rl_autoschedular.ppo import collect_trajectory, ppo_update, value_update
 from rl_autoschedular.benchmarks import Benchmarks
 from utils.log import print_info, print_success
 from typing import Optional
@@ -22,13 +22,13 @@ dm = DaskManager()
 
 # Setup torch
 torch.set_grad_enabled(False)
-torch.set_num_threads(int(os.getenv("OMP_NUM_THREADS", "4")))
+torch.set_num_threads(4)
 if cfg.debug:
     torch.autograd.set_detect_anomaly(True)
 
 # Load data
-train_size = dm.load_train_data(Benchmarks())
-eval_size = dm.load_eval_data(Benchmarks(is_training=False))
+train_data = dm.load_train_data(Benchmarks())
+eval_data = dm.load_eval_data(Benchmarks(is_training=False))
 
 # Prepare logging
 fl = FileLogger()
@@ -37,7 +37,6 @@ print_success(f'Logging to: {fl.run_dir}')
 
 # Initiate model
 model = Model().to(device)
-torch.save(model.state_dict(), fl.last_model_path)
 optimizer = torch.optim.Adam(
     model.parameters(),
     lr=cfg.lr
@@ -53,7 +52,7 @@ for step in range(cfg.nb_iterations):
     start = time()
 
     # Collect trajectory using the model
-    trajectory = collect_trajectory(train_size, step)
+    trajectory = collect_trajectory(train_data, model, step)
 
     # Extend trajectory with previous trajectory
     if cfg.reuse_experience:
@@ -69,7 +68,6 @@ for step in range(cfg.nb_iterations):
     ppo_update(trajectory, model, optimizer)
 
     # Save the model
-    torch.save(model.state_dict(), fl.last_model_path)
     if (step + 1) % 5 == 0:
         torch.save(
             model.state_dict(),
@@ -81,11 +79,13 @@ for step in range(cfg.nb_iterations):
 
     if (step + 1) % 1000 == 0:
         print_info('- Evaluating benchmarks -')
-        evaluate_benchmarks(eval_size)
+        # TODO: Needs updating
+        # evaluate_benchmarks(eval_data)
 
     end = time()
     time_ms = int((end - start) * 1000)
 
 if (step + 1) % 1000 != 0:
     print_info('- Evaluating benchmarks -')
-    evaluate_benchmarks(eval_size)
+    # TODO: Needs updating
+    # evaluate_benchmarks(eval_data)

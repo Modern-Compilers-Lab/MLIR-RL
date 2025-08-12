@@ -16,6 +16,7 @@ class Tiling(Action):
 
     def __init__(self, parameters: list[int], state: Optional[OperationState] = None):
         if state:
+            # Case of unprocessed parameters
             tile_sizes = []
             for param, loop in zip(parameters, state.operation_features.nested_loops):
                 if param == 0:

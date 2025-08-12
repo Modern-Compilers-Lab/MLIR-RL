@@ -1,4 +1,4 @@
-from typing import Optional, overload
+from typing import Optional, overload, Union
 from rl_autoschedular.state import OperationState, OperationFeatures
 from utils.log import print_error
 import torch
@@ -16,6 +16,15 @@ class Action:
     @overload
     def __init__(self):
         """Initialize action without parameters"""
+        ...
+
+    @overload
+    def __init__(self, state: OperationState):
+        """Initialize action dependent on state but without parameters
+
+        Args:
+            state (OperationState): current state to apply the action on
+        """
         ...
 
     @overload
@@ -37,8 +46,10 @@ class Action:
         """
         ...
 
-    def __init__(self, parameters: Optional[list[int]] = None, *_):
-        self.parameters = parameters
+    def __init__(self, arg: Optional[Union[OperationState, list[int]]] = None, *_):
+        if isinstance(arg, OperationState):
+            raise NotImplementedError
+        self.parameters = arg
 
     def __repr__(self) -> str:
         """String representation of the action"""

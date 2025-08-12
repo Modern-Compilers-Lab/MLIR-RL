@@ -225,3 +225,8 @@ class Observation:
         """Create the full observation from the current state."""
         obs_parts = [part.from_state(state) for part in cls.parts]
         return torch.cat(obs_parts).unsqueeze(0)
+
+    @classmethod
+    def from_states(cls, states: list[OperationState]) -> torch.Tensor:
+        """Create the full observation for all the states."""
+        return torch.cat([cls.from_state(s) for s in states])
