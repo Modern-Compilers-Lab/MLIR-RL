@@ -10,11 +10,14 @@ from utils.file_logger import FileLogger
 from rl_autoschedular.model import HiearchyModel as Model
 from rl_autoschedular import config as cfg, device
 from rl_autoschedular.trajectory import TrajectoryData
-from rl_autoschedular.ppo import collect_trajectory, ppo_update, value_update
+from rl_autoschedular.ppo import collect_trajectory, ppo_update, value_update, evaluate_benchmarks
 from rl_autoschedular.benchmarks import Benchmarks
 from utils.log import print_info, print_success
 from typing import Optional
 from time import time
+import random
+import string
+import json
 
 
 # Initialize dask in order to allocate jobs
@@ -35,6 +38,18 @@ fl = FileLogger()
 print_info(f"Config: {cfg}")
 print_success(f'Logging to: {fl.run_dir}')
 
+# Prepare the temporary execution database
+random_str = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
+tmp_exec_data_file = f'tmp/exec/{random_str}.json'
+if not os.path.exists(tmp_exec_data_file):
+    os.makedirs(os.path.dirname(tmp_exec_data_file), exist_ok=True)
+    with open(tmp_exec_data_file, "w") as file:
+        json.dump({}, file)
+print_info(f"Temporary execution data saved to: {tmp_exec_data_file}")
+
+if cfg.exec_data_file:
+    print_info(f"Global execution data located in: {cfg.exec_data_file}")
+
 # Initiate model
 model = Model().to(device)
 optimizer = torch.optim.Adam(
@@ -52,7 +67,7 @@ for step in range(cfg.nb_iterations):
     start = time()
 
     # Collect trajectory using the model
-    trajectory = collect_trajectory(train_data, model, step)
+    trajectory = collect_trajectory(train_data, model, step, tmp_exec_data_file)
 
     # Extend trajectory with previous trajectory
     if cfg.reuse_experience:
@@ -79,13 +94,11 @@ for step in range(cfg.nb_iterations):
 
     if (step + 1) % 1000 == 0:
         print_info('- Evaluating benchmarks -')
-        # TODO: Needs updating
-        # evaluate_benchmarks(eval_data)
+        evaluate_benchmarks(model, eval_data, tmp_exec_data_file)
 
     end = time()
     time_ms = int((end - start) * 1000)
 
 if (step + 1) % 1000 != 0:
     print_info('- Evaluating benchmarks -')
-    # TODO: Needs updating
-    # evaluate_benchmarks(eval_data)
+    evaluate_benchmarks(model, eval_data, tmp_exec_data_file)

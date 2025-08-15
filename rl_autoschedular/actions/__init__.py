@@ -54,7 +54,7 @@ class ActionSpace:
         action_idx = int(index[0].item())
         action_type = cls.supported_actions[action_idx]
         if not action_type.params_size():
-            return action_type()
+            return action_type(state)
 
         cum_sizes = cls.cumulative_params_sizes()
         params = index[cum_sizes[action_idx]:cum_sizes[action_idx + 1]].long().tolist()

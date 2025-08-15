@@ -14,6 +14,7 @@ class Vectorization(Action):
 
     def __init__(self, state: OperationState):
         super().__init__()
+        self.requires_decomposition = False
         if state.operation_features.operation_type == OperationType.Pooling:
             assert len(state.operation_features.nested_loops) == 6
             self.requires_decomposition = True

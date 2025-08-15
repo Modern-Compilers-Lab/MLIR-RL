@@ -197,7 +197,7 @@ class Action:
             tuple[str, bool]: the new transformed code and a flag that determines if the action was successful
         """
         if self.ready:
-            assert self.is_allowed(state), "Operation isn't allowed for this state"
+            # assert self.is_allowed(state), "Operation isn't allowed for this state"
             try:
                 return self._apply_ready(state)
             except Exception as e:

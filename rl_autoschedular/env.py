@@ -8,6 +8,7 @@ from utils.log import print_error
 import random
 import string
 import math
+import traceback
 
 
 class Env:
@@ -104,10 +105,11 @@ class Env:
 
         return next_state
 
-    def apply_sequence(self, state: OperationState) -> tuple[list[float], float]:
+    def apply_sequence(self, state: OperationState, tmp_exec_data_file: str) -> tuple[list[float], float, Optional[int]]:
         # These parameters are invalid at this point
         state.operation_features = None
         state.step_count = None
+        state.tmp_file = self.tmp_file
 
         rewards: list[float] = []
         state.transformed_code = self.benchmark_data.code
@@ -135,7 +137,7 @@ class Env:
 
         # Evaluate the code (since the operation is done)
         try:
-            new_exec_time, exec_succeeded = evaluate_code(state, self.benchmark_data)
+            new_exec_time, exec_succeeded = evaluate_code(state, self.benchmark_data, tmp_exec_data_file)
             if isinstance(exec_succeeded, Exception):
                 raise exec_succeeded
             if not exec_succeeded or new_exec_time is None:
@@ -143,7 +145,7 @@ class Env:
         except Exception as e:
             print_error(f"\n\nError while evaluating the code: {e}")
             print_error("Exception type:", type(e).__name__)
-            print_error("Call stack:", e.__traceback__)
+            print_error("Call stack:", traceback.format_exc())
             print_error("Bench:", state.bench_name)
             print_error("Transformations:", state.transformation_history)
             exec_succeeded = False
@@ -153,7 +155,7 @@ class Env:
         rewards[-1] = self.__action_reward(trans_succeeded, exec_succeeded, new_exec_time, self.benchmark_data.root_exec_time)
         speedup = (self.benchmark_data.root_exec_time / new_exec_time) if new_exec_time is not None else 1.0
 
-        return rewards, speedup
+        return rewards, speedup, new_exec_time
 
     def __init_op_state(self, bench_idx: int, operation_idx: int) -> OperationState:
         """Create a new operation state.
