@@ -8,13 +8,12 @@ from typing import Union, Optional
 import multiprocessing
 from rl_autoschedular import config as cfg
 from rl_autoschedular.state import OperationState, BenchmarkFeatures
-from utils.log import print_alert
 from statistics import median
 import json
 import re
 
 
-def evaluate_code(state: OperationState, bench_data: BenchmarkFeatures, tmp_exec_data_file: str) -> tuple[Optional[int], Union[Exception, bool]]:
+def evaluate_code(state: OperationState, bench_data: BenchmarkFeatures, tmp_exec_data_file: str) -> tuple[Optional[int], Union[Exception, bool], bool]:
     """Evaluates the given MLIR code with a timeout.
 
     Args:
@@ -25,16 +24,16 @@ def evaluate_code(state: OperationState, bench_data: BenchmarkFeatures, tmp_exec
     Returns:
         Optional[float]: the execution time in seconds.
         Union[Exception, bool]: the assertion result or an exception if an error occurred.
+        bool: flag for cache miss
     """
     code_cache_key = get_code_cache_key(state, bench_data)
     cache_exec_time = __check_execution_cache(state.bench_name, code_cache_key, tmp_exec_data_file)
     if cache_exec_time is not None:
-        return cache_exec_time, True
-    print_alert('Cache miss')
+        return cache_exec_time, True, False
 
     real_exec_time, success = evaluate_code_with_bindings(state.transformed_code)
 
-    return real_exec_time, success
+    return real_exec_time, success, True
 
 
 # ================================== Evaluation Functions (Python Bindings) ==================================
@@ -266,50 +265,20 @@ def __check_execution_cache(bench_name: str, cache_key: str, tmp_exec_data_file:
     return None
 
 
-def update_execution_cache(bench_name: str, cache_key: str, exec_time: int, tmp_exec_data_file: str):
-    """Update the temp execution cache with the given operation state.
-
-    Args:
-        bench_name (str): The benchmark name to update.
-        cache_key (str): The cache key to update.
-        exec_time (int): The execution time in nanoseconds.
-        tmp_exec_data_file (str): The path to the temporary execution data file.
-
-    """
-    with open(tmp_exec_data_file, "r") as file:
-        data = json.load(file)
-
-    if bench_name not in data:
-        data[bench_name] = {}
-
-    if cache_key in data[bench_name]:
-        print_alert("Unexpected hit", data[bench_name][cache_key], exec_time)
-        return
-    data[bench_name][cache_key] = exec_time
-
-    with open(tmp_exec_data_file, "w") as file:
-        json.dump(data, file, indent=4)
-
-
-def bulk_update_execution_cache(new_data: dict[str, dict[str, int]], tmp_exec_data_file: str):
-    """Bulk update the temp execution cache with the given operation states.
+def update_execution_cache(new_data: dict[str, dict[str, int]], tmp_exec_data_file: str):
+    """Update the temp execution cache with the new data.
 
     Args:
         new_data (dict[str, dict[str, int]]): The new data to update.
         tmp_exec_data_file (str): The path to the temporary execution data file.
     """
     with open(tmp_exec_data_file, "r") as file:
-        data = json.load(file)
+        data: dict[str, dict[str, int]] = json.load(file)
 
     for bench_name, bench_data in new_data.items():
         if bench_name not in data:
             data[bench_name] = {}
-
-        for cache_key, exec_time in bench_data.items():
-            if cache_key in data[bench_name]:
-                print_alert("Unexpected hit", data[bench_name][cache_key], exec_time)
-                continue
-            data[bench_name][cache_key] = exec_time
+        data[bench_name].update(bench_data)
 
     with open(tmp_exec_data_file, "w") as file:
         json.dump(data, file, indent=4)

@@ -105,7 +105,7 @@ class Env:
 
         return next_state
 
-    def apply_sequence(self, state: OperationState, tmp_exec_data_file: str) -> tuple[list[float], float, Optional[int]]:
+    def apply_sequence(self, state: OperationState, tmp_exec_data_file: str) -> tuple[list[float], float, Optional[int], bool]:
         # These parameters are invalid at this point
         state.operation_features = None
         state.step_count = None
@@ -117,8 +117,11 @@ class Env:
             state.operation_tag = self.benchmark_data.operation_tags[i]
             seq_already_failed = False
             for action in seq:
+                # We need to assign the same reward to all sub actions
+                rewards_count = len(action.sub_actions) + 1
+
                 if seq_already_failed:
-                    rewards.append(rewards[-1])
+                    rewards.extend([rewards[-1]] * rewards_count)
                     continue
 
                 # Attempt to apply the transformation to the code
@@ -126,18 +129,18 @@ class Env:
                 new_transformed_code, trans_succeeded = action.apply(state)
                 if not trans_succeeded:
                     print_error("Transformation Failed:", action)
-                    rewards.append(self.__action_reward(trans_succeeded))
+                    rewards.extend([self.__action_reward(trans_succeeded)] * rewards_count)
                     seq_already_failed = True
                     continue
 
                 # Update transformed code
                 state.transformed_code = new_transformed_code
 
-                rewards.append(0.0)
+                rewards.extend([0.0] * rewards_count)
 
         # Evaluate the code (since the operation is done)
         try:
-            new_exec_time, exec_succeeded = evaluate_code(state, self.benchmark_data, tmp_exec_data_file)
+            new_exec_time, exec_succeeded, cache_miss = evaluate_code(state, self.benchmark_data, tmp_exec_data_file)
             if isinstance(exec_succeeded, Exception):
                 raise exec_succeeded
             if not exec_succeeded or new_exec_time is None:
@@ -155,7 +158,7 @@ class Env:
         rewards[-1] = self.__action_reward(trans_succeeded, exec_succeeded, new_exec_time, self.benchmark_data.root_exec_time)
         speedup = (self.benchmark_data.root_exec_time / new_exec_time) if new_exec_time is not None else 1.0
 
-        return rewards, speedup, new_exec_time
+        return rewards, speedup, new_exec_time, cache_miss
 
     def __init_op_state(self, bench_idx: int, operation_idx: int) -> OperationState:
         """Create a new operation state.
@@ -266,6 +269,8 @@ class Env:
         # Record action
         if state.step_count < len(state.transformation_history[0]):
             # Case where the last action should be replaced
+            previous_action = state.transformation_history[0][state.step_count]
+            action.sub_actions = previous_action.sub_actions + [previous_action]
             state.transformation_history[0][state.step_count] = action
         else:
             state.transformation_history[0].append(action)

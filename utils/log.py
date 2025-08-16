@@ -9,25 +9,25 @@ def generate_random_string():
     return ''.join(random.choices(string.ascii_letters + string.digits, k=10))
 
 
-def print_info(*args):
+def print_info(*args, **kwargs):
     """Prints an information message"""
     message = ' '.join(map(str, args))
-    print(f"\033[94m[INFO]\t {message}\033[0m")
+    print(f"\033[94m[INFO]\t {message}\033[0m", **kwargs)
 
 
-def print_success(*args):
+def print_success(*args, **kwargs):
     """Prints a success message"""
     message = ' '.join(map(str, args))
-    print(f"\033[92m[SUCCESS]\t {message}\033[0m")
+    print(f"\033[92m[SUCCESS]\t {message}\033[0m", **kwargs)
 
 
-def print_alert(*args):
+def print_alert(*args, **kwargs):
     """Prints an alert message"""
     message = ' '.join(map(str, args))
-    print(f"\033[93m[ALERT]\t {message}\033[0m", file=sys.stderr)
+    print(f"\033[93m[ALERT]\t {message}\033[0m", file=sys.stderr, **kwargs)
 
 
-def print_error(*args):
+def print_error(*args, **kwargs):
     """Prints an error message"""
     message = ' '.join(map(str, args))
-    print(f"\033[91m[ERROR]\t {message}\033[0m", file=sys.stderr)
+    print(f"\033[91m[ERROR]\t {message}\033[0m", file=sys.stderr, **kwargs)

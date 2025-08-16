@@ -12,6 +12,7 @@ class Action:
     parameters: Optional[list[int]]
     ready: bool = True
     terminal: bool = False
+    sub_actions: list['Action'] = []
 
     @overload
     def __init__(self):

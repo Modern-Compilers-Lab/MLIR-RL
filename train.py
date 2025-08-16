@@ -18,6 +18,7 @@ from time import time
 import random
 import string
 import json
+import datetime
 
 
 # Initialize dask in order to allocate jobs
@@ -40,7 +41,7 @@ print_success(f'Logging to: {fl.run_dir}')
 
 # Prepare the temporary execution database
 random_str = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
-tmp_exec_data_file = f'tmp/exec/{random_str}.json'
+tmp_exec_data_file = f'tmp-debug/exec/{random_str}.json' if cfg.debug else f'tmp/exec/{random_str}.json'
 if not os.path.exists(tmp_exec_data_file):
     os.makedirs(os.path.dirname(tmp_exec_data_file), exist_ok=True)
     with open(tmp_exec_data_file, "w") as file:
@@ -61,8 +62,9 @@ print_success("Model initialized")
 # Start training
 old_trajectory: Optional[TrajectoryData] = None
 time_ms = 0
+eta = 0
 for step in range(cfg.nb_iterations):
-    print_info(f"- Main Loop {step + 1}/{cfg.nb_iterations} ({100 * (step + 1) / cfg.nb_iterations:.2f}%) ({time_ms}ms)")
+    print_info(f"- Main Loop {step + 1}/{cfg.nb_iterations} ({100 * (step + 1) / cfg.nb_iterations:.2f}%) ({time_ms}ms) < ({eta})")
 
     start = time()
 
@@ -98,6 +100,7 @@ for step in range(cfg.nb_iterations):
 
     end = time()
     time_ms = int((end - start) * 1000)
+    eta = datetime.timedelta(seconds=time_ms * (cfg.nb_iterations - step - 1) / 1000)
 
 if (step + 1) % 1000 != 0:
     print_info('- Evaluating benchmarks -')
