@@ -9,14 +9,14 @@ from rl_autoschedular.benchmarks import Benchmarks
 from rl_autoschedular.evaluation import get_code_cache_key, update_execution_cache
 from rl_autoschedular import config as cfg, device
 from utils.file_logger import FileLogger
-from utils.log import print_error, print_info
+from utils.log import print_error, print_info, print_success
 from utils.dask_manager import DaskManager
 from tqdm import trange
 from time import time
 import os
 from typing import Optional
 
-T_collection = tuple[list[list[float]], list[float], list[Optional[int]], int]
+T_collection = tuple[list[list[float]], list[float], list[Optional[int]], int, int]
 
 
 def collect_trajectory(data: Benchmarks, model: Model, step: int, tmp_exec_data_file: str):
@@ -110,10 +110,18 @@ def collect_trajectory(data: Benchmarks, model: Model, step: int, tmp_exec_data_
         futures.append(future)
         start = end
     results: list[T_collection] = dm.client.gather(futures)
-    all_rewards = sum([r for r, _, _, _ in results], [])
-    all_speedups = sum([s for _, s, _, _ in results], [])
-    all_exec_times = sum([e for _, _, e, _ in results], [])
-    all_cache_misses = sum([m for _, _, _, m in results])
+    all_rewards = []
+    all_speedups = []
+    all_exec_times = []
+    all_cache_misses = 0
+    max_worker_time = 0
+    for r, s, e, m, t in results:
+        all_rewards += r
+        all_speedups += s
+        all_exec_times += e
+        all_cache_misses += m
+        if t > max_worker_time:
+            max_worker_time = t
     cache_miss_rate = all_cache_misses / cfg.bench_count * 100
     new_cache_data: dict[str, dict[str, int]] = {}
     for tc, state, rewards, speedup, exec_time in zip(tcs, states, all_rewards, all_speedups, all_exec_times):
@@ -134,8 +142,9 @@ def collect_trajectory(data: Benchmarks, model: Model, step: int, tmp_exec_data_
 
     traj_end = time()
     exec_time_ms = int((traj_end - traj_end_sampling) * 1000)
+    comm_overhead = exec_time_ms - max_worker_time
     time_ms = int((traj_end - traj_start) * 1000)
-    print(f"{time_ms}ms, sampling: {sampling_time_ms}ms, exec: {exec_time_ms}ms, cache miss rate: {cache_miss_rate:.2f}%")
+    print(f"{time_ms}ms, sampling: {sampling_time_ms}ms, exec: {exec_time_ms}ms, max worker: {max_worker_time}ms, overhead: {comm_overhead}ms, cache miss rate: {cache_miss_rate:.2f}%")
 
     return tc.to_trajectory()
 
@@ -153,10 +162,11 @@ def ppo_update(trajectory: TrajectoryData, model: Model, optimizer: torch.optim.
     """
     fl = FileLogger()
     trajectory.update_attributes(model)
+    data_loader = trajectory.loader(cfg.ppo_batch_size, 1)
 
     ppo_trange = trange(cfg.ppo_epochs, desc='PPO Epochs')
     for _ in ppo_trange:
-        for batch in trajectory.loader(cfg.ppo_batch_size, 2 * cfg.truncate * cfg.bench_count):
+        for batch in data_loader:
             batch: list[torch.Tensor] = [e.to(device, non_blocking=True) for e in batch]
             (
                 _,
@@ -228,10 +238,11 @@ def value_update(trajectory: TrajectoryData, model: Model, optimizer: torch.opti
     """
     fl = FileLogger()
     trajectory.update_attributes(model)
+    data_loader = trajectory.loader(cfg.value_batch_size, 1)
 
     value_trange = trange(cfg.value_epochs, desc='Value Epochs')
     for _ in value_trange:
-        for batch in trajectory.loader(cfg.value_batch_size, 2 * cfg.truncate * cfg.bench_count):
+        for batch in data_loader:
             batch: list[torch.Tensor] = [e.to(device, non_blocking=True) for e in batch]
             (
                 _, _,
@@ -321,9 +332,13 @@ def evaluate_benchmarks(model: Model, data: Benchmarks, tmp_exec_data_file: str)
         futures.append(future)
         start = end
     results: list[T_collection] = dm.client.gather(futures)
-    all_rewards = sum([r for r, _, _, _ in results], [])
-    all_speedups = sum([s for _, s, _, _ in results], [])
-    all_exec_times = sum([e for _, _, e, _ in results], [])
+    all_rewards = []
+    all_speedups = []
+    all_exec_times = []
+    for r, s, e, _, _ in results:
+        all_rewards += r
+        all_speedups += s
+        all_exec_times += e
     new_cache_data: dict[str, dict[str, int]] = {}
     for state, rewards, speedup, exec_time in zip(states, all_rewards, all_speedups, all_exec_times):
         fl['eval/reward'].extend(rewards)
@@ -337,6 +352,9 @@ def evaluate_benchmarks(model: Model, data: Benchmarks, tmp_exec_data_file: str)
                 new_cache_data[state.bench_name] = {}
             new_cache_data[state.bench_name][cache_key] = exec_time
 
+        print_success("Bench:", state.bench_name)
+        print_info(state.transformation_history)
+
     if len(all_speedups) > 0:
         fl['eval/average_speedup'].append(sum(all_speedups) / len(all_speedups))
     update_execution_cache(new_cache_data, tmp_exec_data_file)
@@ -347,6 +365,8 @@ def evaluate_benchmarks(model: Model, data: Benchmarks, tmp_exec_data_file: str)
 
 
 def __execute_states(benchs: Benchmarks, states: list[OperationState], tmp_exec_data_file: str) -> T_collection:
+    worker_start = time()
+
     all_rewards: list[list[float]] = []
     all_speedups: list[float] = []
     all_exec_times: list[Optional[int]] = []
@@ -362,5 +382,7 @@ def __execute_states(benchs: Benchmarks, states: list[OperationState], tmp_exec_
         cache_misses += int(cache_miss)
 
     os.remove(env.tmp_file)
+    worker_end = time()
+    worker_time_ms = int((worker_end - worker_start) * 1000)
 
-    return all_rewards, all_speedups, all_exec_times, cache_misses
+    return all_rewards, all_speedups, all_exec_times, cache_misses, worker_time_ms

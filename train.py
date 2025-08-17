@@ -66,16 +66,20 @@ eta = 0
 for step in range(cfg.nb_iterations):
     print_info(f"- Main Loop {step + 1}/{cfg.nb_iterations} ({100 * (step + 1) / cfg.nb_iterations:.2f}%) ({time_ms}ms) < ({eta})")
 
-    start = time()
+    main_start = time()
 
     # Collect trajectory using the model
     trajectory = collect_trajectory(train_data, model, step, tmp_exec_data_file)
 
     # Extend trajectory with previous trajectory
+    reuse_start = time()
     if cfg.reuse_experience:
         if old_trajectory is not None:
             trajectory = old_trajectory + trajectory
         old_trajectory = trajectory.copy()
+    reuse_end = time()
+    reuse_time_ms = int((reuse_end - reuse_start) * 1000)
+    print_info(f"Reuse time: {reuse_time_ms}ms")
 
     # Fit value model to trajectory rewards
     if cfg.value_epochs > 0:
@@ -98,8 +102,8 @@ for step in range(cfg.nb_iterations):
         print_info('- Evaluating benchmarks -')
         evaluate_benchmarks(model, eval_data, tmp_exec_data_file)
 
-    end = time()
-    time_ms = int((end - start) * 1000)
+    main_end = time()
+    time_ms = int((main_end - main_start) * 1000)
     eta = datetime.timedelta(seconds=time_ms * (cfg.nb_iterations - step - 1) / 1000)
 
 if (step + 1) % 1000 != 0:

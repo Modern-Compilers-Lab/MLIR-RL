@@ -42,6 +42,8 @@ class Config(metaclass=Singleton):
     """Path to the benchmarks folder. Can be empty if optimization mode is set to "last"."""
     bench_count: int
     """Number of batches in a trajectory"""
+    replay_count: int
+    """Number of trajectories to keep in the replay buffer"""
     nb_iterations: int
     """Number of iterations"""
     ppo_epochs: int
@@ -98,6 +100,7 @@ class Config(metaclass=Singleton):
         self.activation = "relu"
         self.benchmarks_folder_path = ""
         self.bench_count = 20
+        self.replay_count = 10
         self.nb_iterations = 10000
         self.ppo_epochs = 4
         self.ppo_batch_size = 4
@@ -140,6 +143,7 @@ class Config(metaclass=Singleton):
         self.activation = config["activation"]
         self.benchmarks_folder_path = config["benchmarks_folder_path"]
         self.bench_count = config["bench_count"]
+        self.replay_count = config["replay_count"]
         self.nb_iterations = config["nb_iterations"]
         self.ppo_epochs = config["ppo_epochs"]
         self.ppo_batch_size = config["ppo_batch_size"]
@@ -180,6 +184,7 @@ class Config(metaclass=Singleton):
             "activation": self.activation,
             "benchmarks_folder_path": self.benchmarks_folder_path,
             "bench_count": self.bench_count,
+            "replay_count": self.replay_count,
             "nb_iterations": self.nb_iterations,
             "ppo_epochs": self.ppo_epochs,
             "ppo_batch_size": self.ppo_batch_size,

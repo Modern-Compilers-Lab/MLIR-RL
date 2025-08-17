@@ -3,6 +3,8 @@ from torch.utils.data import Dataset, DataLoader, Sampler
 from typing import Iterator
 from rl_autoschedular import config as cfg, device
 from rl_autoschedular.model import HiearchyModel as Model
+from time import time
+from utils.log import print_info
 
 
 T_timestep = tuple[
@@ -67,6 +69,8 @@ class TrajectoryData(Dataset):
             rewards (torch.Tensor): Rewards in the trajectory.
             done (torch.Tensor): Done flags in the trajectory.
     """
+    sizes: list[int]
+    """Sizes of all the included trajectories"""
 
     num_loops: torch.Tensor
     """Number of loops in the trajectory."""
@@ -114,6 +118,8 @@ class TrajectoryData(Dataset):
         self.rewards = rewards
         self.done = done
 
+        self.sizes = [len(self)]
+
     def __len__(self) -> int:
         """Get the length of the trajectory.
 
@@ -157,25 +163,36 @@ class TrajectoryData(Dataset):
         Returns:
             TrajectoryData: The trajectory containing both
         """
+        self_other_sizes = self.sizes + other.sizes
+
+        # Truncate to 10 trajectories
+        self_other_sizes = self_other_sizes[-cfg.replay_count:]
+        start = - sum(self_other_sizes)
+        assert len(self_other_sizes) <= cfg.replay_count
+
         self_other = TrajectoryData(
-            torch.cat((self.num_loops, other.num_loops)),
-            torch.cat((self.actions_index, other.actions_index)),
-            torch.cat((self.obs, other.obs)),
-            torch.cat((self.next_obs, other.next_obs)),
-            torch.cat((self.actions_bev_log_p, other.actions_bev_log_p)),
-            torch.cat((self.rewards, other.rewards)),
-            torch.cat((self.done, other.done)),
+            torch.cat((self.num_loops, other.num_loops))[start:],
+            torch.cat((self.actions_index, other.actions_index))[start:],
+            torch.cat((self.obs, other.obs))[start:],
+            torch.cat((self.next_obs, other.next_obs))[start:],
+            torch.cat((self.actions_bev_log_p, other.actions_bev_log_p))[start:],
+            torch.cat((self.rewards, other.rewards))[start:],
+            torch.cat((self.done, other.done))[start:],
         )
         for attr in DYNAMIC_ATTRS:
             if hasattr(self, attr) and hasattr(other, attr):
                 self_val = getattr(self, attr)
                 other_val = getattr(other, attr)
                 assert isinstance(self_val, torch.Tensor) and isinstance(other_val, torch.Tensor)
-                setattr(self_other, attr, torch.cat(self_val, other_val))
+                setattr(self_other, attr, torch.cat(self_val, other_val)[start:])
+
+        self_other.sizes = self_other_sizes
+
+        assert len(self_other) == sum(self_other_sizes)
 
         return self_other
 
-    def loader(self, batch_size: int, num_samples: int):
+    def loader(self, batch_size: int, num_trajectories: int):
         """Create a DataLoader for the trajectory.
 
         Args:
@@ -185,6 +202,8 @@ class TrajectoryData(Dataset):
         Returns:
             DataLoader: The DataLoader for the trajectory.
         """
+        num_samples = sum(self.sizes[-num_trajectories:])
+
         return DataLoader(
             self,
             batch_size=batch_size,
@@ -213,6 +232,8 @@ class TrajectoryData(Dataset):
                 assert isinstance(attr_val, torch.Tensor)
                 setattr(self_copy, attr, attr_val.clone())
 
+        self_copy.sizes = self.sizes.copy()
+
         return self_copy
 
     def update_attributes(self, model: Model):
@@ -221,6 +242,7 @@ class TrajectoryData(Dataset):
         Args:
             model (Model): The model to use for updating the attributes.
         """
+        start = time()
         actions_old_log_p, values, _ = model(self.obs.to(device), self.actions_index)
         next_values = model.value_model(self.next_obs.to(device))
 
@@ -229,6 +251,9 @@ class TrajectoryData(Dataset):
         self.__compute_rho()
         self.__compute_returns()
         self.__compute_gae()
+        end = time()
+        time_ms = int((end - start) * 1000)
+        print_info(f"Updated {len(self)} attributes in {time_ms}ms")
 
     def __compute_rho(self) -> torch.Tensor:
         """Compute the off-policy rate (rho) for the current policy.
