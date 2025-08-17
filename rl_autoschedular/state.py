@@ -108,6 +108,8 @@ class OperationState:
     """The benchmark's name."""
     operation_tag: str
     """Tag used to identify the operation in the MLIR code."""
+    original_operation_features: OperationFeatures
+    """Features of the operation that will be kept always unchanged."""
     operation_features: OperationFeatures
     """Features of the operation."""
     transformed_code: str
@@ -127,6 +129,7 @@ class OperationState:
             self.bench_idx,
             self.bench_name,
             self.operation_tag,
+            self.original_operation_features.copy(),
             self.operation_features.copy(),
             self.transformed_code,
             self.step_count,

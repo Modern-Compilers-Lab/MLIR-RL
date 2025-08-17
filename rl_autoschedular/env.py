@@ -95,6 +95,7 @@ class Env:
             bench_idx=state.bench_idx,
             bench_name=state.bench_name,
             operation_tag=new_op_tag,  # New operation tag
+            original_operation_features=new_op_features.copy(),  # New operation features
             operation_features=new_op_features.copy(),  # New operation features
             transformed_code=None,
             step_count=0,  # Reset step count
@@ -107,14 +108,15 @@ class Env:
 
     def apply_sequence(self, state: OperationState, tmp_exec_data_file: str) -> tuple[list[float], float, Optional[int], bool]:
         # These parameters are invalid at this point
+        state.original_operation_features = None
         state.operation_features = None
         state.step_count = None
         state.tmp_file = self.tmp_file
 
         rewards: list[float] = []
         state.transformed_code = self.benchmark_data.code
-        for i, seq in enumerate(state.transformation_history):
-            state.operation_tag = self.benchmark_data.operation_tags[i]
+        for seq, op_tag in reversed(list(zip(state.transformation_history, self.benchmark_data.operation_tags))):
+            state.operation_tag = op_tag
             seq_already_failed = False
             for action in seq:
                 # We need to assign the same reward to all sub actions
@@ -177,6 +179,7 @@ class Env:
             bench_idx=bench_idx,
             bench_name=self.benchmark_data.bench_name,
             operation_tag=operation_tag,
+            original_operation_features=operation_features.copy(),
             operation_features=operation_features.copy(),
             transformed_code=None,
             step_count=0,

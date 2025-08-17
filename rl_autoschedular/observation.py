@@ -31,7 +31,7 @@ class OpFeatures(ObservationPart):
 
     @classmethod
     def from_state(cls, state: OperationState) -> torch.Tensor:
-        op_features = state.operation_features
+        op_features = state.original_operation_features
 
         indices = [nested_loop.arg for nested_loop in op_features.nested_loops]
         indices_dim = {arg: i for (i, arg) in enumerate(indices)}
