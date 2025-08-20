@@ -201,5 +201,5 @@ class PolicyModel(nn.Module):
         ratios = torch.exp(torch.clamp(actions_log_p - actions_bev_log_p, -80.0, 80.0))
         surr1 = ratios * advantages
         surr2 = torch.clamp(ratios, (1 - clip_range) * off_policy_rates, (1 + clip_range) * off_policy_rates) * advantages
-        clip_frac = (torch.abs((ratios - 1)) > clip_range).float().mean()
+        clip_frac = (torch.abs((ratios / off_policy_rates - 1)) > clip_range).float().mean()
         return - torch.min(surr1, surr2).mean(), clip_frac

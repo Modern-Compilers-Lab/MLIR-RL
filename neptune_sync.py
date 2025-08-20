@@ -9,8 +9,12 @@ import time
 import signal
 
 results_dir = 'results'
-with open(os.path.join(results_dir, 'synced_ids'), 'r') as f:
-    synced_ids = [int(id) for id in f.readlines() if id.strip()]
+ids_file = os.path.join(results_dir, 'synced_ids')
+if os.path.exists(ids_file):
+    with open(ids_file, 'r') as f:
+        synced_ids = [int(id) for id in f.readlines() if id.strip()]
+else:
+    synced_ids = []
 
 current_runs = [d for d in os.listdir(results_dir) if d.startswith('run_') and int(d.split('_')[1]) not in synced_ids]
 
@@ -19,7 +23,7 @@ if not current_runs:
     exit()
 print(f'Syncing runs: {current_runs}')
 
-with open(os.path.join(results_dir, 'synced_ids'), 'a') as f:
+with open(ids_file, 'a') as f:
     f.write('\n'.join(run.split('_')[1] for run in current_runs))
     f.write('\n')
 

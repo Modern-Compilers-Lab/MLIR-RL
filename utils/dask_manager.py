@@ -14,13 +14,12 @@ class DaskManager(metaclass=Singleton):
         cluster = SLURMCluster(
             job_name='dask',
             queue='compute',
-            account='xpress',
             cores=28,
             processes=1,
             memory='64GB',
             walltime='7-00',
             job_extra_directives=[
-                '--reservation=scomputer-dalma',
+                '--reservation=c2',
                 '--nodes=1',
                 '--exclusive',
             ],
@@ -31,12 +30,12 @@ class DaskManager(metaclass=Singleton):
                 f'conda activate {os.getenv("CONDA_ENV")}',
                 'export OMP_NUM_THREADS=12',
             ],
-            # scheduler_options={
-            #     'dashboard': False
-            # }
+            scheduler_options={
+                'dashboard': False
+            }
         )
 
-        num_nodes_to_use = 16
+        num_nodes_to_use = int(os.getenv("DASK_NODES", "8"))
         print_info(f"Requesting {num_nodes_to_use} nodes for Dask workers...")
         cluster.scale(jobs=num_nodes_to_use)
 
@@ -52,7 +51,7 @@ class DaskManager(metaclass=Singleton):
         self.remote_train_data = self.client.scatter(benchs, broadcast=True)
         return benchs
 
-    def load_eval_data(self, benchs: 'Benchmarks') -> int:
+    def load_eval_data(self, benchs: 'Benchmarks'):
         self.remote_eval_data = self.client.scatter(benchs, broadcast=True)
         return benchs
 
