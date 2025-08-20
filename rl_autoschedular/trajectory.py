@@ -1,5 +1,5 @@
 import torch
-from torch.utils.data import Dataset, DataLoader, Sampler
+from torch.utils.data import Dataset, DataLoader, Sampler, RandomSampler
 from typing import Iterator
 from rl_autoschedular import config as cfg, device
 from rl_autoschedular.model import HiearchyModel as Model
@@ -203,12 +203,20 @@ class TrajectoryData(Dataset):
             DataLoader: The DataLoader for the trajectory.
         """
         num_samples = sum(self.sizes[-num_trajectories:])
+        match cfg.reuse_experience:
+            case 'topk':
+                sampler = TopKAdvantageSampler(self, num_samples)
+            case 'random':
+                sampler = RandomSampler(self, num_samples=num_samples)
+            case 'none':
+                sampler = None
 
         return DataLoader(
             self,
             batch_size=batch_size,
-            sampler=TopKAdvantageSampler(self, num_samples),
-            pin_memory=device.type.startswith('cuda'),
+            shuffle=sampler is None,
+            sampler=sampler,
+            pin_memory=device.type != 'cpu',
         )
 
     def copy(self) -> 'TrajectoryData':
@@ -261,10 +269,11 @@ class TrajectoryData(Dataset):
         Returns:
             torch.Tensor: The off-policy rate.
         """
+        if 'epsilon' not in cfg.exploration and cfg.reuse_experience == 'none':
+            self.off_policy_rates = torch.ones_like(self.actions_bev_log_p)
+            return
+
         self.off_policy_rates = torch.exp(torch.clamp(self.actions_old_log_p - self.actions_bev_log_p, -80.0, 80.0))
-        if 'epsilon' not in cfg.exploration and not cfg.reuse_experience:
-            assert self.off_policy_rates.allclose(torch.ones(1)), 'off_policy_rates should be 1 since behavior policy is the same as the current policy.'
-            self.off_policy_rates = torch.ones_like(self.off_policy_rates)
 
     def __compute_returns(self, gamma: float = 0.99) -> torch.Tensor:
         """Compute the returns.

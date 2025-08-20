@@ -73,7 +73,7 @@ for step in range(cfg.nb_iterations):
 
     # Extend trajectory with previous trajectory
     reuse_start = time()
-    if cfg.reuse_experience:
+    if cfg.reuse_experience != 'none':
         if old_trajectory is not None:
             trajectory = old_trajectory + trajectory
         old_trajectory = trajectory.copy()

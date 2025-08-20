@@ -34,8 +34,8 @@ class Config(metaclass=Singleton):
     """Flag to enable sparse reward"""
     split_ops: bool
     """Flag to enable splitting operations into separate benchmarks"""
-    reuse_experience: bool
-    """Flag to enable reusing experience"""
+    reuse_experience: Literal['none', 'random', 'topk']
+    """Strategy for experience replay"""
     activation: Literal["relu", "tanh"]
     """The activation function to use in the network"""
     benchmarks_folder_path: str
@@ -96,7 +96,7 @@ class Config(metaclass=Singleton):
         self.normalize_adv = 'standard'
         self.sparse_reward = True
         self.split_ops = False
-        self.reuse_experience = False
+        self.reuse_experience = 'none'
         self.activation = "relu"
         self.benchmarks_folder_path = ""
         self.bench_count = 20
