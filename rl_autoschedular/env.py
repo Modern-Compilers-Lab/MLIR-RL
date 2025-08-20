@@ -1,9 +1,9 @@
 from rl_autoschedular import config as cfg
-from rl_autoschedular.state import OperationState, BenchmarkFeatures
+from rl_autoschedular.state import OperationState, BenchmarkFeatures, extract_bench_features_from_code
 from rl_autoschedular.benchmarks import Benchmarks
 from typing import Optional
 from rl_autoschedular.evaluation import evaluate_code
-from rl_autoschedular.actions import Action
+from rl_autoschedular.actions import Action, TiledFusion
 from utils.log import print_error
 import random
 import string
@@ -14,8 +14,10 @@ import traceback
 class Env:
     """RL Environment class"""
 
+    bench_idx: int
+    """Index of the selected benchmark"""
     benchmark_data: BenchmarkFeatures
-    """Lists for each benchmark the benchmark's name and its features."""
+    """Features of the selected benchmark"""
     tmp_file: Optional[str]
     """The temporary file to store the intermediate representations."""
 
@@ -46,9 +48,10 @@ class Env:
         # Get the benchmark
         if bench_idx is None:
             bench_idx = random.randint(0, len(benchs) - 1)
+        self.bench_idx = bench_idx
         self.benchmark_data = benchs[bench_idx]
 
-        return self.__init_op_state(bench_idx, -1)
+        return self.__init_op_state(-1)
 
     def step(self, state: OperationState, action: Action) -> OperationState:
         """Take a step in the environment.
@@ -75,7 +78,7 @@ class Env:
         return next_state
 
     def get_next_op_state(self, state: OperationState) -> Optional[OperationState]:
-        """Get the state that represents the next operation (can be from another benchmark).
+        """Get the state that represents the next operation (None if benchmark is done).
 
         Args:
             state (OperationState): The current state.
@@ -88,57 +91,30 @@ class Env:
             return None
 
         # Build a new state that points to the next operation
-        new_op_index = self.__current_op_index(state) - 1
-        new_op_tag = self.benchmark_data.operation_tags[new_op_index]
-        new_op_features = self.benchmark_data.operations[new_op_tag]
-        next_state = OperationState(
-            bench_idx=state.bench_idx,
-            bench_name=state.bench_name,
-            operation_tag=new_op_tag,  # New operation tag
-            original_operation_features=new_op_features.copy(),  # New operation features
-            operation_features=new_op_features.copy(),  # New operation features
-            transformed_code=None,
-            step_count=0,  # Reset step count
-            transformation_history=[[]] + state.transformation_history,  # Start new sequence
-            tmp_file=self.tmp_file,
-            terminal=False,
-        )
+        next_state = self.__init_op_state(self.__current_op_index(state) - 1)
+
+        # Keep track of the transformation history
+        next_state.transformation_history += state.transformation_history
 
         return next_state
 
     def apply_sequence(self, state: OperationState, tmp_exec_data_file: str) -> tuple[list[float], float, Optional[int], bool]:
         # These parameters are invalid at this point
+        state.operation_tag = None
         state.original_operation_features = None
         state.operation_features = None
+        state.producer_tag = None
+        state.producer_features = None
         state.step_count = None
+
+        # Update tmp file
         state.tmp_file = self.tmp_file
 
         rewards: list[float] = []
         state.transformed_code = self.benchmark_data.code
         for seq, op_tag in reversed(list(zip(state.transformation_history, self.benchmark_data.operation_tags))):
             state.operation_tag = op_tag
-            seq_already_failed = False
-            for action in seq:
-                # We need to assign the same reward to all sub actions
-                rewards_count = len(action.sub_actions) + 1
-
-                if seq_already_failed:
-                    rewards.extend([rewards[-1]] * rewards_count)
-                    continue
-
-                # Attempt to apply the transformation to the code
-                # - If the transformation fails: punish the agent, reset the code, and mark the operation as done
-                new_transformed_code, trans_succeeded = action.apply(state)
-                if not trans_succeeded:
-                    print_error("Transformation Failed:", action)
-                    rewards.extend([self.__action_reward(trans_succeeded)] * rewards_count)
-                    seq_already_failed = True
-                    continue
-
-                # Update transformed code
-                state.transformed_code = new_transformed_code
-
-                rewards.extend([0.0] * rewards_count)
+            rewards.extend(self.__apply_op_sequence(state, seq))
 
         # Evaluate the code (since the operation is done)
         try:
@@ -157,12 +133,12 @@ class Env:
             new_exec_time = None
 
         # The reward will take into consideration whether execution succeeded or not
-        rewards[-1] = self.__action_reward(trans_succeeded, exec_succeeded, new_exec_time, self.benchmark_data.root_exec_time)
+        rewards[-1] = self.__action_reward(True, exec_succeeded, new_exec_time, self.benchmark_data.root_exec_time)
         speedup = (self.benchmark_data.root_exec_time / new_exec_time) if new_exec_time is not None else 1.0
 
         return rewards, speedup, new_exec_time, cache_miss
 
-    def __init_op_state(self, bench_idx: int, operation_idx: int) -> OperationState:
+    def __init_op_state(self, operation_idx: int) -> OperationState:
         """Create a new operation state.
 
         Args:
@@ -175,12 +151,20 @@ class Env:
         operation_tag = self.benchmark_data.operation_tags[operation_idx]
         operation_features = self.benchmark_data.operations[operation_tag]
 
+        producer_tag = None
+        producer_features = None
+        if operation_features.producers:
+            producer_tag = operation_features.producers[0]
+            producer_features = self.benchmark_data.operations[producer_tag]
+
         state = OperationState(
-            bench_idx=bench_idx,
+            bench_idx=self.bench_idx,
             bench_name=self.benchmark_data.bench_name,
             operation_tag=operation_tag,
             original_operation_features=operation_features.copy(),
             operation_features=operation_features.copy(),
+            producer_tag=producer_tag,
+            producer_features=producer_features.copy(),
             transformed_code=None,
             step_count=0,
             transformation_history=[[]],
@@ -278,6 +262,55 @@ class Env:
         else:
             state.transformation_history[0].append(action)
 
+        # In case of fusion we need to update the producer features as well
+        if isinstance(action, TiledFusion):
+            fuse_state = state.copy()
+            self.__apply_op_sequence(fuse_state, fuse_state.transformation_history[0])
+            self.benchmark_data = extract_bench_features_from_code(
+                fuse_state.bench_name,
+                fuse_state.transformed_code,
+                self.benchmark_data.root_exec_time
+            )
+
         # Increase count only if action was applied
         if action.ready:
             state.step_count += 1
+
+    def __apply_op_sequence(self, state: OperationState, seq: list[Action]) -> list[float]:
+        """Apply the sequence of actions to the state's code.
+
+        Note:
+            The code will be change in place.
+
+        Args:
+            state (OperationState): state to apply the actions to.
+            seq (list[Action]): the sequence of actions to apply.
+
+        Returns:
+            list[float]: rewards received for each action in the sequence.
+        """
+        rewards: list[float] = []
+        seq_already_failed = False
+        for action in seq:
+            # We need to assign the same reward to all sub actions
+            rewards_count = len(action.sub_actions) + 1
+
+            if seq_already_failed:
+                rewards.extend([rewards[-1]] * rewards_count)
+                continue
+
+            # Attempt to apply the transformation to the code
+            # - If the transformation fails: punish the agent, reset the code, and mark the operation as done
+            new_transformed_code, trans_succeeded = action.apply(state)
+            if not trans_succeeded:
+                print_error("Transformation Failed:", action)
+                rewards.extend([self.__action_reward(trans_succeeded)] * rewards_count)
+                seq_already_failed = True
+                continue
+
+            # Update transformed code
+            state.transformed_code = new_transformed_code
+
+            rewards.extend([0.0] * rewards_count)
+
+        return rewards

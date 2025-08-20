@@ -59,6 +59,8 @@ class OperationFeatures:
     """List of store accesses where each store is represented by the list of access arguments."""
     nested_loops: list[NestedLoopFeatures]
     """List of nested loops where each loop is represented by the NestedLoopFeatures dataclass."""
+    producers: list[str]
+    """List of tags of operations that are consumed by the current operation"""
     vectorizable: bool
     """Flag to indicate if the operation is vectorizable."""
 
@@ -71,6 +73,7 @@ class OperationFeatures:
             [load.copy() for load in self.load_data],
             self.store_data.copy(),
             [loop.copy() for loop in self.nested_loops],
+            self.producers.copy(),
             self.vectorizable
         )
 
@@ -112,6 +115,10 @@ class OperationState:
     """Features of the operation that will be kept always unchanged."""
     operation_features: OperationFeatures
     """Features of the operation."""
+    producer_tag: Optional[str]
+    """Tag that identifies the selected producer"""
+    producer_features: Optional[OperationFeatures]
+    """Features of the selected producer"""
     transformed_code: str
     """The operation string with wrapping and transformations."""
     step_count: int
@@ -131,6 +138,8 @@ class OperationState:
             self.operation_tag,
             self.original_operation_features.copy(),
             self.operation_features.copy(),
+            self.producer_tag,
+            self.producer_features.copy() if self.producer_features is not None else None,
             self.transformed_code,
             self.step_count,
             [seq.copy() for seq in self.transformation_history],
@@ -199,13 +208,13 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
         BenchmarkFeatures: extracted benchmark features
     """
     info, full_code = raw_ast_info.split("########################################")
-    operations_lines, _ = info.split('#BEGIN_GRAPH')
+    operations_lines, graph_lines = info.split('#BEGIN_GRAPH')
 
     operations_blocks = operations_lines.split('#START_OPERATION')
     operations_blocks = [block.strip() for block in operations_blocks if block]
 
     ops_tags = []
-    operations = {}
+    operations: dict[str, OperationFeatures] = {}
     for operation_block in operations_blocks:
         rest, operation_tag = operation_block.split("#START_TAG")
         operation_tag = operation_tag.strip().split("\n")[0]
@@ -280,8 +289,16 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
             load_data=load_data,
             store_data=store_data,
             nested_loops=nested_loops,
+            producers=[],
             vectorizable=vectorizable
         )
+
+    # Extracte Producer/Consumer features
+    graph_lines = graph_lines.split('\n')
+    graph_lines = [line.split(' --> ') for line in graph_lines if ' --> ' in line]
+
+    for producer, consumer in graph_lines:
+        operations[consumer].producers.insert(0, producer)
 
     return BenchmarkFeatures(
         bench_name=bench_name,

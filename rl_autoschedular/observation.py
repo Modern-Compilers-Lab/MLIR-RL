@@ -1,6 +1,6 @@
 from rl_autoschedular import config as cfg
 from rl_autoschedular.actions import ActionSpace
-from rl_autoschedular.state import OperationState, OperationType, IteratorType
+from rl_autoschedular.state import OperationState, OperationType, IteratorType, OperationFeatures
 import torch
 import math
 
@@ -31,8 +31,10 @@ class OpFeatures(ObservationPart):
 
     @classmethod
     def from_state(cls, state: OperationState) -> torch.Tensor:
-        op_features = state.original_operation_features
+        cls._from_features(state.original_operation_features)
 
+    @classmethod
+    def _from_features(cls, op_features: OperationFeatures) -> torch.Tensor:
         indices = [nested_loop.arg for nested_loop in op_features.nested_loops]
         indices_dim = {arg: i for (i, arg) in enumerate(indices)}
 
@@ -145,6 +147,12 @@ class OpFeatures(ObservationPart):
         return save
 
 
+class ProducerOpFeatures(OpFeatures):
+    @classmethod
+    def from_state(cls, state: OperationState) -> torch.Tensor:
+        return cls._from_features(state.producer_features)
+
+
 class ActionHistory(ObservationPart):
     """Class representing action history in the observation"""
 
@@ -186,6 +194,7 @@ class Observation:
 
     parts: list[type[ObservationPart]] = [
         OpFeatures,
+        ProducerOpFeatures,
         ActionHistory,
         NumLoops,
         ActionMask

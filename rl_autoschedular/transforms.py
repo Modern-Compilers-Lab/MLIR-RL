@@ -495,6 +495,63 @@ module attributes {{transform.with_named_sequence}} {{
     return result
 
 
+def transform_dialect_TF(code: str, consumer_tag: str, producer_tag: str, tiling_size: list[int], tmp_file_path: str):
+    """Apply the tiling and fusion transformation to the specified operation in the given code.
+
+    Args:
+        code (str): The code to apply the transformation to.
+        consumer_tag (str): The tag of the operation to apply the transformation to.
+        producer_tag (str): the tag of the producer to fuse with
+        tiling_size (list[int]): The tiling size to apply.
+        tmp_file_path (str): The path to the temporary file to write the code to.
+
+    Returns:
+        str: The code after applying the transformation.
+    """
+    if not code:
+        return code
+
+    # If tiling sizes are all zeros, means no tiling is needed
+    if all([a == 0 for a in tiling_size]):
+        return code
+
+    code = code.strip()
+
+    n_loops = sum([s != 0 for s in tiling_size])
+    r = ', '.join(['!transform.any_op'] * n_loops)
+    assert n_loops > 0, "No loops to tile"
+
+    transform_dialect_code = (
+        f'\nmodule attributes {{transform.with_named_sequence}} {{\n'
+        f'  transform.named_sequence @__transform_main(%arg1: !transform.any_op {{transform.readonly}}) {{\n'
+        f'    %op_{consumer_tag} = transform.structured.match attributes{{tag = "{consumer_tag}"}} in %arg1 : (!transform.any_op) -> !transform.any_op\n'
+        f'    %tiled_op_{consumer_tag}, %forall_op_{consumer_tag} = transform.structured.tile_using_forall %op_{consumer_tag} tile_sizes {str(tiling_size)} : (!transform.any_op) -> (!transform.any_op, !transform.any_op)\n'
+        f'    %op_{producer_tag} = transform.structured.match attributes{{tag = "{producer_tag}"}} in %arg1 : (!transform.any_op) -> !transform.any_op\n'
+        f'    %fused, %containing = transform.structured.fuse_into_containing_op %op_{producer_tag} into %forall_op_{consumer_tag} : (!transform.any_op, !transform.any_op) -> (!transform.any_op, !transform.any_op)\n'
+        f'    %fused_tag = transform.param.constant "{producer_tag}_{consumer_tag}" -> !transform.any_param\n'
+        f'    transform.annotate %fused "tag" = %fused_tag : !transform.any_op, !transform.any_param\n'
+        f'    transform.loop.forall_to_for %containing : (!transform.any_op) -> ({r})\n'
+        f'    transform.yield\n'
+        f'  }}\n'
+        f'}}\n'
+    )
+
+    code = code + transform_dialect_code + '\n'
+
+    with open(tmp_file_path, "w") as file:
+        file.write(code)
+
+    result = os.popen(
+        f"{os.getenv('LLVM_BUILD_PATH')}/bin/mlir-opt {tmp_file_path} -transform-interpreter -canonicalize -test-transform-dialect-erase-schedule",
+    ).read()
+
+    result = result.replace("module {\n", "", 1)
+    result = ''.join(result.rsplit('\n}\n', 1))
+    result = re.sub(r"module attributes \{transform.with_named_sequence\} \{\s+\}", "", result)
+
+    return result
+
+
 # ========================================= Other functions =========================================
 
 def apply_conv2d_decomposition(code: str, operation_tag: str, tmp_file_path: str):
