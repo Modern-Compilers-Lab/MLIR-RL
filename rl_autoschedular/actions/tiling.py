@@ -23,7 +23,7 @@ class Tiling(Action):
                     tile_sizes.append(0)
                 else:
                     ts = 2 ** (param - 1)
-                    assert loop.upper_bound % ts == 0, \
+                    assert loop.upper_bound % ts == 0 and loop.upper_bound != ts, \
                         f'Tiling parameter {param} is not a factor of loop upper bound {loop.upper_bound}'
                     tile_sizes.append(ts)
             parameters = tile_sizes
@@ -127,6 +127,6 @@ class Tiling(Action):
         """
         for i in range(cfg.num_tile_sizes):
             ts = 2 ** i
-            if ub % ts != 0:
+            if ub % ts != 0 or ub == ts:
                 return i + 1
         return cfg.num_tile_sizes + 1

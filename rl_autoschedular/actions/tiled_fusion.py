@@ -1,13 +1,13 @@
-from .tiling import Tiling
+from .tiled_parallelization import TiledParallelization
 from rl_autoschedular.transforms import transform_dialect_TF
 from rl_autoschedular.state import OperationState
 from typing import Optional
 
 
-class TiledFusion(Tiling):
+class TiledFusion(TiledParallelization):
     """Class representing Tiled Fusion action"""
 
-    symbol = 'TF'
+    symbol = 'TPF'
     producer_tag: str
 
     def __init__(self, parameters: list[int], state: Optional[OperationState] = None):
@@ -31,7 +31,8 @@ class TiledFusion(Tiling):
             state.transformed_code,
             state.operation_tag,
             self.producer_tag,
-            self.parameters,
+            self.tiling_params,
+            self.parallel_params,
             state.tmp_file,
         )
 

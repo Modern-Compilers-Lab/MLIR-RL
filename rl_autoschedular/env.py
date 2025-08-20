@@ -154,7 +154,7 @@ class Env:
         producer_tag = None
         producer_features = None
         if operation_features.producers:
-            producer_tag = operation_features.producers[0]
+            producer_tag = operation_features.producers[-1]
             producer_features = self.benchmark_data.operations[producer_tag]
 
         state = OperationState(

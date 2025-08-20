@@ -108,7 +108,7 @@ class ActionSpace:
 
             # Check that there is at least one action allowed
             if not mask.any():
-                raise Exception("no actions allowed in the current state")
+                raise Exception(f"no actions allowed for the current state at step {state.step_count}")
 
         for action in cls.supported_actions:
             action_mask = action.action_mask(state)

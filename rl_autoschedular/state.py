@@ -19,6 +19,8 @@ class OperationType(Enum):
     Pooling = 'pooling'
     Add = 'add'
 
+    unknown = ''
+
 
 class IteratorType(Enum):
     Parallel = 'parallel'
@@ -208,7 +210,7 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
         BenchmarkFeatures: extracted benchmark features
     """
     info, full_code = raw_ast_info.split("########################################")
-    operations_lines, graph_lines = info.split('#BEGIN_GRAPH')
+    operations_lines, graph_str = info.split('#BEGIN_GRAPH')
 
     operations_blocks = operations_lines.split('#START_OPERATION')
     operations_blocks = [block.strip() for block in operations_blocks if block]
@@ -294,11 +296,11 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
         )
 
     # Extracte Producer/Consumer features
-    graph_lines = graph_lines.split('\n')
-    graph_lines = [line.split(' --> ') for line in graph_lines if ' --> ' in line]
+    graph_str = graph_str.replace("#END_GRAPH", "")
+    graph_lines = [(line.split(' --> ')[0], line.split(' --> ')[1]) for line in graph_str.strip().split("\n") if line]
 
     for producer, consumer in graph_lines:
-        operations[consumer].producers.insert(0, producer)
+        operations[consumer].producers.append(producer)
 
     return BenchmarkFeatures(
         bench_name=bench_name,
@@ -319,6 +321,6 @@ def __get_operation_type(raw_operation: str) -> Optional[OperationType]:
         Optional[OperationType]: The operation type or None if not found.
     """
     for operation_type in OperationType:
-        if f'linalg.{operation_type.value}' in raw_operation:
+        if operation_type.value and f'linalg.{operation_type.value}' in raw_operation:
             return operation_type
-    return None
+    return OperationType.unknown

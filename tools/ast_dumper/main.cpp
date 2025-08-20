@@ -58,8 +58,6 @@
 using namespace mlir;
 
 
-
-
 std::string getLinalgOpTag(linalg::LinalgOp op) {
   // Get the 'tag' attribute from the operation
 
@@ -76,10 +74,8 @@ std::string getLinalgOpTag(linalg::LinalgOp op) {
 }
 
 
-
 int main(int argc, char **argv)
 {
-
   llvm::StringRef inputFilename = argv[1];
 
   // Register MLIR command-line options
@@ -111,8 +107,6 @@ int main(int argc, char **argv)
   context.loadDialect<vector::VectorDialect>();
   context.loadDialect<transform::TransformDialect>();
 
-
-
   mlir::registerAsmPrinterCLOptions();
   mlir::registerMLIRContextCLOptions();
 
@@ -133,8 +127,8 @@ int main(int argc, char **argv)
   mlir::OwningOpRef<Operation *> module1 = mlir::parseSourceFile<mlir::ModuleOp>(sourceMgr, &context);
   Operation *ClonedTarget = module1.get();
 
-
   int i = 0;
+  llvm::SmallVector<linalg::LinalgOp> ops_list;
   ClonedTarget->walk([&](Operation *op){
     linalg::LinalgOp linalgOp = dyn_cast<linalg::LinalgOp>(op);
 
@@ -154,6 +148,8 @@ int main(int argc, char **argv)
     } else {
       tagName = getLinalgOpTag(linalgOp);
     }
+
+    ops_list.push_back(linalgOp);
 
     llvm::outs() << "#START_OPERATION" << "\n";
     // printer << linalgOp; std::cout << "\n";
@@ -245,53 +241,25 @@ int main(int argc, char **argv)
     i += 1;
   });
 
-
-  // ClonedTarget->walk([&](Operation *op){
-  //   if (linalg::LinalgOp linalgOp = dyn_cast<linalg::LinalgOp>(op)) {
-
-  //     std::string tagValue = getLinalgOpTag(linalgOp);
-
-  //     if (!tagValue.empty()) {
-  //         std::cout << "Tag attribute value: " << tagValue << std::endl;
-  //     }
-
-  //   }
-  // });
-
   llvm::outs() << "\n\n\n\n" << "\n";
   llvm::outs() << "#BEGIN_GRAPH" << "\n";
 
-  // https://github.com/llvm/llvm-project/blob/main/mlir/test/lib/IR/TestPrintDefUse.cpp
-  ClonedTarget->walk([&](Operation *op_){
-    if (linalg::LinalgOp op = dyn_cast<linalg::LinalgOp>(op_)) {
-      if (!op->hasAttr("tag")) return;
+  for (auto producer_op : ops_list) {
+    std::string producerTag = getLinalgOpTag(producer_op);
+    for (auto potential_consumer : ops_list) {
+      for (auto any_consumer : producer_op->getUsers()) {
+        if (!(potential_consumer == any_consumer)) continue;
 
-      std::string opTagValue = getLinalgOpTag(op);
-
-      // Print information about the producer of each of the operands.
-      for (mlir::Value operand : op->getOperands()) {
-        Operation *producer = operand.getDefiningOp();
-        if (!producer) continue;
-
-        linalg::LinalgOp producerLinalgOp = dyn_cast<linalg::LinalgOp>(producer);
-        if (!producerLinalgOp) continue;
-
-        if (!producerLinalgOp->hasAttr("tag")) continue;
-
-        std::string producerTagValue = getLinalgOpTag(producerLinalgOp);
-        llvm::outs() << producerTagValue << " --> " << opTagValue << "\n";
+        std::string consumerTag = getLinalgOpTag(potential_consumer);
+        llvm::outs() << producerTag << " --> " << consumerTag << "\n";
       }
     }
-  });
+  }
 
   llvm::outs() << "#END_GRAPH\n";
 
-
   llvm::outs() << "########################################\n";
 
-
-
-  // module1->dump();
   module1->print(llvm::outs());
 
 }
