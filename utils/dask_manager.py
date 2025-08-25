@@ -35,7 +35,7 @@ class DaskManager(metaclass=Singleton):
             }
         )
 
-        num_nodes_to_use = int(os.getenv("DASK_NODES", "8"))
+        num_nodes_to_use = int(os.environ["DASK_NODES"])
         print_info(f"Requesting {num_nodes_to_use} nodes for Dask workers...")
         cluster.scale(jobs=num_nodes_to_use)
 

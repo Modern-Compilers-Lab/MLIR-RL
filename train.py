@@ -1,9 +1,10 @@
 # Load environment variables
+import os
 from dotenv import load_dotenv
 load_dotenv(override=True)
+load_dotenv('.env.debug')
 
 # Import modules
-import os
 import torch
 from utils.dask_manager import DaskManager
 from utils.file_logger import FileLogger
@@ -40,6 +41,7 @@ print_info(f"Config: {cfg}")
 print_success(f'Logging to: {fl.run_dir}')
 
 # Prepare the temporary execution database
+# TODO: Better organization required
 random_str = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
 tmp_exec_data_file = f'tmp-debug/exec/{random_str}.json' if cfg.debug else f'tmp/exec/{random_str}.json'
 if not os.path.exists(tmp_exec_data_file):
@@ -49,6 +51,7 @@ if not os.path.exists(tmp_exec_data_file):
 print_info(f"Temporary execution data saved to: {tmp_exec_data_file}")
 
 if cfg.exec_data_file:
+    # TODO: Send exec file directly to workers
     print_info(f"Global execution data located in: {cfg.exec_data_file}")
 
 # Initiate model

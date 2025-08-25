@@ -1,9 +1,10 @@
 # Load environment variables
+import os
 from dotenv import load_dotenv
 load_dotenv(override=True)
+load_dotenv('.env.debug')
 
 # Import modules
-import os
 import torch
 from utils.dask_manager import DaskManager
 from utils.file_logger import FileLogger

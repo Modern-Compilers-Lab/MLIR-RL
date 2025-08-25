@@ -1,4 +1,4 @@
-from typing import Optional, overload, Union
+from typing import Optional, overload, Union, Any
 from rl_autoschedular.state import OperationState, OperationFeatures
 from utils.log import print_error
 import torch
@@ -9,18 +9,23 @@ class Action:
     """Base action class"""
 
     symbol: str
+
+    operation_tag: str
     parameters: Optional[list[int]]
+    extras: dict[str, Any]
+
+    # --- defaults ---
     ready: bool = True
     terminal: bool = False
     sub_actions: list['Action'] = []
 
     @overload
-    def __init__(self):
+    def __init__(self, operation_tag: str, **extras):
         """Initialize action without parameters"""
         ...
 
     @overload
-    def __init__(self, state: OperationState):
+    def __init__(self, state: OperationState, **extras):
         """Initialize action dependent on state but without parameters
 
         Args:
@@ -29,7 +34,7 @@ class Action:
         ...
 
     @overload
-    def __init__(self, parameters: list[int]):
+    def __init__(self, parameters: list[int], operation_tag: str, **extras):
         """Initialize action with parameters
 
         Args:
@@ -38,7 +43,7 @@ class Action:
         ...
 
     @overload
-    def __init__(self, parameters: list[int], state: OperationState):
+    def __init__(self, parameters: list[int], state: OperationState, **extras):
         """Initialize action with unprocessed parameters
 
         Args:
@@ -47,18 +52,37 @@ class Action:
         """
         ...
 
-    def __init__(self, arg: Optional[Union[OperationState, list[int]]] = None, *_):
-        if isinstance(arg, OperationState):
-            raise NotImplementedError
-        self.parameters = arg
+    def __init__(
+        self,
+        arg1: Optional[Union[OperationState, list[int]]] = None,
+        arg2: Optional[OperationState] = None,
+        operation_tag: Optional[str] = None,
+        **extras
+    ):
+        if isinstance(arg1, OperationState):
+            parameters = None
+            state = arg1
+        else:
+            parameters = arg1
+            state = arg2
+        if (state is None) == (operation_tag is None):
+            raise ValueError("Either state or operation tag must be provided and not both")
+        if state:
+            operation_tag = state.operation_tag
+        self.operation_tag = operation_tag
+        self.parameters = parameters
+        self.extras = {'operation_tag': operation_tag, **extras}
 
     def __repr__(self) -> str:
-        """String representation of the action"""
-        return f"{self.symbol}({','.join(map(str, self.parameters)) if self.parameters else ''})"
+        """String representation of the action with extra params"""
+        params_list = list(map(str, self.parameters)) if self.parameters else []
+        params_list.extend(f'{k} = {v}' for k, v in self.extras.items())
+
+        return f"{self.__class__.__name__}({', '.join(params_list)})"
 
     def __str__(self) -> str:
         """String representation of the action"""
-        return self.__repr__()
+        return f"{self.symbol}({','.join(map(str, self.parameters)) if self.parameters else ''})"
 
     @classmethod
     def params_size(cls) -> int:
@@ -188,25 +212,26 @@ class Action:
         """
         raise NotImplementedError
 
-    def apply(self, state: OperationState) -> tuple[str, bool]:
-        """Apply action on the current state
+    def apply(self, code: str) -> tuple[str, bool]:
+        """Apply action on the current code
 
         Args:
-            state (OperationState): current state to apply the action on
+            code (str): current code to apply the action on
 
         Returns:
             tuple[str, bool]: the new transformed code and a flag that determines if the action was successful
         """
-        if self.ready:
-            # assert self.is_allowed(state), "Operation isn't allowed for this state"
-            try:
-                return self._apply_ready(state)
-            except Exception as e:
-                print_error(f"Error applying action {self}: {e}")
-                return '', False
-        return state.transformed_code, True
+        if not self.ready:
+            return code, True
 
-    def _apply_ready(self, state: OperationState) -> tuple[str, bool]:
+        try:
+            transformed_code = self._apply_ready(code)
+            return transformed_code, True
+        except Exception as e:
+            print_error(f"Error applying action {self}: {e}")
+            return '', False
+
+    def _apply_ready(self, code: str) -> str:
         """Apply action that is guarenteed to be ready on the current state
 
         Args:

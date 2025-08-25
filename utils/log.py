@@ -9,25 +9,29 @@ def generate_random_string():
     return ''.join(random.choices(string.ascii_letters + string.digits, k=10))
 
 
-def print_info(*args, **kwargs):
+def print_info(*args, add_label: bool = True, **kwargs):
     """Prints an information message"""
     message = ' '.join(map(str, args))
-    print(f"\033[94m[INFO]\t {message}\033[0m", **kwargs)
+    label = '[INFO]\t ' if add_label else ''
+    print(f"\033[94m{label}{message}\033[0m", **kwargs)
 
 
-def print_success(*args, **kwargs):
+def print_success(*args, add_label: bool = True, **kwargs):
     """Prints a success message"""
     message = ' '.join(map(str, args))
-    print(f"\033[92m[SUCCESS]\t {message}\033[0m", **kwargs)
+    label = '[SUCCESS]\t ' if add_label else ''
+    print(f"\033[92m{label}{message}\033[0m", **kwargs)
 
 
-def print_alert(*args, **kwargs):
+def print_alert(*args, add_label: bool = True, **kwargs):
     """Prints an alert message"""
     message = ' '.join(map(str, args))
-    print(f"\033[93m[ALERT]\t {message}\033[0m", file=sys.stderr, **kwargs)
+    label = '[ALERT]\t ' if add_label else ''
+    print(f"\033[93m{label}{message}\033[0m", file=sys.stderr, **kwargs)
 
 
-def print_error(*args, **kwargs):
+def print_error(*args, add_label: bool = True, **kwargs):
     """Prints an error message"""
     message = ' '.join(map(str, args))
-    print(f"\033[91m[ERROR]\t {message}\033[0m", file=sys.stderr, **kwargs)
+    label = '[ERROR]\t ' if add_label else ''
+    print(f"\033[91m{label}{message}\033[0m", file=sys.stderr, **kwargs)

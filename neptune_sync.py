@@ -48,29 +48,27 @@ def kill_handler(signum, frame):
     exit()
 
 
-if __name__ == '__main__':
-    signal.signal(signal.SIGINT, kill_handler)
-    signal.signal(signal.SIGTERM, kill_handler)
+signal.signal(signal.SIGTERM, kill_handler)
 
-    while True:
-        print('Syncing...')
-        for run in current_runs:
-            neptune_run = neptune_runs[run]
-            run_path = os.path.join(results_dir, run)
-            files: list[str] = []
-            for root, _, filenames in os.walk(run_path):
-                relative_root = root.replace(run_path, '')
-                relative_root = relative_root[1:] if relative_root.startswith('/') else relative_root
-                for filename in filenames:
-                    files.append(os.path.join(relative_root, filename) if relative_root else filename)
-            for file in files:
-                if file == 'tags' or file.endswith('.pt'):
-                    continue
-                if file not in runs_counters[run]:
-                    runs_counters[run][file] = 0
-                read_idx = runs_counters[run][file]
-                with open(os.path.join(run_path, file), 'r') as f:
-                    values = [float(line) for line in f.readlines()]
-                neptune_run[file].extend(values[read_idx:])
-                runs_counters[run][file] = len(values)
-        time.sleep(60)
+while True:
+    print('Syncing...')
+    for run in current_runs:
+        neptune_run = neptune_runs[run]
+        run_path = os.path.join(results_dir, run)
+        files: list[str] = []
+        for root, _, filenames in os.walk(run_path):
+            relative_root = root.replace(run_path, '')
+            relative_root = relative_root[1:] if relative_root.startswith('/') else relative_root
+            for filename in filenames:
+                files.append(os.path.join(relative_root, filename) if relative_root else filename)
+        for file in files:
+            if file == 'tags' or file.endswith('.pt'):
+                continue
+            if file not in runs_counters[run]:
+                runs_counters[run][file] = 0
+            read_idx = runs_counters[run][file]
+            with open(os.path.join(run_path, file), 'r') as f:
+                values = [float(line) for line in f.readlines()]
+            neptune_run[file].extend(values[read_idx:])
+            runs_counters[run][file] = len(values)
+    time.sleep(60)

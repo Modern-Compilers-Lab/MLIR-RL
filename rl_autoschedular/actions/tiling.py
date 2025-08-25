@@ -1,6 +1,6 @@
 from rl_autoschedular import config as cfg
 from rl_autoschedular.state import OperationState
-from rl_autoschedular.transforms import transform_dialect_tile
+from rl_autoschedular.transforms import transform_tile
 from typing import Optional
 from .base import Action
 import torch
@@ -12,11 +12,13 @@ class Tiling(Action):
     """Class representing Tiling action"""
 
     symbol = 'T'
+
     parameters: list[int]
 
-    def __init__(self, parameters: list[int], state: Optional[OperationState] = None):
+    def __init__(self, parameters: list[int], state: Optional[OperationState] = None, **extras):
         if state:
-            # Case of unprocessed parameters
+            # Case where state is provided -> Parameters need processing
+
             tile_sizes = []
             for param, loop in zip(parameters, state.operation_features.nested_loops):
                 if param == 0:
@@ -27,8 +29,7 @@ class Tiling(Action):
                         f'Tiling parameter {param} is not a factor of loop upper bound {loop.upper_bound}'
                     tile_sizes.append(ts)
             parameters = tile_sizes
-
-        super().__init__(parameters)
+        super().__init__(parameters, state, **extras)
 
     @classmethod
     def params_size(cls):
@@ -96,15 +97,8 @@ class Tiling(Action):
 
         return index
 
-    def _apply_ready(self, state):
-        new_code = transform_dialect_tile(
-            state.transformed_code,
-            state.operation_tag,
-            self.parameters,
-            state.tmp_file
-        )
-
-        return new_code, bool(new_code)
+    def _apply_ready(self, code):
+        return transform_tile(code, self.operation_tag, self.parameters)
 
     def update_features(self, operation_features):
         new_operation_features = operation_features.copy()

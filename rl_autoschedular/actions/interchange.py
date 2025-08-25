@@ -1,7 +1,7 @@
 from .base import Action
 from rl_autoschedular import config as cfg
 from rl_autoschedular.state import OperationState, OperationType
-from rl_autoschedular.transforms import transform_dialect_interchange
+from rl_autoschedular.transforms import transform_interchange
 from typing import Optional
 from enum import Enum
 from utils.log import print_error
@@ -20,13 +20,17 @@ class Interchange(Action):
     """Class representing Interchange action"""
 
     symbol = 'I'
-    method = InterchangeMethod(cfg.interchange_mode)
+
     parameters: list[int]
+
+    # --- constants ---
+    method = InterchangeMethod(cfg.interchange_mode)
     log_std = torch.nn.Parameter(torch.zeros(1))
 
-    def __init__(self, parameters: list[int], state: Optional[OperationState] = None):
+    def __init__(self, parameters: list[int], state: Optional[OperationState] = None, **extras):
         if state:
-            # Case of unprocessed parameters
+            # Case where state is provided -> Parameters need processing
+
             assert len(parameters) == 1, 'uncompatible parameters for constructor call'
             parameter = parameters[0]
             num_loops = len(state.operation_features.nested_loops)
@@ -47,8 +51,7 @@ class Interchange(Action):
                     assert len(parameters) <= num_loops, 'interchange parameter exceeds number of loops'
                     if len(parameters) < num_loops:
                         self.ready = False
-
-        super().__init__(parameters)
+        super().__init__(parameters, state, **extras)
 
     @classmethod
     def params_size(cls):
@@ -161,15 +164,8 @@ class Interchange(Action):
 
         return index.unsqueeze(-1)
 
-    def _apply_ready(self, state):
-        new_code = transform_dialect_interchange(
-            state.transformed_code,
-            state.operation_tag,
-            self.parameters,
-            state.tmp_file
-        )
-
-        return new_code, bool(new_code)
+    def _apply_ready(self, code):
+        return transform_interchange(code, self.operation_tag, self.parameters)
 
     def update_features(self, operation_features):
         if not self.ready:
@@ -179,8 +175,8 @@ class Interchange(Action):
         for i, j in enumerate(self.parameters):
             new_operation_features.nested_loops[i] = operation_features.nested_loops[j]
 
-        # In case an interchange was applied to pooling, vectorization is no longer possible
-        if operation_features.operation_type == OperationType.Pooling and self.parameters != list(range(len(self.parameters))):
+        # In case an interchange was applied to pooling or conv, vectorization is no longer possible
+        if operation_features.operation_type in [OperationType.Pooling, OperationType.Conv] and self.parameters != list(range(len(self.parameters))):
             new_operation_features.vectorizable = False
 
         return new_operation_features

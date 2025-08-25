@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 class OperationType(Enum):
     Generic = 'generic'
     Matmul = 'matmul'
-    Conv2D = 'conv_2d'
+    Conv = 'conv'
     Pooling = 'pooling'
     Add = 'add'
 
@@ -49,10 +49,10 @@ class NestedLoopFeatures:
 @dataclass
 class OperationFeatures:
     """Dataclass to store the operation features data."""
-    raw_operation: str
-    """The raw operation string without wrapping or transformations."""
+    operation_name: str
+    """The name of the mlir operation."""
     operation_type: OperationType
-    """The type of the operation (generic, matmul, conv2d, ...)."""
+    """The type of the operation."""
     op_count: dict[str, int]
     """Number of arithmetic operations in the operation."""
     load_data: list[list[str]]
@@ -69,7 +69,7 @@ class OperationFeatures:
     def copy(self):
         """Copy the current OperationFeatures object."""
         return OperationFeatures(
-            self.raw_operation,
+            self.operation_name,
             self.operation_type,
             self.op_count.copy(),
             [load.copy() for load in self.load_data],
@@ -121,14 +121,10 @@ class OperationState:
     """Tag that identifies the selected producer"""
     producer_features: Optional[OperationFeatures]
     """Features of the selected producer"""
-    transformed_code: str
-    """The operation string with wrapping and transformations."""
     step_count: int
     """The current step in the list of transformations applied to the operation."""
     transformation_history: list[list['Action']]
     """List of transformations with their parameters applied to the operation."""
-    tmp_file: str
-    """Temporary file to store the MLIR code."""
     terminal: bool
     """Flag that determines if the state is terminal"""
 
@@ -142,10 +138,8 @@ class OperationState:
             self.operation_features.copy(),
             self.producer_tag,
             self.producer_features.copy() if self.producer_features is not None else None,
-            self.transformed_code,
             self.step_count,
             [seq.copy() for seq in self.transformation_history],
-            self.tmp_file,
             self.terminal
         )
 
@@ -222,11 +216,11 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
         operation_tag = operation_tag.strip().split("\n")[0]
         log_info = f"- Bench: {bench_name} - Operation: {operation_tag}"
 
-        raw_operation, rest = rest.split("#START_VECTORIZABLE")
-        operation_type = __get_operation_type(raw_operation)
+        operation_name, rest = rest.split("#START_VECTORIZABLE")
+        operation_type = __get_operation_type(operation_name)
         if operation_type is None:
             print_error(log_info)
-            print_error("Unsupported operation type:", raw_operation.split("\n")[0])
+            print_error("Unsupported operation type:", operation_name)
             continue
 
         nested_loops = []
@@ -285,7 +279,7 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
 
         ops_tags.append(operation_tag)
         operations[operation_tag] = OperationFeatures(
-            raw_operation=raw_operation,
+            operation_name=operation_name,
             operation_type=operation_type,
             op_count=op_count,
             load_data=load_data,
@@ -311,16 +305,16 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
     )
 
 
-def __get_operation_type(raw_operation: str) -> Optional[OperationType]:
-    """Get the operation type from the raw operation string.
+def __get_operation_type(operation_name: str) -> Optional[OperationType]:
+    """Get the operation type from the operation name.
 
     Args:
-        raw_operation (str): The raw operation string.
+        operation_name (str): The operation name.
 
     Returns:
         Optional[OperationType]: The operation type or None if not found.
     """
     for operation_type in OperationType:
-        if operation_type.value and f'linalg.{operation_type.value}' in raw_operation:
+        if operation_type.value and operation_type.value in operation_name:
             return operation_type
     return OperationType.unknown

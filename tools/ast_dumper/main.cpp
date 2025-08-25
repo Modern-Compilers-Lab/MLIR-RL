@@ -152,8 +152,7 @@ int main(int argc, char **argv)
     ops_list.push_back(linalgOp);
 
     llvm::outs() << "#START_OPERATION" << "\n";
-    // printer << linalgOp; std::cout << "\n";
-    llvm::outs() << linalgOp << "\n";
+    llvm::outs() << linalgOp->getName() << "\n";
 
     llvm::outs() << "#START_VECTORIZABLE" << "\n";
     if (failed(linalg::vectorizeOpPrecondition(linalgOp))) {

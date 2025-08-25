@@ -6,14 +6,13 @@ from rl_autoschedular.trajectory import TrajectoryCollector, TrajectoryData
 from rl_autoschedular.observation import Observation, NumLoops
 from rl_autoschedular.actions import ActionSpace
 from rl_autoschedular.benchmarks import Benchmarks
-from rl_autoschedular.evaluation import get_code_cache_key, update_execution_cache
+from rl_autoschedular.execution import get_code_cache_key, update_execution_cache
 from rl_autoschedular import config as cfg, device
 from utils.file_logger import FileLogger
 from utils.log import print_error, print_info, print_success
 from utils.dask_manager import DaskManager
 from tqdm import trange
 from time import time
-import os
 from typing import Optional
 
 T_collection = tuple[list[list[float]], list[float], list[Optional[int]], int, int]
@@ -52,7 +51,7 @@ def collect_trajectory(data: Benchmarks, model: Model, step: int, tmp_exec_data_
     observations: list[torch.Tensor] = []
     tcs: list[TrajectoryCollector] = []
     for idx in indices:
-        env = Env(create_tmp_file=False)
+        env = Env()
         state = env.reset(data, idx)
         envs.append(env)
         states.append(state)
@@ -132,7 +131,7 @@ def collect_trajectory(data: Benchmarks, model: Model, step: int, tmp_exec_data_
         fl['train/final_speedup'].append(speedup)
         # Get new cache data
         if exec_time is not None:
-            cache_key = get_code_cache_key(state, data[state.bench_idx])
+            cache_key = get_code_cache_key(state.transformation_history)
             if state.bench_name not in new_cache_data:
                 new_cache_data[state.bench_name] = {}
             new_cache_data[state.bench_name][cache_key] = exec_time
@@ -144,7 +143,16 @@ def collect_trajectory(data: Benchmarks, model: Model, step: int, tmp_exec_data_
     exec_time_ms = int((traj_end - traj_end_sampling) * 1000)
     comm_overhead = exec_time_ms - max_worker_time
     time_ms = int((traj_end - traj_start) * 1000)
-    print(f"{time_ms}ms, sampling: {sampling_time_ms}ms, exec: {exec_time_ms}ms, max worker: {max_worker_time}ms, overhead: {comm_overhead}ms, cache miss rate: {cache_miss_rate:.2f}%")
+    print_info(
+        (
+            f"{time_ms}ms"
+            f", sampling: {sampling_time_ms}ms"
+            f", exec: {exec_time_ms}ms"
+            f", max worker: {max_worker_time}ms"
+            f", overhead: {comm_overhead}ms"
+            f", cache miss rate: {cache_miss_rate:.2f}%"
+        ), add_label=False
+    )
 
     return tc.to_trajectory()
 
@@ -292,7 +300,7 @@ def evaluate_benchmarks(model: Model, data: Benchmarks, tmp_exec_data_file: str)
     states: list[OperationState] = []
     observations: list[torch.Tensor] = []
     for idx in indices:
-        env = Env(create_tmp_file=False)
+        env = Env()
         state = env.reset(data, idx)
         envs.append(env)
         states.append(state)
@@ -347,7 +355,7 @@ def evaluate_benchmarks(model: Model, data: Benchmarks, tmp_exec_data_file: str)
         if exec_time is not None:
             fl[f'eval/exec_time/{state.bench_name}'].append(exec_time)
             fl[f'eval/speedup/{state.bench_name}'].append(speedup)
-            cache_key = get_code_cache_key(state, data[state.bench_idx])
+            cache_key = get_code_cache_key(state)
             if state.bench_name not in new_cache_data:
                 new_cache_data[state.bench_name] = {}
             new_cache_data[state.bench_name][cache_key] = exec_time
@@ -375,13 +383,12 @@ def __execute_states(benchs: Benchmarks, states: list[OperationState], tmp_exec_
 
     for state in states:
         env.reset(benchs, state.bench_idx)
-        rewards, speedup, new_exec_time, cache_miss = env.apply_sequence(state, tmp_exec_data_file)
+        rewards, speedup, new_exec_time, cache_miss = env.apply_and_run_sequence(state.transformation_history, tmp_exec_data_file)
         all_rewards.append(rewards)
         all_speedups.append(speedup)
         all_exec_times.append(new_exec_time)
         cache_misses += int(cache_miss)
 
-    os.remove(env.tmp_file)
     worker_end = time()
     worker_time_ms = int((worker_end - worker_start) * 1000)
 

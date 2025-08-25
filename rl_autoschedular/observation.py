@@ -31,7 +31,7 @@ class OpFeatures(ObservationPart):
 
     @classmethod
     def from_state(cls, state: OperationState) -> torch.Tensor:
-        cls._from_features(state.original_operation_features)
+        return cls._from_features(state.original_operation_features)
 
     @classmethod
     def _from_features(cls, op_features: OperationFeatures) -> torch.Tensor:
@@ -150,7 +150,10 @@ class OpFeatures(ObservationPart):
 class ProducerOpFeatures(OpFeatures):
     @classmethod
     def from_state(cls, state: OperationState) -> torch.Tensor:
-        return cls._from_features(state.producer_features)
+        if state.producer_features:
+            return cls._from_features(state.producer_features)
+
+        return torch.zeros(cls.size())
 
 
 class ActionHistory(ObservationPart):
