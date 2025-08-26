@@ -1,13 +1,12 @@
+from typing import Optional
+from rl_autoschedular.benchmarks import Benchmarks
 from dask.distributed import Client
 from dask_jobqueue import SLURMCluster
-from .log import print_info
 from .singleton import Singleton
-from typing import TYPE_CHECKING
+from .log import print_info
+from .config import Config
 import json
 import os
-
-if TYPE_CHECKING:
-    from rl_autoschedular.benchmarks import Benchmarks
 
 
 class DaskManager(metaclass=Singleton):
@@ -48,20 +47,33 @@ class DaskManager(metaclass=Singleton):
         self.workers_names = list(cluster.workers.keys())
         self.num_workers = len(cluster.workers)
 
-        self.remote_main_exec_data = None
+    def load_train_data(self):
+        def __load_train_data(_):
+            return Benchmarks()
+        self.remote_train_data = []
+        for i, worker in enumerate(self.workers_names):
+            self.remote_train_data.append(self.client.submit(__load_train_data, i, workers=[worker]))
+        return __load_train_data(-1)
 
-    def load_train_data(self, benchs: 'Benchmarks'):
-        self.remote_train_data = self.client.scatter(benchs, broadcast=True)
-        return benchs
+    def load_eval_data(self):
+        def __load_eval_data(_):
+            return Benchmarks(is_training=False)
+        self.remote_eval_data = []
+        for i, worker in enumerate(self.workers_names):
+            self.remote_eval_data.append(self.client.submit(__load_eval_data, i, workers=[worker]))
+        return __load_eval_data(-1)
 
-    def load_eval_data(self, benchs: 'Benchmarks'):
-        self.remote_eval_data = self.client.scatter(benchs, broadcast=True)
-        return benchs
-
-    def load_main_exec_data(self, main_exec_data_path: str):
-        with open(main_exec_data_path) as f:
-            main_exec_data: dict[str, dict[str, int]] = json.load(f)
-        self.remote_main_exec_data = self.client.scatter(main_exec_data, broadcast=True)
+    def load_main_exec_data(self):
+        def __load_main_exec_data(_):
+            main_exec_data: Optional[dict[str, dict[str, int]]] = None
+            if Config().main_exec_data_file:
+                with open(Config().main_exec_data_file) as f:
+                    main_exec_data = json.load(f)
+            return main_exec_data
+        self.remote_main_exec_data = []
+        for i, worker in enumerate(self.workers_names):
+            self.remote_main_exec_data.append(self.client.submit(__load_main_exec_data, i, workers=[worker]))
+        return __load_main_exec_data(-1)
 
     def close(self):
         self.client.close()

@@ -111,9 +111,9 @@ def collect_trajectory(data: Benchmarks, model: Model, step: int):
         future = dm.client.submit(
             __execute_states,
             states[start:end],
-            dm.remote_train_data,
+            dm.remote_train_data[i],
             fl.exec_data_file,
-            dm.remote_main_exec_data,
+            dm.remote_main_exec_data[i],
             workers=[worker]
         )
         futures.append(future)
@@ -354,9 +354,9 @@ def evaluate_benchmarks(model: Model, data: Benchmarks):
         future = dm.client.submit(
             __execute_states,
             states[start:end],
-            dm.remote_eval_data,
+            dm.remote_eval_data[i],
             fl.exec_data_file,
-            dm.remote_main_exec_data,
+            dm.remote_main_exec_data[i],
             workers=[worker]
         )
         futures.append(future)

@@ -74,7 +74,7 @@ class Config(metaclass=Singleton):
     """List of tags to add to the neptune experiment"""
     debug: bool
     """Flag to enable debug mode"""
-    exec_data_file: str
+    main_exec_data_file: str
     """Path to the file containing the execution data"""
     results_dir: str
     """Path to the results directory"""

@@ -1,17 +1,17 @@
 # Load environment variables
 import os
 from dotenv import load_dotenv
+
 load_dotenv(override=True)
 load_dotenv('.env.debug')
 
 # Import modules
 import torch
+from rl_autoschedular.execution import Execution
 from rl_autoschedular.model import HiearchyModel as Model
 from rl_autoschedular import device
 from rl_autoschedular.trajectory import TrajectoryData
 from rl_autoschedular.ppo import collect_trajectory, ppo_update, value_update, evaluate_benchmarks
-from rl_autoschedular.benchmarks import Benchmarks
-from rl_autoschedular.execution import Execution
 from utils.log import print_info, print_success
 from utils.config import Config
 from utils.dask_manager import DaskManager
@@ -21,20 +21,23 @@ from time import time
 import datetime
 
 
-# Initialize Singletons
+# Initialize singleton classes
 cfg = Config()
 dm = DaskManager()
 fl = FileLogger()
-Execution(fl.exec_data_file)
-print_info(f"Config: {cfg}")
-print_success(f'Logging to: {fl.run_dir}')
 
 # Load data to workers
-train_data = dm.load_train_data(Benchmarks())
-eval_data = dm.load_eval_data(Benchmarks(is_training=False))
-if cfg.exec_data_file:
-    dm.load_main_exec_data(cfg.exec_data_file)
-    print_info(f"Global execution data located in: {cfg.exec_data_file}")
+train_data = dm.load_train_data()
+eval_data = dm.load_eval_data()
+main_exec_data = dm.load_main_exec_data()
+
+# Initialize execution singleton
+Execution(fl.exec_data_file, main_exec_data)
+
+print_info(f"Config: {cfg}")
+print_success(f'Logging to: {fl.run_dir}')
+if cfg.main_exec_data_file:
+    print_info(f"Global execution data located in: {cfg.main_exec_data_file}")
 
 # Setup torch
 torch.set_grad_enabled(False)
