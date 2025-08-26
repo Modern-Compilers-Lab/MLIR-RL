@@ -1,3 +1,4 @@
+from utils.config import Config
 from .base import Action
 from .no_transformation import NoTransformation
 from .tiling import Tiling
@@ -5,7 +6,6 @@ from .tiled_parallelization import TiledParallelization
 from .tiled_fusion import TiledFusion
 from .interchange import Interchange
 from .vectorization import Vectorization
-from rl_autoschedular import config as cfg
 from rl_autoschedular.state import OperationState
 import torch
 from torch.distributions import Distribution, Categorical
@@ -78,6 +78,7 @@ class ActionSpace:
 
     @classmethod
     def action_mask(cls, state: OperationState) -> torch.Tensor:
+        cfg = Config()
         mask = torch.zeros(cls.size(), dtype=torch.bool)
 
         def allow_action(a: type[Action]):

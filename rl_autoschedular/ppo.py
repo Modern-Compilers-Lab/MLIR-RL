@@ -6,8 +6,9 @@ from rl_autoschedular.trajectory import TrajectoryCollector, TrajectoryData
 from rl_autoschedular.observation import Observation, NumLoops
 from rl_autoschedular.actions import ActionSpace
 from rl_autoschedular.benchmarks import Benchmarks
-from rl_autoschedular.execution import get_code_cache_key, update_execution_cache
-from rl_autoschedular import config as cfg, device
+from rl_autoschedular.execution import Execution
+from rl_autoschedular import device
+from utils.config import Config
 from utils.file_logger import FileLogger
 from utils.log import print_error, print_info, print_success
 from utils.dask_manager import DaskManager
@@ -18,7 +19,7 @@ from typing import Optional
 T_collection = tuple[list[list[float]], list[float], list[Optional[int]], int, int]
 
 
-def collect_trajectory(data: Benchmarks, model: Model, step: int, tmp_exec_data_file: str):
+def collect_trajectory(data: Benchmarks, model: Model, step: int):
     """Collect a trajectory using the model and the environment.
 
     Args:
@@ -32,6 +33,8 @@ def collect_trajectory(data: Benchmarks, model: Model, step: int, tmp_exec_data_
     """
     dm = DaskManager()
     fl = FileLogger()
+    exe = Execution()
+    cfg = Config()
 
     eps = None
     if 'epsilon' in cfg.exploration:
@@ -105,7 +108,14 @@ def collect_trajectory(data: Benchmarks, model: Model, step: int, tmp_exec_data_
         end = start + per_worker
         if i < rest:
             end += 1
-        future = dm.client.submit(__execute_states, dm.remote_train_data, states[start:end], tmp_exec_data_file, workers=[worker])
+        future = dm.client.submit(
+            __execute_states,
+            states[start:end],
+            dm.remote_train_data,
+            fl.exec_data_file,
+            dm.remote_main_exec_data,
+            workers=[worker]
+        )
         futures.append(future)
         start = end
     results: list[T_collection] = dm.client.gather(futures)
@@ -131,13 +141,13 @@ def collect_trajectory(data: Benchmarks, model: Model, step: int, tmp_exec_data_
         fl['train/final_speedup'].append(speedup)
         # Get new cache data
         if exec_time is not None:
-            cache_key = get_code_cache_key(state.transformation_history)
+            cache_key = exe.get_code_cache_key(state.transformation_history)
             if state.bench_name not in new_cache_data:
                 new_cache_data[state.bench_name] = {}
             new_cache_data[state.bench_name][cache_key] = exec_time
 
     tc = sum(tcs, TrajectoryCollector())
-    update_execution_cache(new_cache_data, tmp_exec_data_file)
+    exe.update_execution_cache(new_cache_data)
 
     traj_end = time()
     exec_time_ms = int((traj_end - traj_end_sampling) * 1000)
@@ -169,6 +179,8 @@ def ppo_update(trajectory: TrajectoryData, model: Model, optimizer: torch.optim.
         float: The average loss.
     """
     fl = FileLogger()
+    cfg = Config()
+
     trajectory.update_attributes(model)
     data_loader = trajectory.loader(cfg.ppo_batch_size, 1)
 
@@ -245,6 +257,8 @@ def value_update(trajectory: TrajectoryData, model: Model, optimizer: torch.opti
         optimizer (torch.optim.Optimizer): The optimizer to use.
     """
     fl = FileLogger()
+    cfg = Config()
+
     trajectory.update_attributes(model)
     data_loader = trajectory.loader(cfg.value_batch_size, 1)
 
@@ -280,7 +294,7 @@ def value_update(trajectory: TrajectoryData, model: Model, optimizer: torch.opti
             fl['train_value/clip_factor'].append(clip_factor.item())
 
 
-def evaluate_benchmarks(model: Model, data: Benchmarks, tmp_exec_data_file: str):
+def evaluate_benchmarks(model: Model, data: Benchmarks):
     """Evaluate the benchmark using the model.
 
     Args:
@@ -290,6 +304,7 @@ def evaluate_benchmarks(model: Model, data: Benchmarks, tmp_exec_data_file: str)
     """
     dm = DaskManager()
     fl = FileLogger()
+    exe = Execution()
 
     print_info("Evaluation started...")
     eval_start = time()
@@ -336,7 +351,14 @@ def evaluate_benchmarks(model: Model, data: Benchmarks, tmp_exec_data_file: str)
         end = start + per_worker
         if i < rest:
             end += 1
-        future = dm.client.submit(__execute_states, dm.remote_eval_data, states[start:end], tmp_exec_data_file, workers=[worker])
+        future = dm.client.submit(
+            __execute_states,
+            states[start:end],
+            dm.remote_eval_data,
+            fl.exec_data_file,
+            dm.remote_main_exec_data,
+            workers=[worker]
+        )
         futures.append(future)
         start = end
     results: list[T_collection] = dm.client.gather(futures)
@@ -355,7 +377,7 @@ def evaluate_benchmarks(model: Model, data: Benchmarks, tmp_exec_data_file: str)
         if exec_time is not None:
             fl[f'eval/exec_time/{state.bench_name}'].append(exec_time)
             fl[f'eval/speedup/{state.bench_name}'].append(speedup)
-            cache_key = get_code_cache_key(state)
+            cache_key = exe.get_code_cache_key(state)
             if state.bench_name not in new_cache_data:
                 new_cache_data[state.bench_name] = {}
             new_cache_data[state.bench_name][cache_key] = exec_time
@@ -365,25 +387,26 @@ def evaluate_benchmarks(model: Model, data: Benchmarks, tmp_exec_data_file: str)
 
     if len(all_speedups) > 0:
         fl['eval/average_speedup'].append(sum(all_speedups) / len(all_speedups))
-    update_execution_cache(new_cache_data, tmp_exec_data_file)
+    exe.update_execution_cache(new_cache_data)
 
     eval_end = time()
     time_ms = int((eval_end - eval_start) * 1000)
     print_info(f"Evaluation time: {time_ms}ms")
 
 
-def __execute_states(benchs: Benchmarks, states: list[OperationState], tmp_exec_data_file: str) -> T_collection:
+def __execute_states(states: list[OperationState], benchs: Benchmarks, exec_data_file: str, main_exec_data: Optional[dict[str, dict[str, int]]]) -> T_collection:
     worker_start = time()
 
     all_rewards: list[list[float]] = []
     all_speedups: list[float] = []
     all_exec_times: list[Optional[int]] = []
     cache_misses = 0
+    Execution(exec_data_file, main_exec_data)
     env = Env()
 
     for state in states:
         env.reset(benchs, state.bench_idx)
-        rewards, speedup, new_exec_time, cache_miss = env.apply_and_run_sequence(state.transformation_history, tmp_exec_data_file)
+        rewards, speedup, new_exec_time, cache_miss = env.apply_and_run_sequence(state.transformation_history)
         all_rewards.append(rewards)
         all_speedups.append(speedup)
         all_exec_times.append(new_exec_time)

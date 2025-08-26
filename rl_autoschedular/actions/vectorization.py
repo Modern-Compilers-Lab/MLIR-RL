@@ -1,5 +1,5 @@
+from utils.config import Config
 from .base import Action
-from rl_autoschedular import config as cfg
 from rl_autoschedular.transforms import (
     transform_vectorize, transform_tile,
     transform_decompose, transform_transpose_conv_2d
@@ -69,7 +69,7 @@ class Vectorization(Action):
         op_iter_space = 1
         for nested_loop in state.operation_features.nested_loops:
             op_iter_space *= nested_loop.upper_bound
-        return op_iter_space <= cfg.vect_size_limit
+        return op_iter_space <= Config().vect_size_limit
 
     def _apply_ready(self, code):
         for pre in self.preprocessing:

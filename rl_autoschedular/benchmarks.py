@@ -1,5 +1,5 @@
 from rl_autoschedular.state import BenchmarkFeatures, extract_bench_features_from_file
-from rl_autoschedular import config as cfg
+from utils.config import Config
 import json
 from tqdm import tqdm
 import os
@@ -16,6 +16,7 @@ class Benchmarks:
         Args:
             is_training (bool): Whether to load train or evaluation set
         """
+        cfg = Config()
         # Load benchmark names and execution times from json file
         bench_json_file = cfg.json_file
 

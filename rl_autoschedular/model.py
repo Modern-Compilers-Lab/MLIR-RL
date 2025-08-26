@@ -2,12 +2,12 @@ import torch
 import torch.nn as nn
 from torch.distributions import Distribution
 from typing import Optional
-from rl_autoschedular import config as cfg
 from rl_autoschedular.actions import ActionSpace, Interchange
 from rl_autoschedular.observation import OpFeatures, ActionHistory, ProducerOpFeatures, Observation
+from utils.config import Config
 
 
-ACTIVATION = nn.ReLU if cfg.activation == 'relu' else nn.Tanh
+ACTIVATION = nn.ReLU if Config().activation == 'relu' else nn.Tanh
 
 
 class HiearchyModel(nn.Module):
@@ -116,7 +116,7 @@ class ValueModel(nn.Module):
         Returns:
             torch.Tensor: The value loss.
         """
-        if cfg.value_clip:
+        if Config().value_clip:
             vclip = values + torch.clamp(new_values - values, -0.2, 0.2)
             vloss1 = (returns - vclip).pow(2)
             vloss2 = (returns - new_values).pow(2)
@@ -150,7 +150,7 @@ class PolicyModel(nn.Module):
                 self.heads.append(None)
                 continue
             head = nn.Linear(512, output_size)
-            if cfg.new_architecture:
+            if Config().new_architecture:
                 head = nn.Sequential(
                     nn.Linear(512, 512),
                     ACTIVATION(),

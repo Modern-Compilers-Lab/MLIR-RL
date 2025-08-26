@@ -6,53 +6,41 @@ load_dotenv('.env.debug')
 
 # Import modules
 import torch
-from utils.dask_manager import DaskManager
-from utils.file_logger import FileLogger
 from rl_autoschedular.model import HiearchyModel as Model
-from rl_autoschedular import config as cfg, device
+from rl_autoschedular import device
 from rl_autoschedular.trajectory import TrajectoryData
 from rl_autoschedular.ppo import collect_trajectory, ppo_update, value_update, evaluate_benchmarks
 from rl_autoschedular.benchmarks import Benchmarks
+from rl_autoschedular.execution import Execution
 from utils.log import print_info, print_success
+from utils.config import Config
+from utils.dask_manager import DaskManager
+from utils.file_logger import FileLogger
 from typing import Optional
 from time import time
-import random
-import string
-import json
 import datetime
 
 
-# Initialize dask in order to allocate jobs
+# Initialize Singletons
+cfg = Config()
 dm = DaskManager()
+fl = FileLogger()
+Execution(fl.exec_data_file)
+print_info(f"Config: {cfg}")
+print_success(f'Logging to: {fl.run_dir}')
+
+# Load data to workers
+train_data = dm.load_train_data(Benchmarks())
+eval_data = dm.load_eval_data(Benchmarks(is_training=False))
+if cfg.exec_data_file:
+    dm.load_main_exec_data(cfg.exec_data_file)
+    print_info(f"Global execution data located in: {cfg.exec_data_file}")
 
 # Setup torch
 torch.set_grad_enabled(False)
 torch.set_num_threads(4)
 if cfg.debug:
     torch.autograd.set_detect_anomaly(True)
-
-# Load data
-train_data = dm.load_train_data(Benchmarks())
-eval_data = dm.load_eval_data(Benchmarks(is_training=False))
-
-# Prepare logging
-fl = FileLogger()
-print_info(f"Config: {cfg}")
-print_success(f'Logging to: {fl.run_dir}')
-
-# Prepare the temporary execution database
-# TODO: Better organization required
-random_str = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
-tmp_exec_data_file = f'tmp-debug/exec/{random_str}.json' if cfg.debug else f'tmp/exec/{random_str}.json'
-if not os.path.exists(tmp_exec_data_file):
-    os.makedirs(os.path.dirname(tmp_exec_data_file), exist_ok=True)
-    with open(tmp_exec_data_file, "w") as file:
-        json.dump({}, file)
-print_info(f"Temporary execution data saved to: {tmp_exec_data_file}")
-
-if cfg.exec_data_file:
-    # TODO: Send exec file directly to workers
-    print_info(f"Global execution data located in: {cfg.exec_data_file}")
 
 # Initiate model
 model = Model().to(device)
@@ -72,7 +60,7 @@ for step in range(cfg.nb_iterations):
     main_start = time()
 
     # Collect trajectory using the model
-    trajectory = collect_trajectory(train_data, model, step, tmp_exec_data_file)
+    trajectory = collect_trajectory(train_data, model, step)
 
     # Extend trajectory with previous trajectory
     reuse_start = time()
@@ -101,14 +89,14 @@ for step in range(cfg.nb_iterations):
             )
         )
 
-    if (step + 1) % 1000 == 0:
+    if (step + 1) % 100 == 0:
         print_info('- Evaluating benchmarks -')
-        evaluate_benchmarks(model, eval_data, tmp_exec_data_file)
+        evaluate_benchmarks(model, eval_data)
 
     main_end = time()
     time_ms = int((main_end - main_start) * 1000)
     eta = datetime.timedelta(seconds=time_ms * (cfg.nb_iterations - step - 1) / 1000)
 
-if (step + 1) % 1000 != 0:
+if (step + 1) % 100 != 0:
     print_info('- Evaluating benchmarks -')
-    evaluate_benchmarks(model, eval_data, tmp_exec_data_file)
+    evaluate_benchmarks(model, eval_data)

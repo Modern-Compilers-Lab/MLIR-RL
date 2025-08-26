@@ -54,7 +54,7 @@ while True:
     print('Syncing...')
     for run in current_runs:
         neptune_run = neptune_runs[run]
-        run_path = os.path.join(results_dir, run)
+        run_path = os.path.join(results_dir, run, 'logs')
         files: list[str] = []
         for root, _, filenames in os.walk(run_path):
             relative_root = root.replace(run_path, '')
@@ -62,8 +62,6 @@ while True:
             for filename in filenames:
                 files.append(os.path.join(relative_root, filename) if relative_root else filename)
         for file in files:
-            if file == 'tags' or file.endswith('.pt'):
-                continue
             if file not in runs_counters[run]:
                 runs_counters[run][file] = 0
             read_idx = runs_counters[run][file]

@@ -1,7 +1,8 @@
-from rl_autoschedular import config as cfg
 from rl_autoschedular.state import OperationState
 from rl_autoschedular.transforms import transform_tile
 from typing import Optional
+
+from utils.config import Config
 from .base import Action
 import torch
 import math
@@ -33,19 +34,19 @@ class Tiling(Action):
 
     @classmethod
     def params_size(cls):
-        return cfg.max_num_loops
+        return Config().max_num_loops
 
     @classmethod
     def network_output_size(cls):
-        return cfg.max_num_loops * (cfg.num_tile_sizes + 1)
+        return Config().max_num_loops * (Config().num_tile_sizes + 1)
 
     @classmethod
     def history_size(cls):
-        return cfg.truncate * cfg.max_num_loops * (cfg.num_tile_sizes + 1)
+        return Config().truncate * Config().max_num_loops * (Config().num_tile_sizes + 1)
 
     @classmethod
     def action_mask(cls, state: OperationState):
-        mask = torch.zeros((cfg.max_num_loops, cfg.num_tile_sizes + 1), dtype=torch.bool)
+        mask = torch.zeros((Config().max_num_loops, Config().num_tile_sizes + 1), dtype=torch.bool)
         mask[:, 0] = True
         for i, loop in enumerate(state.operation_features.nested_loops):
             ts_count = cls.__get_tiles_count(loop.upper_bound)
@@ -55,7 +56,7 @@ class Tiling(Action):
 
     @classmethod
     def action_history(cls, state):
-        history = torch.zeros((cfg.truncate, cfg.max_num_loops, cfg.num_tile_sizes + 1))
+        history = torch.zeros((Config().truncate, Config().max_num_loops, Config().num_tile_sizes + 1))
         for i, action in enumerate(state.transformation_history[0]):
             if not isinstance(action, Tiling):
                 continue
@@ -71,7 +72,7 @@ class Tiling(Action):
 
     @classmethod
     def distribution(cls, logits):
-        logits = logits.reshape(-1, cfg.max_num_loops, cfg.num_tile_sizes + 1)
+        logits = logits.reshape(-1, Config().max_num_loops, Config().num_tile_sizes + 1)
         return Categorical(logits=logits)
 
     @classmethod
@@ -119,8 +120,8 @@ class Tiling(Action):
         Returns:
             int: The number of candidates.
         """
-        for i in range(cfg.num_tile_sizes):
+        for i in range(Config().num_tile_sizes):
             ts = 2 ** i
             if ub % ts != 0 or ub == ts:
                 return i + 1
-        return cfg.num_tile_sizes + 1
+        return Config().num_tile_sizes + 1

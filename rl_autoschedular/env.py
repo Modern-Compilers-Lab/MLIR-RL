@@ -1,10 +1,10 @@
-from rl_autoschedular import config as cfg
 from rl_autoschedular.state import OperationState, BenchmarkFeatures, extract_bench_features_from_code
 from rl_autoschedular.benchmarks import Benchmarks
 from typing import Optional
-from rl_autoschedular.execution import execute_code
+from rl_autoschedular.execution import Execution
 from rl_autoschedular.actions import Action, TiledFusion
 from utils.log import print_error
+from utils.config import Config
 import random
 import math
 import traceback
@@ -55,7 +55,7 @@ class Env:
         self.__update_state_infos(next_state, action)
 
         # Check is state is terminal
-        next_state.terminal = action.terminal or next_state.step_count == cfg.truncate
+        next_state.terminal = action.terminal or next_state.step_count == Config().truncate
 
         return next_state
 
@@ -80,12 +80,12 @@ class Env:
 
         return next_state
 
-    def apply_and_run_sequence(self, seq: list[list[Action]], tmp_exec_data_file: str) -> tuple[list[float], float, Optional[int], bool]:
+    def apply_and_run_sequence(self, seq: list[list[Action]]) -> tuple[list[float], float, Optional[int], bool]:
         transformed_code, rewards = self.__apply_sequence(self.benchmark_data.code, seq)
 
         # Evaluate the code (since the operation is done)
         try:
-            new_exec_time, exec_succeeded, cache_miss = execute_code(self.benchmark_data.bench_name, transformed_code, seq, tmp_exec_data_file)
+            new_exec_time, exec_succeeded, cache_miss = Execution().execute_code(transformed_code, self.benchmark_data.bench_name, seq)
             if not exec_succeeded:
                 raise Exception("Incorrect results")
         except Exception as e:

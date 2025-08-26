@@ -1,5 +1,5 @@
+from utils.config import Config
 from .base import Action
-from rl_autoschedular import config as cfg
 from rl_autoschedular.state import OperationState, OperationType
 from rl_autoschedular.transforms import transform_interchange
 from typing import Optional
@@ -24,7 +24,7 @@ class Interchange(Action):
     parameters: list[int]
 
     # --- constants ---
-    method = InterchangeMethod(cfg.interchange_mode)
+    method = InterchangeMethod(Config().interchange_mode)
     log_std = torch.nn.Parameter(torch.zeros(1))
 
     def __init__(self, parameters: list[int], state: Optional[OperationState] = None, **extras):
@@ -61,19 +61,19 @@ class Interchange(Action):
     def network_output_size(cls):
         match cls.method:
             case InterchangeMethod.EnumeratedCandidates:
-                return 3 * cfg.max_num_loops - 6
+                return 3 * Config().max_num_loops - 6
             case InterchangeMethod.LevelsPointers:
-                return cfg.max_num_loops
+                return Config().max_num_loops
             case InterchangeMethod.ContinuousEncoding:
                 return 1
 
     @classmethod
     def history_size(cls):
-        return cfg.truncate * cfg.max_num_loops * cfg.max_num_loops
+        return Config().truncate * Config().max_num_loops * Config().max_num_loops
 
     @classmethod
     def action_mask(cls, state):
-        L = cfg.max_num_loops
+        L = Config().max_num_loops
         I_BEGIN_2C = L - 1
         I_BEGIN_3C = I_BEGIN_2C + L - 2
 
@@ -100,7 +100,7 @@ class Interchange(Action):
 
     @classmethod
     def action_history(cls, state):
-        history = torch.zeros((cfg.truncate, cfg.max_num_loops, cfg.max_num_loops))
+        history = torch.zeros((Config().truncate, Config().max_num_loops, Config().max_num_loops))
         for i, action in enumerate(state.transformation_history[0]):
             if not isinstance(action, Interchange):
                 continue
@@ -234,7 +234,7 @@ class Interchange(Action):
         interchanges = []
         for c in [1, 2, 3]:
             level_interchanges = []
-            for _ in range(cfg.max_num_loops - c):
+            for _ in range(Config().max_num_loops - c):
                 level_interchanges.append(list(range(num_loops)))
             for i in range(num_loops - c):
                 params = list(range(num_loops))

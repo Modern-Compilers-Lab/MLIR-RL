@@ -3,6 +3,7 @@ from dask_jobqueue import SLURMCluster
 from .log import print_info
 from .singleton import Singleton
 from typing import TYPE_CHECKING
+import json
 import os
 
 if TYPE_CHECKING:
@@ -16,7 +17,7 @@ class DaskManager(metaclass=Singleton):
             queue='compute',
             cores=28,
             processes=1,
-            memory='64GB',
+            memory='100GB',
             walltime='7-00',
             job_extra_directives=[
                 '--reservation=c2',
@@ -47,6 +48,8 @@ class DaskManager(metaclass=Singleton):
         self.workers_names = list(cluster.workers.keys())
         self.num_workers = len(cluster.workers)
 
+        self.remote_main_exec_data = None
+
     def load_train_data(self, benchs: 'Benchmarks'):
         self.remote_train_data = self.client.scatter(benchs, broadcast=True)
         return benchs
@@ -54,6 +57,11 @@ class DaskManager(metaclass=Singleton):
     def load_eval_data(self, benchs: 'Benchmarks'):
         self.remote_eval_data = self.client.scatter(benchs, broadcast=True)
         return benchs
+
+    def load_main_exec_data(self, main_exec_data_path: str):
+        with open(main_exec_data_path) as f:
+            main_exec_data: dict[str, dict[str, int]] = json.load(f)
+        self.remote_main_exec_data = self.client.scatter(main_exec_data, broadcast=True)
 
     def close(self):
         self.client.close()

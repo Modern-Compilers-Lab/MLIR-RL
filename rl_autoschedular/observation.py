@@ -1,12 +1,13 @@
-from rl_autoschedular import config as cfg
 from rl_autoschedular.actions import ActionSpace
 from rl_autoschedular.state import OperationState, OperationType, IteratorType, OperationFeatures
 import torch
 import math
 
-L = cfg.max_num_loops
-LSD = cfg.max_num_load_store_dim
-LS = cfg.max_num_stores_loads
+from utils.config import Config
+
+L = Config().max_num_loops
+LSD = Config().max_num_load_store_dim
+LS = Config().max_num_stores_loads
 
 
 class ObservationPart:
@@ -48,7 +49,7 @@ class OpFeatures(ObservationPart):
             if i == L:
                 break
             ub = nested_loop.upper_bound
-            match cfg.normalize_bounds:
+            match Config().normalize_bounds:
                 case 'max':
                     ub = ub / 4096
                 case 'log':

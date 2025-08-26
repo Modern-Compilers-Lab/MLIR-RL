@@ -1,11 +1,11 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 from enum import Enum
-from rl_autoschedular import config as cfg
 import re
 import os
 import subprocess
 
+from utils.config import Config
 from utils.log import print_error
 
 if TYPE_CHECKING:
@@ -203,6 +203,8 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
     Returns:
         BenchmarkFeatures: extracted benchmark features
     """
+    cfg = Config()
+
     info, full_code = raw_ast_info.split("########################################")
     operations_lines, graph_str = info.split('#BEGIN_GRAPH')
 
