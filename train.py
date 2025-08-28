@@ -23,8 +23,8 @@ import datetime
 
 # Initialize singleton classes
 cfg = Config()
-dm = DaskManager()
 fl = FileLogger()
+dm = DaskManager()
 
 # Load data to workers
 train_data = dm.load_train_data()

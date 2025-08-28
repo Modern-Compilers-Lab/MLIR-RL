@@ -1,3 +1,4 @@
+from statistics import mean
 import torch
 from rl_autoschedular.env import Env
 from rl_autoschedular.model import HiearchyModel as Model
@@ -15,8 +16,6 @@ from utils.dask_manager import DaskManager
 from tqdm import trange
 from time import time
 from typing import Optional
-
-T_collection = tuple[list[list[float]], list[float], list[Optional[int]], int, int]
 
 
 def collect_trajectory(data: Benchmarks, model: Model, step: int):
@@ -100,38 +99,10 @@ def collect_trajectory(data: Benchmarks, model: Model, step: int):
     traj_end_sampling = time()
     sampling_time_ms = int((traj_end_sampling - traj_start) * 1000)
 
-    futures = []
-    per_worker = cfg.bench_count // dm.num_workers
-    rest = cfg.bench_count % dm.num_workers
-    start = 0
-    for i, worker in enumerate(dm.workers_names):
-        end = start + per_worker
-        if i < rest:
-            end += 1
-        future = dm.client.submit(
-            __execute_states,
-            states[start:end],
-            dm.remote_train_data[i],
-            fl.exec_data_file,
-            dm.remote_main_exec_data[i],
-            workers=[worker]
-        )
-        futures.append(future)
-        start = end
-    results: list[T_collection] = dm.client.gather(futures)
-    all_rewards = []
-    all_speedups = []
-    all_exec_times = []
-    all_cache_misses = 0
-    max_worker_time = 0
-    for r, s, e, m, t in results:
-        all_rewards += r
-        all_speedups += s
-        all_exec_times += e
-        all_cache_misses += m
-        if t > max_worker_time:
-            max_worker_time = t
-    cache_miss_rate = all_cache_misses / cfg.bench_count * 100
+    results = dm.map_states(__execute_states, states, training=True)
+    all_rewards, all_speedups, all_exec_times, cache_misses, worker_times = tuple(zip(*results))
+    cache_miss_rate = mean(cache_misses) * 100
+    sequential_time = sum(worker_times)
     new_cache_data: dict[str, dict[str, int]] = {}
     for tc, state, rewards, speedup, exec_time in zip(tcs, states, all_rewards, all_speedups, all_exec_times):
         # Update trajectory
@@ -151,15 +122,14 @@ def collect_trajectory(data: Benchmarks, model: Model, step: int):
 
     traj_end = time()
     exec_time_ms = int((traj_end - traj_end_sampling) * 1000)
-    comm_overhead = exec_time_ms - max_worker_time
+    distribted_speedup = sequential_time / exec_time_ms
     time_ms = int((traj_end - traj_start) * 1000)
     print_info(
         (
             f"{time_ms}ms"
             f", sampling: {sampling_time_ms}ms"
             f", exec: {exec_time_ms}ms"
-            f", max worker: {max_worker_time}ms"
-            f", overhead: {comm_overhead}ms"
+            f", speedup: {distribted_speedup:.2f}x"
             f", cache miss rate: {cache_miss_rate:.2f}%"
         ), add_label=False
     )
@@ -343,32 +313,8 @@ def evaluate_benchmarks(model: Model, data: Benchmarks):
                     states[i] = next_op_state
                     observations[i] = Observation.from_state(next_op_state)
 
-    futures = []
-    per_worker = len(data) // dm.num_workers
-    rest = len(data) % dm.num_workers
-    start = 0
-    for i, worker in enumerate(dm.workers_names):
-        end = start + per_worker
-        if i < rest:
-            end += 1
-        future = dm.client.submit(
-            __execute_states,
-            states[start:end],
-            dm.remote_eval_data[i],
-            fl.exec_data_file,
-            dm.remote_main_exec_data[i],
-            workers=[worker]
-        )
-        futures.append(future)
-        start = end
-    results: list[T_collection] = dm.client.gather(futures)
-    all_rewards = []
-    all_speedups = []
-    all_exec_times = []
-    for r, s, e, _, _ in results:
-        all_rewards += r
-        all_speedups += s
-        all_exec_times += e
+    results = dm.map_states(__execute_states, states, training=False)
+    all_rewards, all_speedups, all_exec_times, _, _ = tuple(zip(*results))
     new_cache_data: dict[str, dict[str, int]] = {}
     for state, rewards, speedup, exec_time in zip(states, all_rewards, all_speedups, all_exec_times):
         fl['eval/reward'].extend(rewards)
@@ -377,7 +323,7 @@ def evaluate_benchmarks(model: Model, data: Benchmarks):
         if exec_time is not None:
             fl[f'eval/exec_time/{state.bench_name}'].append(exec_time)
             fl[f'eval/speedup/{state.bench_name}'].append(speedup)
-            cache_key = exe.get_code_cache_key(state)
+            cache_key = exe.get_code_cache_key(state.transformation_history)
             if state.bench_name not in new_cache_data:
                 new_cache_data[state.bench_name] = {}
             new_cache_data[state.bench_name][cache_key] = exec_time
@@ -394,25 +340,15 @@ def evaluate_benchmarks(model: Model, data: Benchmarks):
     print_info(f"Evaluation time: {time_ms}ms")
 
 
-def __execute_states(states: list[OperationState], benchs: Benchmarks, exec_data_file: str, main_exec_data: Optional[dict[str, dict[str, int]]]) -> T_collection:
+def __execute_states(state: OperationState, exec_data_file: str, benchs: Benchmarks, main_exec_data: Optional[dict[str, dict[str, int]]]):
     worker_start = time()
 
-    all_rewards: list[list[float]] = []
-    all_speedups: list[float] = []
-    all_exec_times: list[Optional[int]] = []
-    cache_misses = 0
     Execution(exec_data_file, main_exec_data)
     env = Env()
-
-    for state in states:
-        env.reset(benchs, state.bench_idx)
-        rewards, speedup, new_exec_time, cache_miss = env.apply_and_run_sequence(state.transformation_history)
-        all_rewards.append(rewards)
-        all_speedups.append(speedup)
-        all_exec_times.append(new_exec_time)
-        cache_misses += int(cache_miss)
+    env.reset(benchs, state.bench_idx)
+    rewards, speedup, new_exec_time, cache_miss = env.apply_and_run_sequence(state.transformation_history)
 
     worker_end = time()
     worker_time_ms = int((worker_end - worker_start) * 1000)
 
-    return all_rewards, all_speedups, all_exec_times, cache_misses, worker_time_ms
+    return rewards, speedup, new_exec_time, cache_miss, worker_time_ms

@@ -158,12 +158,10 @@ class Execution(metaclass=Singleton):
         delta_arg = (ctypes.c_int64 * 1)(0)
         args.append(delta_arg)
 
-        times = []
-        for _ in range(5):
-            execution_engine.invoke("main", *args)
-            times.append(delta_arg[0])
+        execution_engine.invoke("main", *args)
+        execution_engine.invoke("main", *args)
 
-        return median(times), True
+        return delta_arg[0], True
 
     def __check_execution_cache(self, bench_name: str, cache_key: str) -> Optional[int]:
         """Check the execution cache for the given operation state.
