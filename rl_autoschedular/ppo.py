@@ -1,3 +1,4 @@
+from datetime import timedelta
 from statistics import mean
 import torch
 from rl_autoschedular.env import Env
@@ -41,7 +42,7 @@ def collect_trajectory(data: Benchmarks, model: Model, step: int):
         final_eps = 0.001
         eps = final_eps + (cfg.init_epsilon - final_eps) * (1 - ratio)
 
-    print_info(f"Trajectory collection using {dm.num_workers} workers...", end=' ')
+    print_info(f"Trajectory collection using {dm.num_workers} workers...")
     traj_start = time()
 
     # Prepare benchmarks to explore
@@ -97,12 +98,12 @@ def collect_trajectory(data: Benchmarks, model: Model, step: int):
             ))
 
     traj_end_sampling = time()
-    sampling_time_ms = int((traj_end_sampling - traj_start) * 1000)
 
     results = dm.map_states(__execute_states, states, training=True)
+
+    traj_end_exec_states = time()
+
     all_rewards, all_speedups, all_exec_times, cache_misses, worker_times = tuple(zip(*results))
-    cache_miss_rate = mean(cache_misses) * 100
-    sequential_time = sum(worker_times)
     new_cache_data: dict[str, dict[str, int]] = {}
     for tc, state, rewards, speedup, exec_time in zip(tcs, states, all_rewards, all_speedups, all_exec_times):
         # Update trajectory
@@ -121,18 +122,22 @@ def collect_trajectory(data: Benchmarks, model: Model, step: int):
     exe.update_execution_cache(new_cache_data)
 
     traj_end = time()
-    exec_time_ms = int((traj_end - traj_end_sampling) * 1000)
-    distribted_speedup = sequential_time / exec_time_ms
-    time_ms = int((traj_end - traj_start) * 1000)
-    print_info(
-        (
-            f"{time_ms}ms"
-            f", sampling: {sampling_time_ms}ms"
-            f", exec: {exec_time_ms}ms"
-            f", speedup: {distribted_speedup:.2f}x"
-            f", cache miss rate: {cache_miss_rate:.2f}%"
-        ), add_label=False
-    )
+
+    sampling_time = traj_end_sampling - traj_start
+    exec_states_time = traj_end_exec_states - traj_end_sampling
+    collection_time = traj_end - traj_start
+    cache_miss_rate = mean(cache_misses) * 100
+    sequential_time = sum(worker_times)
+    distribted_speedup = sequential_time / exec_states_time
+    perfect_speedup = sequential_time / max(worker_times)
+    print_info((
+        f"collection: {timedelta(seconds=collection_time)}"
+        f", sampling: {timedelta(seconds=sampling_time)}"
+        f", exec: {timedelta(seconds=exec_states_time)}\n"
+        f"speedup: {distribted_speedup:.2f}x"
+        f", perfect speedup: {perfect_speedup:.2f}x"
+        f", cache miss rate: {cache_miss_rate:.2f}%"
+    ))
 
     return tc.to_trajectory()
 
@@ -216,6 +221,7 @@ def ppo_update(trajectory: TrajectoryData, model: Model, optimizer: torch.optim.
                 fl['train_ppo/value_loss'].append(value_loss.item())
             if 'entropy' in cfg.exploration:
                 fl['train_ppo/entropy_loss'].append(entropy_loss.item())
+    print_info(f"PPO fit in {timedelta(seconds=ppo_trange.format_dict['elapsed'])}")
 
 
 def value_update(trajectory: TrajectoryData, model: Model, optimizer: torch.optim.Optimizer):
@@ -262,6 +268,7 @@ def value_update(trajectory: TrajectoryData, model: Model, optimizer: torch.opti
             value_trange.set_postfix({'loss': loss.item()})
             fl['train_value/loss'].append(loss.item())
             fl['train_value/clip_factor'].append(clip_factor.item())
+    print_info(f"Value fit in {timedelta(seconds=value_trange.format_dict['elapsed'])}")
 
 
 def evaluate_benchmarks(model: Model, data: Benchmarks):
@@ -328,19 +335,19 @@ def evaluate_benchmarks(model: Model, data: Benchmarks):
                 new_cache_data[state.bench_name] = {}
             new_cache_data[state.bench_name][cache_key] = exec_time
 
-        print_success("Bench:", state.bench_name)
-        print_info(state.transformation_history)
+        print_success("Bench:", state.bench_name, add_label=False)
+        print_info(state.transformation_history, add_label=False)
 
     if len(all_speedups) > 0:
         fl['eval/average_speedup'].append(sum(all_speedups) / len(all_speedups))
     exe.update_execution_cache(new_cache_data)
 
     eval_end = time()
-    time_ms = int((eval_end - eval_start) * 1000)
-    print_info(f"Evaluation time: {time_ms}ms")
+    print_info(f"Evaluation time: {timedelta(seconds=eval_end - eval_start)}")
 
 
 def __execute_states(state: OperationState, exec_data_file: str, benchs: Benchmarks, main_exec_data: Optional[dict[str, dict[str, int]]]):
+    print(f"Handling bench: {state.bench_name}...", end=' ', file=sys.stderr)
     worker_start = time()
 
     Execution(exec_data_file, main_exec_data)
@@ -349,6 +356,7 @@ def __execute_states(state: OperationState, exec_data_file: str, benchs: Benchma
     rewards, speedup, new_exec_time, cache_miss = env.apply_and_run_sequence(state.transformation_history)
 
     worker_end = time()
-    worker_time_ms = int((worker_end - worker_start) * 1000)
+    worker_time = worker_end - worker_start
+    print('Done', file=sys.stderr)
 
-    return rewards, speedup, new_exec_time, cache_miss, worker_time_ms
+    return rewards, speedup, new_exec_time, cache_miss, worker_time
