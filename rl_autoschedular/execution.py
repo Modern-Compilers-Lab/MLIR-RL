@@ -7,8 +7,8 @@ from mlir.passmanager import PassManager
 from typing import Optional, overload
 from rl_autoschedular.transforms import transform_bufferize_and_lower_v
 from rl_autoschedular.actions import Action
+from utils.bindings_process import BindingsProcess
 from utils.singleton import Singleton
-from statistics import median
 import json
 import re
 
@@ -111,57 +111,61 @@ class Execution(metaclass=Singleton):
             Optional[float]: the execution time in seconds.
             bool: the assertion result.
         """
-        pass_pipeline = """builtin.module(
-            convert-linalg-to-loops,
-            canonicalize,
-            buffer-deallocation-pipeline,
-            convert-bufferization-to-memref,
-            scf-forall-to-parallel,
-            convert-scf-to-openmp,
-            expand-strided-metadata,
-            finalize-memref-to-llvm,
-            convert-scf-to-cf,
-            lower-affine,
 
-            convert-openmp-to-llvm,
-            convert-vector-to-llvm,
-            convert-math-to-llvm,
-            finalize-memref-to-llvm,
-            convert-func-to-llvm,
-            convert-index-to-llvm,
-            convert-arith-to-llvm,
-            convert-cf-to-llvm,
+        def execute_bind_call():
+            pass_pipeline = """builtin.module(
+                convert-linalg-to-loops,
+                canonicalize,
+                buffer-deallocation-pipeline,
+                convert-bufferization-to-memref,
+                scf-forall-to-parallel,
+                convert-scf-to-openmp,
+                expand-strided-metadata,
+                finalize-memref-to-llvm,
+                convert-scf-to-cf,
+                lower-affine,
 
-            reconcile-unrealized-casts,
-            canonicalize,
-            cse
-        )"""
+                convert-openmp-to-llvm,
+                convert-vector-to-llvm,
+                convert-math-to-llvm,
+                finalize-memref-to-llvm,
+                convert-func-to-llvm,
+                convert-index-to-llvm,
+                convert-arith-to-llvm,
+                convert-cf-to-llvm,
 
-        with Context():
-            module = Module.parse(code)
-            pm = PassManager.parse(pass_pipeline)
-        pm.run(module.operation)
-        execution_engine = ExecutionEngine(
-            module,
-            opt_level=3,
-            shared_libs=os.getenv("MLIR_SHARED_LIBS", "").split(","),
-        )
+                reconcile-unrealized-casts,
+                canonicalize,
+                cse
+            )"""
 
-        inputs = self.__create_inputs(code)
+            with Context():
+                module = Module.parse(code)
+                pm = PassManager.parse(pass_pipeline)
+            pm.run(module.operation)
+            execution_engine = ExecutionEngine(
+                module,
+                opt_level=3,
+                shared_libs=os.getenv("MLIR_SHARED_LIBS", "").split(","),
+            )
 
-        args = []
-        for input_arg in inputs:
-            args.append(ctypes.pointer(ctypes.pointer(
-                get_ranked_memref_descriptor(input_arg)
-            )))
+            inputs = self.__create_inputs(code)
 
-        delta_arg = (ctypes.c_int64 * 1)(0)
-        args.append(delta_arg)
+            args = []
+            for input_arg in inputs:
+                args.append(ctypes.pointer(ctypes.pointer(
+                    get_ranked_memref_descriptor(input_arg)
+                )))
 
-        execution_engine.invoke("main", *args)
-        execution_engine.invoke("main", *args)
+            delta_arg = (ctypes.c_int64 * 1)(0)
+            args.append(delta_arg)
 
-        return delta_arg[0], True
+            execution_engine.invoke("main", *args)
+            execution_engine.invoke("main", *args)
+
+            return delta_arg[0], True
+
+        return BindingsProcess.call(execute_bind_call, timeout=600)
 
     def __check_execution_cache(self, bench_name: str, cache_key: str) -> Optional[int]:
         """Check the execution cache for the given operation state.

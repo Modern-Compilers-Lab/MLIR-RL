@@ -57,7 +57,7 @@ class OperationFeatures:
     """Number of arithmetic operations in the operation."""
     load_data: list[list[str]]
     """List of load accesses where each load is represented by the list of access arguments."""
-    store_data: list[str]
+    store_data: list[list[str]]
     """List of store accesses where each store is represented by the list of access arguments."""
     nested_loops: list[NestedLoopFeatures]
     """List of nested loops where each loop is represented by the NestedLoopFeatures dataclass."""
@@ -73,7 +73,7 @@ class OperationFeatures:
             self.operation_type,
             self.op_count.copy(),
             [load.copy() for load in self.load_data],
-            self.store_data.copy(),
+            [store.copy() for store in self.store_data],
             [loop.copy() for loop in self.nested_loops],
             self.producers.copy(),
             self.vectorizable
@@ -228,7 +228,7 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
         nested_loops = []
         op_count = {}
         load_data: list[list[str]] = []
-        store_data: list[str] = []
+        store_data: list[list[str]] = []
 
         vectorizable_str, rest = rest.split("#START_NESTED_LOOPS")
         assert vectorizable_str.strip() in ["true", "false"], f"Vectorizable string is not valid: {vectorizable_str}"
@@ -265,15 +265,18 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
             # We ignore this overflow, because there are many cases with a huge number of loads
             load_data = load_data[:cfg.max_num_stores_loads]
 
-        store_data_str, ops_count_str = rest.split("#START_OP_COUNT")
-        store_data_str = re.sub(r'd\d+', lambda m: f'%{m.group()}', store_data_str)
-        store_data_list = store_data_str.strip().split("\n")
-        assert len(store_data_list) == 1, f"Store data list is not of length 1: {store_data_list}"
-        store_data = store_data_list[0].split(", ")
-        if len(store_data) > cfg.max_num_load_store_dim:
+        stores_data_str, ops_count_str = rest.split("#START_OP_COUNT")
+        stores_data_str = re.sub(r'd\d+', lambda m: f'%{m.group()}', stores_data_str)
+        for store_data_str in stores_data_str.strip().split("\n"):
+            if not store_data_str:
+                continue
+            store_data.append(store_data_str.split(", "))
+        if any(len(store) > cfg.max_num_load_store_dim for store in store_data):
             print_error(log_info)
-            print_error(f"Number of store dims {len(store_data)} is not supported")
+            print_error(f"Number of store dims {len(store_data[-1])} is not supported")
             continue
+        if len(store_data) > cfg.max_num_stores_loads:
+            store_data = store_data[:cfg.max_num_stores_loads]
 
         for op_count_str in ops_count_str.strip().split("\n"):
             op, count = op_count_str.strip().split(" ")

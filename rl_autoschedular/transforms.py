@@ -3,6 +3,7 @@ import subprocess
 from mlir.ir import Context, Module
 from mlir.dialects.transform import interpreter
 from mlir.passmanager import PassManager
+from utils.bindings_process import BindingsProcess
 
 
 def transform_TP(code: str, operation_tag: str, tiling_sizes: list[int]):
@@ -416,11 +417,14 @@ def transform_bufferize_and_lower_v(code: str):
 
 
 def __run_transform_code(code: str, transform_code: str):
-    with Context():
-        module = Module.parse(code)
-        t_module = Module.parse(transform_code)
-        pm = PassManager.parse("builtin.module(canonicalize)")
-    interpreter.apply_named_sequence(module, t_module.body.operations[0], t_module)
-    pm.run(module.operation)
+    def transform_bind_call():
+        with Context():
+            module = Module.parse(code)
+            t_module = Module.parse(transform_code)
+            pm = PassManager.parse("builtin.module(canonicalize)")
+        interpreter.apply_named_sequence(module, t_module.body.operations[0], t_module)
+        pm.run(module.operation)
 
-    return str(module)
+        return str(module)
+
+    return BindingsProcess.call(transform_bind_call, timeout=10)

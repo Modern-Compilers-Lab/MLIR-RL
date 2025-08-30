@@ -196,10 +196,6 @@ int main(int argc, char **argv)
       }
     }
     llvm::outs() << "#START_STORE_DATA" << "\n";
-    size_t out_args_nbr = linalgOp.getRegionOutputArgs().size();
-    if (out_args_nbr > 1) {
-      throw std::runtime_error("Multiple output arguments are not supported.");
-    }
     for (BlockArgument out_arg : linalgOp.getRegionOutputArgs()) {
       AffineMap operand_map = linalgOp.getMatchingIndexingMap(linalgOp.getMatchingOpOperand(out_arg));
       uint results_nbr = operand_map.getNumResults();

@@ -81,7 +81,7 @@ class Env:
         return next_state
 
     def apply_and_run_sequence(self, seq: list[list[Action]]) -> tuple[list[float], float, Optional[int], bool]:
-        transformed_code, rewards = self.__apply_sequence(self.benchmark_data.code, seq)
+        transformed_code, rewards = self.__apply_sequence(seq)
 
         # Evaluate the code (since the operation is done)
         try:
@@ -89,7 +89,7 @@ class Env:
             if not exec_succeeded:
                 raise Exception("Incorrect results")
         except Exception as e:
-            print_error(f"\n\nError while evaluating the code: {e}")
+            print_error("Error while evaluating the code:", e)
             print_error("Exception type:", type(e).__name__)
             print_error("Call stack:", traceback.format_exc())
             print_error("Bench:", self.benchmark_data.bench_name)
@@ -103,6 +103,11 @@ class Env:
         speedup = (self.benchmark_data.root_exec_time / new_exec_time) if new_exec_time is not None else 1.0
 
         return rewards, speedup, new_exec_time, cache_miss
+
+    def failed_seq(self, seq: list[list[Action]]) -> tuple[list[float], float, Optional[int], bool]:
+        rewards = [0.0 for op_seq in reversed(seq) for action in op_seq for _ in range(len(action.sub_actions) + 1)]
+        rewards[-1] = self.__action_reward(True, False)
+        return rewards, 1.0, None, True
 
     def __init_op_state(self, operation_idx: int) -> OperationState:
         """Create a new operation state.
@@ -233,7 +238,7 @@ class Env:
         # In case of fusion we need to update the producer features as well
         # TODO: Maybe we can do this without actually applying the actions
         if isinstance(action, TiledFusion):
-            fused_code, _ = self.__apply_sequence(self.benchmark_data.code, state.transformation_history)
+            fused_code, _ = self.__apply_sequence(state.transformation_history)
             new_bench_features = extract_bench_features_from_code('', fused_code, 0)
             self.benchmark_data.operation_tags = new_bench_features.operation_tags
             self.benchmark_data.operations = new_bench_features.operations
@@ -242,7 +247,7 @@ class Env:
         if action.ready:
             state.step_count += 1
 
-    def __apply_sequence(self, code: str, seq: list[list[Action]]) -> tuple[str, list[float]]:
+    def __apply_sequence(self, seq: list[list[Action]]) -> tuple[str, list[float]]:
         """Apply the sequence of actions to the state's code.
 
         Args:
@@ -253,7 +258,7 @@ class Env:
             tuple[str, list[float]]: the resulting code and rewards received for each action in the sequence.
         """
         rewards: list[float] = []
-        transformed_code = code
+        transformed_code = self.benchmark_data.code
         for op_seq in reversed(seq):
             op_seq_already_failed = False
             for action in op_seq:
@@ -261,14 +266,14 @@ class Env:
                 rewards_count = len(action.sub_actions) + 1
 
                 if op_seq_already_failed:
-                    rewards.extend([rewards[-1]] * rewards_count)
+                    rewards.extend([0.0] * rewards_count)
                     continue
 
                 # Attempt to apply the transformation to the code
                 # - If the transformation fails: punish the agent, reset the code, and mark the operation as done
                 new_transformed_code, trans_succeeded = action.apply(transformed_code)
                 if not trans_succeeded:
-                    print_error("Transformation Failed:", action)
+                    print_error(f"Action {action} failed on benchmark: {self.benchmark_data.bench_name}")
                     rewards.extend([self.__action_reward(trans_succeeded)] * rewards_count)
                     op_seq_already_failed = True
                     continue

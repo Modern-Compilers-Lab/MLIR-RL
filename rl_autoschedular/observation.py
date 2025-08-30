@@ -28,7 +28,7 @@ class OpFeatures(ObservationPart):
 
     @classmethod
     def size(cls) -> int:
-        return len(OperationType) + L + L + 1 + LS * LSD * L + LSD * L + len(cls.arith_ops)
+        return len(OperationType) + L + L + 1 + LS * LSD * L + LS * LSD * L + len(cls.arith_ops)
 
     @classmethod
     def from_state(cls, state: OperationState) -> torch.Tensor:
@@ -79,19 +79,22 @@ class OpFeatures(ObservationPart):
                     load_access_matrices[load_i, m, n] = factor
 
         # store access matrices:
-        store_access_matrices = torch.zeros((LSD, L))
+        store_access_matrices = torch.zeros((LS, LSD, L))
 
-        dimensions_terms = [cls.__formula_str_to_list(term) for term in op_features.store_data]
-        for m, dimension_term in enumerate(dimensions_terms):
-            if m == LSD:
+        for store_i, store in enumerate(op_features.store_data):
+            if store_i == LS:
                 break
-            for index, factor in dimension_term:
-                if index not in indices_dim:
-                    continue
-                n = indices_dim[index]
-                if n >= L:
-                    continue
-                store_access_matrices[m, n] = factor
+            dimensions_terms = [cls.__formula_str_to_list(term) for term in store]
+            for m, dimension_term in enumerate(dimensions_terms):
+                if m == LSD:
+                    break
+                for index, factor in dimension_term:
+                    if index not in indices_dim:
+                        continue
+                    n = indices_dim[index]
+                    if n >= L:
+                        continue
+                    store_access_matrices[store_i, m, n] = factor
 
         # Operations count:
         operations_count = torch.tensor([op_features.op_count[s] for s in cls.arith_ops])

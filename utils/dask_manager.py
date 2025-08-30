@@ -8,7 +8,7 @@ from dask_jobqueue import SLURMCluster
 
 from utils.file_logger import FileLogger
 from .singleton import Singleton
-from .log import print_info
+from .log import print_error, print_info
 from .config import Config
 import json
 import os
@@ -21,7 +21,7 @@ T = TypeVar('T')
 
 class DaskManager(metaclass=Singleton):
     def __init__(self):
-        enable_dashboard = Config().debug
+        enable_dashboard = True
         cluster = SLURMCluster(
             job_name='dask',
             queue='compute',
@@ -44,7 +44,8 @@ class DaskManager(metaclass=Singleton):
                 'export OMP_NUM_THREADS=12',
             ],
             scheduler_options={
-                'dashboard': enable_dashboard
+                'dashboard': enable_dashboard,
+                'worker_ttl': '3600s'
             }
         )
 
@@ -57,15 +58,22 @@ class DaskManager(metaclass=Singleton):
 
         self.cluster = cluster
         self.client = client
-        self.workers_names: list[str] = list(cluster.workers.keys())
-        self.num_workers = len(cluster.workers)
+        self.batch_timeout = 1000
+
+    @property
+    def workers_names(self) -> list[str]:
+        return list(self.cluster.workers.keys())
+
+    @property
+    def num_workers(self) -> int:
+        return len(self.cluster.workers)
 
     def map_states(
         self,
         func: Callable[['OperationState', str, 'Benchmarks', Optional[dict[str, dict[str, int]]]], T],
         states: list['OperationState'],
         training: bool,
-    ) -> list[T]:
+    ) -> list[Optional[T]]:
         # Provide worker data to the function via a wrapper
         def func_wrapper(s: 'OperationState', e: str, idx: int):
             worker = get_worker()
@@ -77,7 +85,7 @@ class DaskManager(metaclass=Singleton):
         # Prepare states for submission
         states_count = len(states)
         ordered_states = list(zip(range(states_count), states))
-        results: list[T] = [None] * states_count
+        results: list[Optional[T]] = [None] * states_count
         future_to_worker: dict[Future, str] = {}
 
         # Submit first states to each worker
@@ -89,33 +97,40 @@ class DaskManager(metaclass=Singleton):
                 func_wrapper,
                 state, FileLogger().exec_data_file, idx,
                 workers=worker_name,
-                resources={'single_task_slot': 1}
+                resources={'single_task_slot': 1},
+                pure=False
             )
             future_to_worker[future] = worker_name
 
         # Process futures as they finish
-        ac = as_completed(future_to_worker.keys(), with_results=True)
-        for future, indexed_result in ac:
-            future: Future
-            indexed_result: tuple[int, T]
+        ac = as_completed(future_to_worker.keys(), with_results=True, timeout=self.batch_timeout)
+        try:
+            for future, indexed_result in ac:
+                future: Future
+                indexed_result: tuple[int, T]
 
-            idx, result = indexed_result
-            results[idx] = result
-            freed_worker = future_to_worker.pop(future)
+                idx, result = indexed_result
+                results[idx] = result
+                freed_worker = future_to_worker.pop(future)
 
-            # If there are still remaining states submit them
-            if ordered_states:
-                new_idx, new_state = ordered_states.pop(0)
-                new_future = self.client.submit(
-                    func_wrapper,
-                    new_state, FileLogger().exec_data_file, new_idx,
-                    workers=freed_worker,
-                    resources={'single_task_slot': 1}
-                )
-                future_to_worker[new_future] = freed_worker
+                # If there are still remaining states submit them
+                if ordered_states:
+                    new_idx, new_state = ordered_states.pop(0)
+                    new_future = self.client.submit(
+                        func_wrapper,
+                        new_state, FileLogger().exec_data_file, new_idx,
+                        workers=freed_worker,
+                        resources={'single_task_slot': 1},
+                        pure=False
+                    )
+                    future_to_worker[new_future] = freed_worker
 
-                # Include the new future in the queue
-                ac.add(new_future)
+                    # Include the new future in the queue
+                    ac.add(new_future)
+        except TimeoutError:
+            print_error('States exec timed out')
+            for failed_future in future_to_worker.keys():
+                failed_future.cancel(reason='task-timeout', msg='Task timed out', force=True)
 
         return results
 

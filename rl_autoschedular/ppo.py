@@ -1,5 +1,6 @@
 from datetime import timedelta
 from statistics import mean
+import sys
 import torch
 from rl_autoschedular.env import Env
 from rl_autoschedular.model import HiearchyModel as Model
@@ -102,6 +103,12 @@ def collect_trajectory(data: Benchmarks, model: Model, step: int):
     results = dm.map_states(__execute_states, states, training=True)
 
     traj_end_exec_states = time()
+
+    results = [
+        (*e.failed_seq(s.transformation_history), float(dm.batch_timeout))
+        if not r else r
+        for r, s, e in zip(results, states, envs)
+    ]
 
     all_rewards, all_speedups, all_exec_times, cache_misses, worker_times = tuple(zip(*results))
     new_cache_data: dict[str, dict[str, int]] = {}
@@ -321,6 +328,11 @@ def evaluate_benchmarks(model: Model, data: Benchmarks):
                     observations[i] = Observation.from_state(next_op_state)
 
     results = dm.map_states(__execute_states, states, training=False)
+    results = [
+        (*e.failed_seq(s.transformation_history), float(dm.batch_timeout))
+        if not r else r
+        for r, s, e in zip(results, states, envs)
+    ]
     all_rewards, all_speedups, all_exec_times, _, _ = tuple(zip(*results))
     new_cache_data: dict[str, dict[str, int]] = {}
     for state, rewards, speedup, exec_time in zip(states, all_rewards, all_speedups, all_exec_times):

@@ -7,6 +7,7 @@
 #SBATCH -c 4
 #SBATCH --mem=16G
 #SBATCH -t 07-00
+#SBATCH -o logs/neptune/%j.out
 #SBATCH --mail-type=FAIL,TIME_LIMIT
 #SBATCH --mail-user=mt5383@nyu.edu
 

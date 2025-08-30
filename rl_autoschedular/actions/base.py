@@ -228,7 +228,7 @@ class Action:
             transformed_code = self._apply_ready(code)
             return transformed_code, True
         except Exception as e:
-            print_error(f"Error applying action {self}: {e}")
+            print_error(f"Error applying action: {repr(self)}\nError: {e}")
             return '', False
 
     def _apply_ready(self, code: str) -> str:
