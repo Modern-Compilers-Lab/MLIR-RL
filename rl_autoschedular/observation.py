@@ -36,8 +36,7 @@ class OpFeatures(ObservationPart):
 
     @classmethod
     def _from_features(cls, op_features: OperationFeatures) -> torch.Tensor:
-        indices = [nested_loop.arg for nested_loop in op_features.nested_loops]
-        indices_dim = {arg: i for (i, arg) in enumerate(indices)}
+        indices_dim = {nested_loop.arg: i for i, nested_loop in enumerate(op_features.nested_loops)}
 
         # Operation type
         op_type = torch.tensor([op_features.operation_type == ot for ot in OperationType])

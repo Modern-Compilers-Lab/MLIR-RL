@@ -168,23 +168,8 @@ int main(int argc, char **argv)
       llvm::outs() << "d" << index << " " << 0 << " " << loop_range << " " << 1 << " " << iterator_type << "\n";
     }
     llvm::outs() << "#START_LOAD_DATA" << "\n";
-    llvm::SmallVector<BlockArgument> used_operands;
-    bool found_use;
-    for (BlockArgument arg : linalgOp.getBlock()->getArguments()) {
-      found_use = false;
-      linalgOp.getBlock()->walk([&](Operation *nested_op){
-        if (found_use) return;
-        for (OpOperand &operand : nested_op->getOpOperands()) {
-          if (operand.get() == arg) {
-            used_operands.push_back(arg);
-            found_use = true;
-            break;
-          }
-        }
-      });
-    }
-    for (BlockArgument used_operand : used_operands) {
-      AffineMap operand_map = linalgOp.getMatchingIndexingMap(linalgOp.getMatchingOpOperand(used_operand));
+    for (BlockArgument in_arg : linalgOp.getRegionInputArgs()) {
+      AffineMap operand_map = linalgOp.getMatchingIndexingMap(linalgOp.getMatchingOpOperand(in_arg));
       uint results_nbr = operand_map.getNumResults();
       for (auto [index, map_result] : llvm::enumerate(operand_map.getResults())) {
         map_result.print(llvm::outs());
@@ -242,11 +227,13 @@ int main(int argc, char **argv)
   for (auto producer_op : ops_list) {
     std::string producerTag = getLinalgOpTag(producer_op);
     for (auto potential_consumer : ops_list) {
-      for (auto any_consumer : producer_op->getUsers()) {
-        if (!(potential_consumer == any_consumer)) continue;
+      for (auto &consumption : producer_op->getUses()) {
+        if (!(potential_consumer == consumption.getOwner())) continue;
 
+        int prod_res_nbr = cast<OpResult>(consumption.get()).getResultNumber();
+        int op_order = consumption.getOperandNumber();
         std::string consumerTag = getLinalgOpTag(potential_consumer);
-        llvm::outs() << producerTag << " --> " << consumerTag << "\n";
+        llvm::outs() << producerTag << " " << prod_res_nbr << " --> " << consumerTag << " " << op_order << "\n";
       }
     }
   }

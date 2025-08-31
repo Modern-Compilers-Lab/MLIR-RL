@@ -1,4 +1,4 @@
-from rl_autoschedular.state import OperationState, BenchmarkFeatures, extract_bench_features_from_code
+from rl_autoschedular.state import OperationState, BenchmarkFeatures
 from rl_autoschedular.benchmarks import Benchmarks
 from typing import Optional
 from rl_autoschedular.execution import Execution
@@ -52,10 +52,20 @@ class Env:
         next_state = state.copy()
 
         # Update the state infos to reflect the transformation
-        self.__update_state_infos(next_state, action)
+        action_failed = False
+        try:
+            self.__update_state_infos(next_state, action)
+        except Exception as e:
+            print_error(
+                f'Expected action to fail\n'
+                f"Action: {repr(action)}\n"
+                f"Error: {e}"
+            )
+            action_failed = True
+            next_state = state.copy()
 
-        # Check is state is terminal
-        next_state.terminal = action.terminal or next_state.step_count == Config().truncate
+        # Check if state is terminal
+        next_state.terminal = action.terminal or action_failed or next_state.step_count == Config().truncate
 
         return next_state
 
@@ -120,22 +130,28 @@ class Env:
             torch.Tensor: The observation vector of the new operation state.
         """
         operation_tag = self.benchmark_data.operation_tags[operation_idx]
-        operation_features = self.benchmark_data.operations[operation_tag]
+        operation_features = self.benchmark_data.operations[operation_tag].copy()
+
+        for action in operation_features.pre_actions:
+            operation_features = action.update_features(operation_features)
 
         producer_tag = None
+        producer_operand_idx = None
         producer_features = None
         if operation_features.producers:
-            producer_tag = operation_features.producers[-1]
-            producer_features = self.benchmark_data.operations[producer_tag]
+            producer_tag = operation_features.producers[-1][0]
+            producer_operand_idx = min(idx for t, idx in operation_features.producers if t == producer_tag)
+            producer_features = self.benchmark_data.operations[producer_tag].copy()
 
         state = OperationState(
             bench_idx=self.bench_idx,
             bench_name=self.benchmark_data.bench_name,
             operation_tag=operation_tag,
-            original_operation_features=operation_features.copy(),
-            operation_features=operation_features.copy(),
+            original_operation_features=self.benchmark_data.operations[operation_tag].copy(),
+            operation_features=operation_features,
             producer_tag=producer_tag,
-            producer_features=producer_features.copy() if producer_features else None,
+            producer_operand_idx=producer_operand_idx,
+            producer_features=producer_features,
             step_count=0,
             transformation_history=[[]],
             terminal=False,
@@ -224,6 +240,10 @@ class Env:
         # Get updated operation features
         state.operation_features = action.update_features(state.operation_features)
 
+        # In case of fusion we need to update the producer features as well
+        if isinstance(action, TiledFusion):
+            action.update_producer_features(state, self.benchmark_data)
+
         # Record action
         if state.step_count < len(state.transformation_history[0]):
             # Case where the last action should be replaced
@@ -234,14 +254,6 @@ class Env:
             state.transformation_history[0][state.step_count] = action
         else:
             state.transformation_history[0].append(action)
-
-        # In case of fusion we need to update the producer features as well
-        # TODO: Maybe we can do this without actually applying the actions
-        if isinstance(action, TiledFusion):
-            fused_code, _ = self.__apply_sequence(state.transformation_history)
-            new_bench_features = extract_bench_features_from_code('', fused_code, 0)
-            self.benchmark_data.operation_tags = new_bench_features.operation_tags
-            self.benchmark_data.operations = new_bench_features.operations
 
         # Increase count only if action was applied
         if action.ready:

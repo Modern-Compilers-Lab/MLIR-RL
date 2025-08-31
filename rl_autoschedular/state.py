@@ -61,10 +61,14 @@ class OperationFeatures:
     """List of store accesses where each store is represented by the list of access arguments."""
     nested_loops: list[NestedLoopFeatures]
     """List of nested loops where each loop is represented by the NestedLoopFeatures dataclass."""
-    producers: list[str]
-    """List of tags of operations that are consumed by the current operation"""
+    producers: list[tuple[str, int]]
+    """List of tags of operations that are consumed by the current operation along with their operand indices"""
+    consumers: list[tuple[str, int]]
+    """List of tags of operations that consume the current operation"""
     vectorizable: bool
     """Flag to indicate if the operation is vectorizable."""
+    pre_actions: list[Action]
+    """List actions that are already applied the current operatiom"""
 
     def copy(self):
         """Copy the current OperationFeatures object."""
@@ -76,7 +80,9 @@ class OperationFeatures:
             [store.copy() for store in self.store_data],
             [loop.copy() for loop in self.nested_loops],
             self.producers.copy(),
-            self.vectorizable
+            self.consumers.copy(),
+            self.vectorizable,
+            self.pre_actions.copy()
         )
 
 
@@ -119,6 +125,8 @@ class OperationState:
     """Features of the operation."""
     producer_tag: Optional[str]
     """Tag that identifies the selected producer"""
+    producer_operand_idx: Optional[int]
+    """The index of the producer's operand"""
     producer_features: Optional[OperationFeatures]
     """Features of the selected producer"""
     step_count: int
@@ -137,6 +145,7 @@ class OperationState:
             self.original_operation_features.copy(),
             self.operation_features.copy(),
             self.producer_tag,
+            self.producer_operand_idx,
             self.producer_features.copy() if self.producer_features is not None else None,
             self.step_count,
             [seq.copy() for seq in self.transformation_history],
@@ -291,15 +300,18 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
             store_data=store_data,
             nested_loops=nested_loops,
             producers=[],
-            vectorizable=vectorizable
+            consumers=[],
+            vectorizable=vectorizable,
+            pre_actions=[]
         )
 
     # Extracte Producer/Consumer features
     graph_str = graph_str.replace("#END_GRAPH", "")
-    graph_lines = [(line.split(' --> ')[0], line.split(' --> ')[1]) for line in graph_str.strip().split("\n") if line]
+    graph_lines = [(line.split(' --> ')[0].split(' '), line.split(' --> ')[1].split(' ')) for line in graph_str.strip().split("\n") if line]
 
-    for producer, consumer in graph_lines:
-        operations[consumer].producers.append(producer)
+    for (producer, res_idx), (consumer, op_idx) in graph_lines:
+        operations[consumer].producers.append((producer, int(op_idx)))
+        operations[producer].consumers.append((consumer, int(res_idx)))
 
     return BenchmarkFeatures(
         bench_name=bench_name,

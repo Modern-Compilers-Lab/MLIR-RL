@@ -287,13 +287,14 @@ module attributes {{transform.with_named_sequence}} {{
     return __run_transform_code(code, transform_code)
 
 
-def transform_TF(code: str, consumer_tag: str, producer_tag: str, tiling_sizes: list[int], parallel_sizes: list[int]):
+def transform_TF(code: str, consumer_tag: str, producer_tag: str, new_producer_tag: str, tiling_sizes: list[int], parallel_sizes: list[int]):
     """Apply the tiling and fusion transformation to the specified operation in the given code.
 
     Args:
         code (str): The code to apply the transformation to.
         consumer_tag (str): The tag of the operation to apply the transformation to.
         producer_tag (str): the tag of the producer to fuse with
+        new_producer_tag (str): the tag to assign to the producer after fusion.
         tiling_sizes (list[int]): The tiling size to apply.
         parallel_sizes (list[int]): The parallel size to apply.
 
@@ -316,7 +317,7 @@ def transform_TF(code: str, consumer_tag: str, producer_tag: str, tiling_sizes: 
         f"    {tile_transform if n_for_loops > 0 else ''}\n"
         f'    %op_{producer_tag} = transform.structured.match attributes{{tag = "{producer_tag}"}} in %arg1 : (!transform.any_op) -> !transform.any_op\n'
         f'    %fused, %containing = transform.structured.fuse_into_containing_op %op_{producer_tag} into %forall_op_{consumer_tag} : (!transform.any_op, !transform.any_op) -> (!transform.any_op, !transform.any_op)\n'
-        f'    %fused_tag = transform.param.constant "{producer_tag}_{consumer_tag}" -> !transform.any_param\n'
+        f'    %fused_tag = transform.param.constant "{new_producer_tag}" -> !transform.any_param\n'
         f'    transform.annotate %fused "tag" = %fused_tag : !transform.any_op, !transform.any_param\n'
         f'    transform.yield\n'
         f'  }}\n'
