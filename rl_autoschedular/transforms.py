@@ -2,7 +2,6 @@ import os
 import subprocess
 from mlir.ir import Context, Module
 from mlir.dialects.transform import interpreter
-from mlir.passmanager import PassManager
 from utils.bindings_process import BindingsProcess
 
 
@@ -242,14 +241,6 @@ def transform_vectorize(code: str, operation_tag: str):
         transform.named_sequence @__transform_main(%arg0: !transform.any_op {{transform.readonly}}) {{
             %op_{operation_tag} = transform.structured.match attributes{{tag = "{operation_tag}"}} in %arg0 : (!transform.any_op) -> !transform.any_op
             transform.structured.vectorize %op_{operation_tag} : !transform.any_op
-
-            %f = transform.structured.match ops{{["func.func"]}} in %arg0 : (!transform.any_op) -> !transform.any_op
-            transform.apply_patterns to %f {{
-                transform.apply_patterns.vector.transfer_permutation_patterns
-                transform.apply_patterns.vector.reduction_to_contract
-                transform.apply_patterns.canonicalization
-                transform.apply_patterns.tensor.fold_tensor_subset_ops_into_vector_transfers
-            }} : !transform.any_op
             transform.yield
         }}
     }}"""
@@ -287,7 +278,7 @@ module attributes {{transform.with_named_sequence}} {{
     return __run_transform_code(code, transform_code)
 
 
-def transform_TF(code: str, consumer_tag: str, producer_tag: str, new_producer_tag: str, tiling_sizes: list[int], parallel_sizes: list[int]):
+def transform_TF(code: str, consumer_tag: str, producer_tag: str, new_producer_tag: str, tiling_sizes: list[int]):
     """Apply the tiling and fusion transformation to the specified operation in the given code.
 
     Args:
@@ -302,19 +293,14 @@ def transform_TF(code: str, consumer_tag: str, producer_tag: str, new_producer_t
         str: The code after applying the transformation.
     """
     # If parallel sizes are all zeros, means no fusion will be done
-    if all([a == 0 for a in parallel_sizes]):
+    if all([a == 0 for a in tiling_sizes]):
         return code
-
-    n_for_loops = sum([s != 0 for s in tiling_sizes])
-    r = ', '.join(['!transform.any_op'] * n_for_loops)
-    tile_transform = f"transform.structured.tile_using_for %tiled_op_{consumer_tag} tile_sizes {str(tiling_sizes)} : (!transform.any_op) -> (!transform.any_op, {r})"
 
     transform_code = (
         f'\nmodule attributes {{transform.with_named_sequence}} {{\n'
         f'  transform.named_sequence @__transform_main(%arg1: !transform.any_op {{transform.readonly}}) {{\n'
         f'    %op_{consumer_tag} = transform.structured.match attributes{{tag = "{consumer_tag}"}} in %arg1 : (!transform.any_op) -> !transform.any_op\n'
-        f'    %tiled_op_{consumer_tag}, %forall_op_{consumer_tag} = transform.structured.tile_using_forall %op_{consumer_tag} tile_sizes {str(parallel_sizes)} : (!transform.any_op) -> (!transform.any_op, !transform.any_op)\n'
-        f"    {tile_transform if n_for_loops > 0 else ''}\n"
+        f'    %tiled_op_{consumer_tag}, %forall_op_{consumer_tag} = transform.structured.tile_using_forall %op_{consumer_tag} tile_sizes {str(tiling_sizes)} : (!transform.any_op) -> (!transform.any_op, !transform.any_op)\n'
         f'    %op_{producer_tag} = transform.structured.match attributes{{tag = "{producer_tag}"}} in %arg1 : (!transform.any_op) -> !transform.any_op\n'
         f'    %fused, %containing = transform.structured.fuse_into_containing_op %op_{producer_tag} into %forall_op_{consumer_tag} : (!transform.any_op, !transform.any_op) -> (!transform.any_op, !transform.any_op)\n'
         f'    %fused_tag = transform.param.constant "{new_producer_tag}" -> !transform.any_param\n'
@@ -390,20 +376,29 @@ def transform_bufferize_and_lower_v(code: str):
         transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.consumed}) {
             %all_loops = transform.structured.match interface{LoopLikeInterface} in %arg0 : (!transform.any_op) -> !transform.any_op
             transform.apply_licm to %all_loops : !transform.any_op
-            %f1 = transform.structured.match ops{["func.func"]} in %arg0 : (!transform.any_op) -> !transform.any_op
-            transform.apply_patterns to %f1 {transform.apply_patterns.canonicalization} : !transform.any_op
+
             transform.structured.eliminate_empty_tensors %arg0 : !transform.any_op
-            %empty = transform.structured.match ops{["tensor.empty"]} in %arg0 : (!transform.any_op) -> !transform.any_op
-            %empty1 = transform.cast %empty : !transform.any_op to !transform.op<"tensor.empty">
-            transform.bufferization.empty_tensor_to_alloc_tensor %empty1 : (!transform.op<"tensor.empty">) -> !transform.op<"bufferization.alloc_tensor">
+            %empty = transform.structured.match ops{["tensor.empty"]} in %arg0 : (!transform.any_op) -> !transform.op<"tensor.empty">
+            transform.bufferization.empty_tensor_to_alloc_tensor %empty : (!transform.op<"tensor.empty">) -> !transform.op<"bufferization.alloc_tensor">
+
+            %f0 = transform.structured.match ops{["func.func"]} in %arg0 : (!transform.any_op) -> !transform.any_op
+            transform.apply_patterns to %f0 {
+                transform.apply_patterns.vector.transfer_permutation_patterns
+                transform.apply_patterns.vector.reduction_to_contract
+            } : !transform.any_op
+            transform.apply_patterns to %f0 {
+                transform.apply_patterns.canonicalization
+                transform.apply_patterns.tensor.fold_tensor_subset_ops_into_vector_transfers
+            } : !transform.any_op
+
             %arg1 = transform.bufferization.one_shot_bufferize layout{IdentityLayoutMap} %arg0 {bufferize_function_boundaries = true} : (!transform.any_op) -> !transform.any_op
 
-            %f = transform.structured.match ops{["func.func"]} in %arg1 : (!transform.any_op) -> !transform.any_op
-            transform.apply_patterns to %f {
+            %f1 = transform.structured.match ops{["func.func"]} in %arg1 : (!transform.any_op) -> !transform.any_op
+            transform.apply_patterns to %f1 {
                 transform.apply_patterns.vector.lower_contraction lowering_strategy = "outerproduct"
                 transform.apply_patterns.vector.transfer_permutation_patterns
                 transform.apply_patterns.vector.lower_multi_reduction lowering_strategy = "innerparallel"
-                transform.apply_patterns.vector.split_transfer_full_partial split_transfer_strategy = "vector-transfer"
+                transform.apply_patterns.vector.split_transfer_full_partial split_transfer_strategy = "linalg-copy"
                 transform.apply_patterns.vector.transfer_to_scf max_transfer_rank = 1 full_unroll = true
                 transform.apply_patterns.vector.lower_transfer max_transfer_rank = 1
                 transform.apply_patterns.vector.lower_shape_cast
@@ -422,9 +417,7 @@ def __run_transform_code(code: str, transform_code: str):
         with Context():
             module = Module.parse(code)
             t_module = Module.parse(transform_code)
-            pm = PassManager.parse("builtin.module(canonicalize)")
         interpreter.apply_named_sequence(module, t_module.body.operations[0], t_module)
-        pm.run(module.operation)
 
         return str(module)
 

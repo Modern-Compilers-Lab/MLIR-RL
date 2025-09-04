@@ -114,10 +114,10 @@ class Execution(metaclass=Singleton):
 
         def execute_bind_call():
             pass_pipeline = """builtin.module(
-                convert-linalg-to-loops,
                 canonicalize,
                 buffer-deallocation-pipeline,
                 convert-bufferization-to-memref,
+                convert-linalg-to-loops,
                 scf-forall-to-parallel,
                 convert-scf-to-openmp,
                 expand-strided-metadata,

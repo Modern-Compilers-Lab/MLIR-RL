@@ -1,6 +1,5 @@
 from typing import Optional, overload, Union, Any
 from rl_autoschedular.state import OperationState, OperationFeatures
-from utils.log import print_error
 import torch
 from torch.distributions import Distribution
 
@@ -20,7 +19,7 @@ class Action:
     sub_actions: list['Action'] = []
 
     @overload
-    def __init__(self, operation_tag: str, **extras):
+    def __init__(self, *_, operation_tag: str, **extras):
         """Initialize action without parameters"""
         ...
 
@@ -34,7 +33,7 @@ class Action:
         ...
 
     @overload
-    def __init__(self, parameters: list[int], operation_tag: str, **extras):
+    def __init__(self, parameters: list[int], *_, operation_tag: str, **extras):
         """Initialize action with parameters
 
         Args:
@@ -145,7 +144,7 @@ class Action:
         return None
 
     @classmethod
-    def action_history(cls, state: OperationState) -> Optional[torch.Tensor]:
+    def action_history(cls, seq: list['Action']) -> Optional[torch.Tensor]:
         """Return the action history for this action type in the current state
 
         Args:
@@ -212,7 +211,7 @@ class Action:
         """
         raise NotImplementedError
 
-    def apply(self, code: str) -> tuple[str, bool]:
+    def apply(self, code: str) -> str:
         """Apply action on the current code
 
         Args:
@@ -222,14 +221,9 @@ class Action:
             tuple[str, bool]: the new transformed code and a flag that determines if the action was successful
         """
         if not self.ready:
-            return code, True
+            return code
 
-        try:
-            transformed_code = self._apply_ready(code)
-            return transformed_code, True
-        except Exception as e:
-            print_error(f"Error applying action: {repr(self)}\nError: {e}")
-            return '', False
+        return self._apply_ready(code)
 
     def _apply_ready(self, code: str) -> str:
         """Apply action that is guarenteed to be ready on the current state

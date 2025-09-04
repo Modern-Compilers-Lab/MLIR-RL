@@ -4,7 +4,6 @@ from rl_autoschedular.state import OperationState, OperationType
 from rl_autoschedular.transforms import transform_interchange
 from typing import Optional
 from enum import Enum
-from utils.log import print_error
 import torch
 from torch.distributions import Categorical, Normal, Uniform
 import math
@@ -99,9 +98,9 @@ class Interchange(Action):
         return mask
 
     @classmethod
-    def action_history(cls, state):
+    def action_history(cls, seq):
         history = torch.zeros((Config().truncate, Config().max_num_loops, Config().max_num_loops))
-        for i, action in enumerate(state.transformation_history[0]):
+        for i, action in enumerate(seq):
             if not isinstance(action, Interchange):
                 continue
 
@@ -195,8 +194,7 @@ class Interchange(Action):
         x = parameter
         n = num_loops
         if x >= math.factorial(n):
-            print_error(f"Invalid interchange parameter: {x}")
-            x = math.factorial(n) - 1
+            raise Exception(f"Invalid interchange parameter: {x}")
 
         # Convert x to factorial number
         fact_x = '0'
@@ -245,12 +243,11 @@ class Interchange(Action):
 
     @classmethod
     def incomplete_interchange(cls, state: OperationState) -> Optional['Interchange']:
-        if state.step_count >= len(state.transformation_history[0]):
+        if not state.has_incomplete_action:
+            return None
+        incomplete_action = state.latest_action
+
+        if not isinstance(incomplete_action, Interchange):
             return None
 
-        old_action = state.transformation_history[0][state.step_count]
-        if not isinstance(old_action, Interchange):
-            return None
-
-        assert not old_action.ready, 'expected previous interchange to be incomplete'
-        return old_action
+        return incomplete_action

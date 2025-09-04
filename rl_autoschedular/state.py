@@ -67,7 +67,7 @@ class OperationFeatures:
     """List of tags of operations that consume the current operation"""
     vectorizable: bool
     """Flag to indicate if the operation is vectorizable."""
-    pre_actions: list[Action]
+    pre_actions: list['Action']
     """List actions that are already applied the current operatiom"""
 
     def copy(self):
@@ -129,12 +129,34 @@ class OperationState:
     """The index of the producer's operand"""
     producer_features: Optional[OperationFeatures]
     """Features of the selected producer"""
-    step_count: int
-    """The current step in the list of transformations applied to the operation."""
     transformation_history: list[list['Action']]
     """List of transformations with their parameters applied to the operation."""
     terminal: bool
     """Flag that determines if the state is terminal"""
+
+    @property
+    def current_history(self):
+        return self.transformation_history[0]
+
+    @property
+    def step_count(self):
+        return len(self.current_history)
+
+    @property
+    def latest_action(self):
+        return self.current_history[-1] if self.current_history else None
+
+    @property
+    def has_incomplete_action(self):
+        return (not self.latest_action.ready) if self.latest_action else False
+
+    def record_action(self, action: 'Action'):
+        if self.has_incomplete_action:
+            # Case where the last action should be replaced
+            action.sub_actions = self.latest_action.sub_actions + [self.latest_action]
+            self.current_history[-1] = action
+        else:
+            self.current_history.append(action)
 
     def copy(self):
         """Copy the current OperationState object."""
@@ -147,7 +169,6 @@ class OperationState:
             self.producer_tag,
             self.producer_operand_idx,
             self.producer_features.copy() if self.producer_features is not None else None,
-            self.step_count,
             [seq.copy() for seq in self.transformation_history],
             self.terminal
         )
@@ -225,14 +246,11 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
     for operation_block in operations_blocks:
         rest, operation_tag = operation_block.split("#START_TAG")
         operation_tag = operation_tag.strip().split("\n")[0]
-        log_info = f"- Bench: {bench_name} - Operation: {operation_tag}"
+        log_info = f"- Bench: {bench_name}\n- Operation: {operation_tag}"
 
         operation_name, rest = rest.split("#START_VECTORIZABLE")
+        operation_name = operation_name.strip()
         operation_type = __get_operation_type(operation_name)
-        if operation_type is None:
-            print_error(log_info)
-            print_error("Unsupported operation type:", operation_name)
-            continue
 
         nested_loops = []
         op_count = {}
@@ -256,8 +274,7 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
                 iterator_type=IteratorType(iter)
             ))
         if len(nested_loops) > cfg.max_num_loops:
-            print_error(log_info)
-            print_error(f"Number of loops {len(nested_loops)} is not supported")
+            print_error(f"Number of loops {len(nested_loops)} is not supported\n" + log_info)
             continue
 
         loads_data_str, rest = rest.split("#START_STORE_DATA")
@@ -267,8 +284,7 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
                 continue
             load_data.append(load_data_str.split(", "))
         if any(len(load) > cfg.max_num_load_store_dim for load in load_data):
-            print_error(log_info)
-            print_error(f"Number of load dims {len(load_data[-1])} is not supported")
+            print_error(f"Number of load dims {len(load_data[-1])} is not supported\n" + log_info)
             continue
         if len(load_data) > cfg.max_num_stores_loads:
             # We ignore this overflow, because there are many cases with a huge number of loads
@@ -281,8 +297,7 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
                 continue
             store_data.append(store_data_str.split(", "))
         if any(len(store) > cfg.max_num_load_store_dim for store in store_data):
-            print_error(log_info)
-            print_error(f"Number of store dims {len(store_data[-1])} is not supported")
+            print_error(f"Number of store dims {len(store_data[-1])} is not supported\n" + log_info)
             continue
         if len(store_data) > cfg.max_num_stores_loads:
             store_data = store_data[:cfg.max_num_stores_loads]
@@ -322,7 +337,7 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
     )
 
 
-def __get_operation_type(operation_name: str) -> Optional[OperationType]:
+def __get_operation_type(operation_name: str):
     """Get the operation type from the operation name.
 
     Args:

@@ -15,7 +15,6 @@ from utils.config import Config
 from utils.file_logger import FileLogger
 from utils.log import print_error, print_info, print_success
 from utils.dask_manager import DaskManager
-from tqdm import trange
 from time import time
 from typing import Optional
 
@@ -164,10 +163,10 @@ def ppo_update(trajectory: TrajectoryData, model: Model, optimizer: torch.optim.
     cfg = Config()
 
     trajectory.update_attributes(model)
-    data_loader = trajectory.loader(cfg.ppo_batch_size, 1)
 
-    ppo_trange = trange(cfg.ppo_epochs, desc='PPO Epochs')
-    for _ in ppo_trange:
+    ppo_start = time()
+    data_loader = trajectory.loader(cfg.ppo_batch_size, 1)
+    for _ in range(cfg.ppo_epochs):
         for batch in data_loader:
             batch: list[torch.Tensor] = [e.to(device, non_blocking=True) for e in batch]
             (
@@ -212,14 +211,12 @@ def ppo_update(trajectory: TrajectoryData, model: Model, optimizer: torch.optim.
                 clip_factor = torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
                 optimizer.step()
             except Exception as e:
-                print_error(f'Error during PPO update: {e}')
+                print_error(
+                    'Error during PPO update\n'
+                    f'Error: {e}'
+                )
 
             # Logging
-            ppo_trange.set_postfix({
-                'loss': loss.item(),
-                'policy_loss': policy_loss.item(),
-                'value_loss': value_loss.item() if cfg.value_epochs == 0 else None
-            })
             fl['train_ppo/policy_loss'].append(policy_loss.item())
             fl['train_ppo/clip_frac'].append(clip_frac.item())
             fl['train_ppo/clip_factor'].append(clip_factor.item())
@@ -228,7 +225,8 @@ def ppo_update(trajectory: TrajectoryData, model: Model, optimizer: torch.optim.
                 fl['train_ppo/value_loss'].append(value_loss.item())
             if 'entropy' in cfg.exploration:
                 fl['train_ppo/entropy_loss'].append(entropy_loss.item())
-    print_info(f"PPO fit in {timedelta(seconds=ppo_trange.format_dict['elapsed'])}")
+    ppo_end = time()
+    print_info(f"PPO fit in {timedelta(seconds=ppo_end - ppo_start)}")
 
 
 def value_update(trajectory: TrajectoryData, model: Model, optimizer: torch.optim.Optimizer):
@@ -243,10 +241,10 @@ def value_update(trajectory: TrajectoryData, model: Model, optimizer: torch.opti
     cfg = Config()
 
     trajectory.update_attributes(model)
-    data_loader = trajectory.loader(cfg.value_batch_size, 1)
 
-    value_trange = trange(cfg.value_epochs, desc='Value Epochs')
-    for _ in value_trange:
+    value_start = time()
+    data_loader = trajectory.loader(cfg.value_batch_size, 1)
+    for _ in range(cfg.value_epochs):
         for batch in data_loader:
             batch: list[torch.Tensor] = [e.to(device, non_blocking=True) for e in batch]
             (
@@ -269,13 +267,16 @@ def value_update(trajectory: TrajectoryData, model: Model, optimizer: torch.opti
                 clip_factor = torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
                 optimizer.step()
             except Exception as e:
-                print_error(f'Error during Value update: {e}')
+                print_error(
+                    'Error during Value update\n'
+                    f'Error: {e}'
+                )
 
             # Logging
-            value_trange.set_postfix({'loss': loss.item()})
             fl['train_value/loss'].append(loss.item())
             fl['train_value/clip_factor'].append(clip_factor.item())
-    print_info(f"Value fit in {timedelta(seconds=value_trange.format_dict['elapsed'])}")
+    value_end = time()
+    print_info(f"Value fit in {timedelta(seconds=value_end - value_start)}")
 
 
 def evaluate_benchmarks(model: Model, data: Benchmarks):

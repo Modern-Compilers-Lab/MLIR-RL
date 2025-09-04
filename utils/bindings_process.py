@@ -2,7 +2,7 @@ from multiprocessing import Process, Queue
 from typing import Callable, Optional, TypeVar
 
 T = TypeVar('T')
-ENABLED = True
+ENABLED = False
 
 
 class BindingsProcess:
@@ -22,14 +22,13 @@ class BindingsProcess:
         p.start()
         p.join(timeout)
         if p.is_alive():
-            p.terminate()
-            p.join()
+            p.kill()
             raise TimeoutError(f"Bindings call {func.__name__} timed out")
 
         if ec := p.exitcode:
             raise Exception(f"Bindings call {func.__name__} failed with exit code: {ec}")
-        else:
-            res = q.get()
-            if isinstance(res, Exception):
-                raise res
-            return res
+
+        res = q.get_nowait()
+        if isinstance(res, Exception):
+            raise res
+        return res

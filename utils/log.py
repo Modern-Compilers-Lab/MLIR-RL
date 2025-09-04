@@ -40,9 +40,11 @@ def print_alert(*args, add_label: bool = True, **kwargs):
         print(f"\033[93m{label}{line}\033[0m", file=sys.stderr, **kwargs)
 
 
-def print_error(*args, add_label: bool = True, **kwargs):
+def print_error(*args, add_label: bool = True, with_barrier: bool = True, **kwargs):
     """Prints an error message"""
     message = ' '.join(map(str, args))
+    if with_barrier:
+        message = '\n----------------------------------------\n' + message + '\n----------------------------------------\n'
     label = f'{time_log()} - [ERROR]    ' if add_label else ''
     for line in message.split('\n'):
         print(f"\033[91m{label}{line}\033[0m", file=sys.stderr, **kwargs)

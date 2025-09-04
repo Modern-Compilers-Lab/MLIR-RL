@@ -85,6 +85,9 @@ class ActionSpace:
             if a.is_allowed(state):
                 mask[cls.action_number(a)] = True
 
+        def forbid_action(a: type[Action]):
+            mask[cls.action_number(a)] = False
+
         def allow_all():
             for action in cls.supported_actions:
                 allow_action(action)
@@ -94,6 +97,11 @@ class ActionSpace:
             if Interchange.incomplete_interchange(state):
                 # Special case where interchange isn't complete yet
                 mask[cls.action_number(Interchange)] = True
+            elif state.has_incomplete_action:
+                raise Exception(
+                    f"Unhandled incomplete action {state.latest_action}"
+                    ", can't move on to another step"
+                )
             elif cfg.order:
                 # Enforce order if provided
                 if state.step_count >= len(cfg.order):
@@ -101,8 +109,15 @@ class ActionSpace:
                 if not cfg.order[state.step_count]:
                     # If at current step nothing is specified, allow everything
                     allow_all()
-                for s in cfg.order[state.step_count]:
-                    allow_action(cls.action_type_by_symbol(s))
+                elif cfg.order[state.step_count][0] == '!':
+                    # Forbid actions
+                    allow_all()
+                    for s in cfg.order[state.step_count][1:]:
+                        forbid_action(cls.action_type_by_symbol(s))
+                else:
+                    # Allow actions
+                    for s in cfg.order[state.step_count]:
+                        allow_action(cls.action_type_by_symbol(s))
             else:
                 # If none of the above applies, allow everything
                 allow_all()
@@ -121,10 +136,10 @@ class ActionSpace:
         return mask
 
     @classmethod
-    def action_history(cls, state: OperationState) -> torch.Tensor:
+    def action_history(cls, seq: list[Action]) -> torch.Tensor:
         history = []
         for action in cls.supported_actions:
-            action_history = action.action_history(state)
+            action_history = action.action_history(seq)
             if action_history is None:
                 continue
             history.append(action_history)

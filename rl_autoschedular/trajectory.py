@@ -276,7 +276,7 @@ class TrajectoryData(Dataset):
 
         self.off_policy_rates = torch.exp(torch.clamp(self.actions_old_log_p - self.actions_bev_log_p, -80.0, 80.0))
 
-    def __compute_returns(self, gamma: float = 0.99) -> torch.Tensor:
+    def __compute_returns(self, gamma: float = 1.0) -> torch.Tensor:
         """Compute the returns.
 
         Args:
@@ -298,7 +298,7 @@ class TrajectoryData(Dataset):
 
             self.returns[t] = last_return
 
-    def __compute_gae(self, gamma: float = 0.99, lambda_: float = 0.95) -> torch.Tensor:
+    def __compute_gae(self, gamma: float = 1.0, lambda_: float = 0.95) -> torch.Tensor:
         """Compute the Generalized Advantage Estimation.
 
         Args:

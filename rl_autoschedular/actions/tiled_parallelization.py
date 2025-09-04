@@ -34,6 +34,13 @@ class TiledParallelization(Tiling):
             else 0 for param, iterator in zip(self.parameters, iterators)
         ]
 
+    @classmethod
+    def is_allowed(cls, state):
+        return not any(
+            isinstance(action, Tiling) for action in
+            state.operation_features.pre_actions + state.current_history
+        )
+
     def _apply_ready(self, code: str):
         p_code = transform_TP(code, self.operation_tag, self.parallel_params)
         return transform_tile(p_code, self.operation_tag, self.tiling_params)

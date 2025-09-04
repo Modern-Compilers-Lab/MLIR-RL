@@ -55,9 +55,9 @@ class Tiling(Action):
         return mask.reshape(-1)
 
     @classmethod
-    def action_history(cls, state):
+    def action_history(cls, seq):
         history = torch.zeros((Config().truncate, Config().max_num_loops, Config().num_tile_sizes + 1))
-        for i, action in enumerate(state.transformation_history[0]):
+        for i, action in enumerate(seq):
             if not isinstance(action, Tiling):
                 continue
 
@@ -65,8 +65,10 @@ class Tiling(Action):
                 if param == 0:
                     history[i, j, 0] = 1
                 else:
-                    ts_index = int(math.log2(param))
-                    history[i, j, ts_index + 1] = 1
+                    assert param > 0 and (param & (param - 1) == 0), f'Expected tile size to be a positive power of 2, found {param}'
+                    ts_index = int(math.log2(param)) + 1
+                    assert ts_index < history.size(2), f'Overflow of tile size, max size is {2 ** (Config().num_tile_sizes - 1)} found {param}'
+                    history[i, j, ts_index] = 1
 
         return history.reshape(-1)
 
@@ -102,6 +104,9 @@ class Tiling(Action):
         return transform_tile(code, self.operation_tag, self.parameters)
 
     def update_features(self, operation_features):
+        # A tiled operation loses its producers outside the tiling loop
+        operation_features.producers = []
+
         new_operation_features = operation_features.copy()
         for nested_loop, tile_size in zip(new_operation_features.nested_loops, self.parameters):
             if tile_size == 0:

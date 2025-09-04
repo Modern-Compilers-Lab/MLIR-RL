@@ -56,13 +56,16 @@ class Env:
         try:
             self.__update_state_infos(next_state, action)
         except Exception as e:
+            seq_str = '\n'.join([str(list(map(str, op_seq))) for op_seq in state.transformation_history])
             print_error(
-                f'Expected action to fail\n'
+                'Error while expecting action effect\n'
                 f"Action: {repr(action)}\n"
-                f"Error: {e}"
+                f"Error: {e}\n"
+                f"Call stack: {traceback.format_exc()}\n"
+                f"Benchmark: {self.benchmark_data.bench_name}\n"
+                f"Transformations:\n{seq_str}"
             )
             action_failed = True
-            next_state = state.copy()
 
         # Check if state is terminal
         next_state.terminal = action.terminal or action_failed or next_state.step_count == Config().truncate
@@ -99,11 +102,15 @@ class Env:
             if not exec_succeeded:
                 raise Exception("Incorrect results")
         except Exception as e:
-            print_error("Error while evaluating the code:", e)
-            print_error("Exception type:", type(e).__name__)
-            print_error("Call stack:", traceback.format_exc())
-            print_error("Bench:", self.benchmark_data.bench_name)
-            print_error("Transformations:", seq)
+            seq_str = '\n'.join([str(list(map(str, op_seq))) for op_seq in seq])
+            print_error(
+                "Error while evaluating the code\n"
+                f"Error: {e}\n"
+                f"Exception type: {type(e).__name__}\n"
+                f"Call stack: {traceback.format_exc()}\n"
+                f"Benchmark: {self.benchmark_data.bench_name}\n"
+                f"Transformations:\n{seq_str}"
+            )
             new_exec_time = None
             exec_succeeded = False
             cache_miss = True
@@ -139,7 +146,9 @@ class Env:
         producer_operand_idx = None
         producer_features = None
         if operation_features.producers:
+            # NOTE: To change with mutliple producers support
             producer_tag = operation_features.producers[-1][0]
+            # NOTE: To change with mutliple uses support
             producer_operand_idx = min(idx for t, idx in operation_features.producers if t == producer_tag)
             producer_features = self.benchmark_data.operations[producer_tag].copy()
 
@@ -152,7 +161,6 @@ class Env:
             producer_tag=producer_tag,
             producer_operand_idx=producer_operand_idx,
             producer_features=producer_features,
-            step_count=0,
             transformation_history=[[]],
             terminal=False,
         )
@@ -224,11 +232,9 @@ class Env:
         """Update state infos after applying a transformation.
 
         Notes: Updated fields are:
-            - operation_features (to reflect the transformation)
             - transformation_history
-            - step_count
             - producers features in case of fusion
-            (currently it's done by updating bench features, this should be changed after)
+            - operation_features (to reflect the transformation)
 
         Args:
             state (OperationState): The current state.
@@ -237,27 +243,15 @@ class Env:
         Returns:
             OperationState: The updated state.
         """
-        # Get updated operation features
-        state.operation_features = action.update_features(state.operation_features)
+        # Record action
+        state.record_action(action)
 
         # In case of fusion we need to update the producer features as well
         if isinstance(action, TiledFusion):
             action.update_producer_features(state, self.benchmark_data)
 
-        # Record action
-        if state.step_count < len(state.transformation_history[0]):
-            # Case where the last action should be replaced
-            previous_action = state.transformation_history[0][state.step_count]
-            assert not previous_action.ready, f"Expected action {previous_action} not to be ready"
-
-            action.sub_actions = previous_action.sub_actions + [previous_action]
-            state.transformation_history[0][state.step_count] = action
-        else:
-            state.transformation_history[0].append(action)
-
-        # Increase count only if action was applied
-        if action.ready:
-            state.step_count += 1
+        # Get updated operation features
+        state.operation_features = action.update_features(state.operation_features)
 
     def __apply_sequence(self, seq: list[list[Action]]) -> tuple[str, list[float]]:
         """Apply the sequence of actions to the state's code.
@@ -283,10 +277,18 @@ class Env:
 
                 # Attempt to apply the transformation to the code
                 # - If the transformation fails: punish the agent, reset the code, and mark the operation as done
-                new_transformed_code, trans_succeeded = action.apply(transformed_code)
-                if not trans_succeeded:
-                    print_error(f"Action {action} failed on benchmark: {self.benchmark_data.bench_name}")
-                    rewards.extend([self.__action_reward(trans_succeeded)] * rewards_count)
+                try:
+                    new_transformed_code = action.apply(transformed_code)
+                except Exception as e:
+                    seq_str = '\n'.join([str(list(map(str, op_seq))) for op_seq in seq])
+                    print_error(
+                        f"Error applying action\n"
+                        f"Action: {repr(action)}\n"
+                        f"Error: {e}\n"
+                        f"Benchmark: {self.benchmark_data.bench_name}\n"
+                        f"Transformations:\n{seq_str}"
+                    )
+                    rewards.extend([self.__action_reward(False)] * rewards_count)
                     op_seq_already_failed = True
                     continue
 

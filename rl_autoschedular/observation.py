@@ -168,7 +168,7 @@ class ActionHistory(ObservationPart):
 
     @classmethod
     def from_state(cls, state: OperationState) -> torch.Tensor:
-        return ActionSpace.action_history(state)
+        return ActionSpace.action_history(state.current_history)
 
 
 class ActionMask(ObservationPart):

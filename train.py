@@ -1,12 +1,14 @@
-# Load environment variables
-import os
 from dotenv import load_dotenv
 
+# Load environment variables
 load_dotenv(override=True)
 load_dotenv('.env.debug')
 
-# Import modules
+import os
+import logging
 import torch
+import json
+from rl_autoschedular.benchmarks import Benchmarks
 from rl_autoschedular.execution import Execution
 from rl_autoschedular.model import HiearchyModel as Model
 from rl_autoschedular import device
@@ -20,16 +22,41 @@ from typing import Optional
 from time import time
 from datetime import timedelta
 
+logging.basicConfig(
+    filename=f"logs/{os.getenv('SLURM_JOB_NAME', 'interactive')}_{os.environ['SLURM_JOB_ID']}.debug",
+    filemode="w",
+    format="${asctime} - [${levelname}]    ${name}: ${message}",
+    datefmt="%m-%d %H:%M",
+    style='$',
+    level=logging.DEBUG
+)
 
 # Initialize singleton classes
 cfg = Config()
 fl = FileLogger()
 dm = DaskManager()
 
-# Load data to workers
-train_data = dm.load_train_data()
-eval_data = dm.load_eval_data()
-main_exec_data = dm.load_main_exec_data()
+
+# Data loading
+def load_train_data():
+    return Benchmarks()
+
+
+def load_eval_data():
+    return Benchmarks(is_training=False)
+
+
+def load_main_exec_data() -> Optional[dict[str, dict[str, int]]]:
+    main_exec_data = None
+    if Config().main_exec_data_file:
+        with open(Config().main_exec_data_file) as f:
+            main_exec_data = json.load(f)
+    return main_exec_data
+
+
+train_data = dm.run_and_register_to_workers(load_train_data)
+eval_data = dm.run_and_register_to_workers(load_eval_data)
+main_exec_data = dm.run_and_register_to_workers(load_main_exec_data)
 
 # Initialize execution singleton
 Execution(fl.exec_data_file, main_exec_data)
@@ -60,7 +87,12 @@ elapsed_dlt = 0
 eta_dlt = 0
 overall_start = time()
 for step in range(cfg.nb_iterations):
-    print_info(f"- Main Loop {step + 1}/{cfg.nb_iterations} ({100 * (step + 1) / cfg.nb_iterations:.2f}%) ({iter_time_dlt}/it) ({elapsed_dlt} < {eta_dlt})")
+    print_info(
+        f"- Main Loop {step + 1}/{cfg.nb_iterations}"
+        f" ({100 * (step + 1) / cfg.nb_iterations:.2f}%)"
+        f" ({iter_time_dlt}/it) ({elapsed_dlt} < {eta_dlt})",
+        flush=True
+    )
 
     main_start = time()
 
