@@ -1,51 +1,63 @@
 # Load environment variables
-import os
 from dotenv import load_dotenv
+
 load_dotenv(override=True)
 load_dotenv('.env.debug')
 
 # Import modules
+import os
+import logging
 import torch
-from utils.dask_manager import DaskManager
-from utils.file_logger import FileLogger
+from typing import Optional
+from rl_autoschedular.execution import Execution
 from rl_autoschedular.model import HiearchyModel as Model
-from rl_autoschedular import config as cfg, device
+from rl_autoschedular import device
 from rl_autoschedular.ppo import evaluate_benchmarks
 from rl_autoschedular.benchmarks import Benchmarks
+from utils.dask_manager import DaskManager
+from utils.file_logger import FileLogger
+from utils.config import Config
 from utils.log import print_info, print_success
+from datetime import timedelta
 from time import time
-import random
-import string
-import json
-import datetime
 
+logging.basicConfig(
+    filename=f"logs/{os.getenv('SLURM_JOB_NAME', 'interactive')}_{os.environ['SLURM_JOB_ID']}.debug",
+    filemode="w",
+    format="${asctime} - [${levelname}]    ${name}: ${message}",
+    datefmt="%m-%d %H:%M",
+    style='$',
+    level=logging.DEBUG
+)
 
-# Initialize dask in order to allocate jobs
+# Initialize singleton classes
+cfg = Config()
+fl = FileLogger()
 dm = DaskManager()
+
+
+# Data loading
+def load_eval_data():
+    return Benchmarks(is_training=False)
+
+
+def load_main_exec_data() -> Optional[dict[str, dict[str, int]]]:
+    return None
+
+
+eval_data = dm.run_and_register_to_workers(load_eval_data)
+main_exec_data = dm.run_and_register_to_workers(load_main_exec_data)
+
+# Initialize execution singleton
+Execution(fl.exec_data_file, main_exec_data)
+
+# Prepare logging
+print_info(f"Config: {cfg}")
+print_success(f'Logging to: {fl.run_dir}')
 
 # Setup torch
 torch.set_grad_enabled(False)
 torch.set_num_threads(4)
-
-# Load data
-eval_data = dm.load_eval_data(Benchmarks(is_training=False))
-
-# Prepare logging
-fl = FileLogger()
-print_info(f"Config: {cfg}")
-print_success(f'Logging to: {fl.run_dir}')
-
-# Prepare the temporary execution database
-random_str = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
-tmp_exec_data_file = f'tmp-debug/exec/{random_str}.json' if cfg.debug else f'tmp/exec/{random_str}.json'
-if not os.path.exists(tmp_exec_data_file):
-    os.makedirs(os.path.dirname(tmp_exec_data_file), exist_ok=True)
-    with open(tmp_exec_data_file, "w") as file:
-        json.dump({}, file)
-print_info(f"Temporary execution data saved to: {tmp_exec_data_file}")
-
-if cfg.exec_data_file:
-    print_info(f"Global execution data located in: {cfg.exec_data_file}")
 
 # Initiate model
 model = Model().to(device)
@@ -63,11 +75,18 @@ eval_files = [f for f in os.listdir(eval_dir) if f.endswith('.pt')]
 # Order files
 eval_files.sort(key=lambda x: int(x.split('_')[1].split('.')[0]))
 
-time_ms = 0
-eta = 0
+iter_time_dlt = 0
+elapsed_dlt = 0
+eta_dlt = 0
+overall_start = time()
 models_count = len(eval_files)
 for step, model_file in enumerate(eval_files):
-    print_info(f"- Evaluation {step + 1}/{models_count} ({100 * (step + 1) / models_count:.2f}%) ({time_ms}ms) < ({eta})")
+    print_info(
+        f"- Evaluation {step + 1}/{models_count}"
+        f" ({100 * (step + 1) / models_count:.2f}%)"
+        f" ({iter_time_dlt}/it) ({elapsed_dlt} < {eta_dlt})",
+        flush=True
+    )
 
     main_start = time()
 
@@ -77,8 +96,12 @@ for step, model_file in enumerate(eval_files):
         continue
     model.load_state_dict(torch.load(model_path, weights_only=True))
 
-    evaluate_benchmarks(model, eval_data, tmp_exec_data_file)
+    evaluate_benchmarks(model, eval_data)
 
     main_end = time()
-    time_ms = int((main_end - main_start) * 1000)
-    eta = datetime.timedelta(seconds=time_ms * (models_count - step - 1) / 1000)
+    iter_time = main_end - main_start
+    elapsed = main_end - overall_start
+    eta = elapsed * (cfg.nb_iterations - step - 1) / (step + 1)
+    iter_time_dlt = timedelta(seconds=iter_time)
+    elapsed_dlt = timedelta(seconds=int(elapsed))
+    eta_dlt = timedelta(seconds=int(eta))

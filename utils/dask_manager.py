@@ -16,12 +16,16 @@ if TYPE_CHECKING:
     from dask_jobqueue.slurm import SLURMJob
     from rl_autoschedular.state import OperationState
 
+ENABLED = True
 T = TypeVar('T')
 
 
 class DaskManager(metaclass=Singleton):
 
     def __init__(self):
+        if not ENABLED:
+            return
+
         enable_dashboard = True
         cluster = SLURMCluster(
             job_name='dask',
@@ -67,18 +71,27 @@ class DaskManager(metaclass=Singleton):
 
     @property
     def workers_names(self) -> list[str]:
+        if not ENABLED:
+            return []
         return list(self.cluster.workers.keys())
 
     @property
     def num_workers(self) -> int:
+        if not ENABLED:
+            return 0
         return len(self.cluster.workers)
 
     def map_states(
         self,
         func: Callable[['OperationState', str, 'Benchmarks', Optional[dict[str, dict[str, int]]]], T],
         states: list['OperationState'],
+        benchs: 'Benchmarks',
+        main_exec_data: Optional[dict[str, dict[str, int]]],
         training: bool,
     ) -> list[Optional[T]]:
+        if not ENABLED or self.num_workers == 0:
+            return [func(s, FileLogger().exec_data_file, benchs, main_exec_data) for s in states]
+
         # Prepare states for submission
         states_count = len(states)
         ordered_states = list(zip(range(states_count), states))
@@ -133,6 +146,9 @@ class DaskManager(metaclass=Singleton):
         return results
 
     def run_and_register_to_workers(self, func: Callable[[], T]):
+        if not ENABLED or self.num_workers == 0:
+            return func()
+
         key = func.__name__
         if key in self.persistent_funcs:
             return func()

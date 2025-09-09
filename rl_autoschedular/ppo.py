@@ -99,7 +99,7 @@ def collect_trajectory(data: Benchmarks, model: Model, step: int):
 
     traj_end_sampling = time()
 
-    results = dm.map_states(__execute_states, states, training=True)
+    results = dm.map_states(__execute_states, states, data, exe.main_exec_data, training=True)
 
     traj_end_exec_states = time()
 
@@ -328,7 +328,7 @@ def evaluate_benchmarks(model: Model, data: Benchmarks):
                     states[i] = next_op_state
                     observations[i] = Observation.from_state(next_op_state)
 
-    results = dm.map_states(__execute_states, states, training=False)
+    results = dm.map_states(__execute_states, states, data, exe.main_exec_data, training=False)
     results = [
         (*e.failed_seq(s.transformation_history), float(dm.batch_timeout))
         if not r else r
