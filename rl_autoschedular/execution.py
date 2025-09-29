@@ -1,16 +1,20 @@
 import os
+import ctypes
+from statistics import median
 import numpy as np
-from mlir.ir import Context, Module
-from mlir.execution_engine import ExecutionEngine, ctypes
-from mlir.runtime import get_ranked_memref_descriptor
+from mlir.ir import Context, Module, MemRefType, IntegerType, F64Type, F32Type
+from mlir.execution_engine import ExecutionEngine
+from mlir.runtime import get_ranked_memref_descriptor, make_nd_memref_descriptor, as_ctype, ranked_memref_to_numpy
 from mlir.passmanager import PassManager
-from typing import Optional, overload
+from mlir.dialects.func import FuncOp
+from typing import TYPE_CHECKING, Optional, overload
 from rl_autoschedular.transforms import transform_bufferize_and_lower_v
-from rl_autoschedular.actions import Action
 from utils.bindings_process import BindingsProcess
 from utils.singleton import Singleton
 import json
-import re
+
+if TYPE_CHECKING:
+    from rl_autoschedular.actions import Action
 
 
 class Execution(metaclass=Singleton):
@@ -44,7 +48,7 @@ class Execution(metaclass=Singleton):
         self.exec_data_file = exec_data_file
         self.main_exec_data = main_exec_data
 
-    def execute_code(self, code: str, bench_name: str, seq: list[list[Action]]) -> tuple[int, bool, bool]:
+    def execute_code(self, code: str, bench_name: str, seq: list[list['Action']]) -> tuple[int, bool, bool]:
         """Evaluates the given MLIR code with a timeout.
 
         Args:
@@ -52,9 +56,7 @@ class Execution(metaclass=Singleton):
             tmp_exec_data_file (str): The path to the temporary execution data file.
 
         Returns:
-            Optional[float]: the execution time in seconds.
-            Union[Exception, bool]: the assertion result.
-            bool: flag for cache miss
+            tuple[int,bool,bool]: (execution time in nanoseconds, assertion result, cache miss flag)
         """
         code_cache_key = self.get_code_cache_key(seq)
         cache_exec_time = self.__check_execution_cache(bench_name, code_cache_key)
@@ -72,6 +74,9 @@ class Execution(metaclass=Singleton):
             new_data (dict[str, dict[str, int]]): The new data to update.
             tmp_exec_data_file (str): The path to the temporary execution data file.
         """
+        if not self.exec_data_file:
+            raise Exception("Execution data file not provided")
+
         with open(self.exec_data_file, "r") as file:
             data: dict[str, dict[str, int]] = json.load(file)
 
@@ -83,7 +88,7 @@ class Execution(metaclass=Singleton):
         with open(self.exec_data_file, "w") as file:
             json.dump(data, file, indent=4)
 
-    def get_code_cache_key(self, seq: list[list[Action]]) -> str:
+    def get_code_cache_key(self, seq: list[list['Action']]) -> str:
         """Get the code cache key for the given operation state.
 
         Args:
@@ -142,6 +147,10 @@ class Execution(metaclass=Singleton):
             with Context():
                 module = Module.parse(code)
                 pm = PassManager.parse(pass_pipeline)
+
+            inputs, outs_struct = self.__create_params(module)
+            args = self.__convert_to_args(inputs, outs_struct)
+
             pm.run(module.operation)
             execution_engine = ExecutionEngine(
                 module,
@@ -149,21 +158,12 @@ class Execution(metaclass=Singleton):
                 shared_libs=os.getenv("MLIR_SHARED_LIBS", "").split(","),
             )
 
-            inputs = self.__create_inputs(code)
+            times = []
+            for _ in range(5):
+                execution_engine.invoke("main", *args)
+                times.append(outs_struct.delta)
 
-            args = []
-            for input_arg in inputs:
-                args.append(ctypes.pointer(ctypes.pointer(
-                    get_ranked_memref_descriptor(input_arg)
-                )))
-
-            delta_arg = (ctypes.c_int64 * 1)(0)
-            args.append(delta_arg)
-
-            execution_engine.invoke("main", *args)
-            execution_engine.invoke("main", *args)
-
-            return delta_arg[0], True
+            return median(times), True
 
         return BindingsProcess.call(execute_bind_call, timeout=600)
 
@@ -183,6 +183,9 @@ class Execution(metaclass=Singleton):
             return self.main_exec_data[bench_name][cache_key]
 
         # If no hit in the main cache file, check the temporary cache file
+        if not self.exec_data_file:
+            return None
+
         with open(self.exec_data_file, "r") as file:
             data: dict[str, dict[str, int]] = json.load(file)
 
@@ -192,35 +195,75 @@ class Execution(metaclass=Singleton):
         # No hit in both cache files
         return None
 
-    def __create_inputs(self, code) -> list[np.ndarray]:
-        # TODO: Probably could have done it better with module
-        main_pattern = r"func.func @main\(([^)]+)\)"
-        main_params = re.search(main_pattern, code).group(1)
-        main_shapes = [arg.split(':')[1].strip() for arg in main_params.split(',')]
-
-        inputs: list[np.ndarray] = []
-        for shape in main_shapes:
-            assert shape.startswith('memref<') or shape.startswith('tensor<'), f'unexpected shape {shape}'
-            *np_shape, dtype = shape.replace('memref<', '').replace('tensor<', '').replace('>', '').split('x')
-            assert dtype[0] in ['f', 'i'] and dtype[1:] in ['32', '64'], f'unexpected dtype {dtype}'
-            match dtype[0]:
-                case 'f':
-                    match dtype[1:]:
-                        case '32':
-                            np_dtype = np.float32
-                        case '64':
-                            np_dtype = np.float64
-                case 'i':
-                    match dtype[1:]:
-                        case '32':
+    def __create_params(self, module: Module):
+        def __get_dtype(memref_type: MemRefType):
+            et = memref_type.element_type
+            match et:
+                case F32Type():
+                    np_dtype = np.float32
+                case F64Type():
+                    np_dtype = np.float64
+                case IntegerType():
+                    match et.width:
+                        case 32:
                             np_dtype = np.int32
-                        case '64':
+                        case 64:
                             np_dtype = np.int64
-            np_shape = list(map(int, np_shape))
-            # if len(np_shape) > 0:
-            #     inputs.append((np.random.rand(*np_shape) * 100).astype(np_dtype))
-            # else:
-            #     inputs.append(np.array(np.random.rand() * 100, dtype=np_dtype))
-            inputs.append(np.zeros(np_shape, dtype=np_dtype))
+                        case _:
+                            raise Exception(f'unexpected element type {et}')
+                case _:
+                    raise Exception(f'unexpected element type {et}')
+            return np_dtype
 
-        return inputs
+        # Get the main function
+        main_func = next(op for op in module.body.operations if isinstance(op, FuncOp) and (op.name.value == 'main'))
+
+        # Create input params
+        inputs: list[np.ndarray] = []
+        for input_type in main_func.type.inputs:
+            assert isinstance(input_type, MemRefType), f'unexpected input type {input_type}'
+            in_arr = np.zeros(input_type.shape, dtype=__get_dtype(input_type))
+            inputs.append(in_arr)
+
+        # Create results arg
+        res_types = main_func.type.results
+
+        exec_time_type = res_types[-1]
+        if not (isinstance(exec_time_type, IntegerType) and exec_time_type.width == 64):
+            raise Exception(f'unexpected exec time type {exec_time_type}')
+
+        out_fields: list[tuple[str, type[ctypes.Structure]]] = []
+        for i, out_type in enumerate(res_types[:-1]):
+            assert isinstance(out_type, MemRefType), f'unexpected output type {out_type}'
+            descriptor_type = make_nd_memref_descriptor(out_type.rank, as_ctype(__get_dtype(out_type)))
+            out_fields.append((f'out_{i}', descriptor_type))
+
+        class OutputsStructure(ctypes.Structure):
+            _fields_ = [
+                *out_fields,
+                ("delta", ctypes.c_int64)
+            ]
+            delta: int
+
+            def get_results(self):
+                res: list[np.ndarray] = []
+                for field_name, _ in out_fields:
+                    out_array = ranked_memref_to_numpy([getattr(self, field_name)])
+                    res.append(out_array.copy())
+                return res
+
+        outputs_structure = OutputsStructure()
+        for i, (field_name, field_type) in enumerate(out_fields):
+            out_arg = field_type()
+            setattr(outputs_structure, field_name, out_arg)
+
+        return inputs, outputs_structure
+
+    def __convert_to_args(self, inputs: list[np.ndarray], outputs_structure: ctypes.Structure):
+        args: list[ctypes._Pointer[ctypes._Pointer[ctypes.Structure]]] = []
+        args.append(ctypes.pointer(ctypes.pointer(outputs_structure)))
+        for in_arr in inputs:
+            args.append(ctypes.pointer(ctypes.pointer(
+                get_ranked_memref_descriptor(in_arr)
+            )))
+        return args

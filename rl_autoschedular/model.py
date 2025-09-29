@@ -7,7 +7,7 @@ from rl_autoschedular.observation import OpFeatures, ActionHistory, ProducerOpFe
 from utils.config import Config
 
 
-ACTIVATION = nn.ReLU if Config().activation == 'relu' else nn.Tanh
+ACTIVATION = nn.ReLU
 
 
 class HiearchyModel(nn.Module):
@@ -149,14 +149,11 @@ class PolicyModel(nn.Module):
             if not output_size:
                 self.heads.append(None)
                 continue
-            head = nn.Linear(512, output_size)
-            if Config().new_architecture:
-                head = nn.Sequential(
-                    nn.Linear(512, 512),
-                    ACTIVATION(),
-                    head
-                )
-            self.heads.append(head)
+            self.heads.append(nn.Sequential(
+                nn.Linear(512, 512),
+                ACTIVATION(),
+                nn.Linear(512, output_size)
+            ))
 
     def __call__(self, obs: torch.Tensor) -> list[Optional[Distribution]]:
         return super().__call__(obs)

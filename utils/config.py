@@ -1,6 +1,6 @@
 from typing import Literal, Any
-from utils.singleton import Singleton
 from typeguard import check_type, CollectionCheckStrategy
+from .singleton import Singleton
 import json
 import os
 
@@ -26,20 +26,12 @@ class Config(metaclass=Singleton):
     """The exploration method"""
     init_epsilon: float
     """The initial epsilon value for epsilon greedy exploration"""
-    new_architecture: bool
-    """Flag to indicate if the new architecture should be used or not"""
     normalize_bounds: Literal['none', 'max', 'log']
     """Flag to indicate if the upper bounds in the input should be normalized or not"""
     normalize_adv: Literal['none', 'standard', 'max-abs']
     """The advantage normalization method"""
-    sparse_reward: bool
-    """Flag to enable sparse reward"""
-    split_ops: bool
-    """Flag to enable splitting operations into separate benchmarks"""
     reuse_experience: Literal['none', 'random', 'topk']
     """Strategy for experience replay"""
-    activation: Literal["relu", "tanh"]
-    """The activation function to use in the network"""
     benchmarks_folder_path: str
     """Path to the benchmarks folder. Can be empty if optimization mode is set to "last"."""
     bench_count: int

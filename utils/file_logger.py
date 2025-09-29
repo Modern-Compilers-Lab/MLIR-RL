@@ -1,5 +1,5 @@
-from utils.singleton import Singleton
-from utils.config import Config
+from .singleton import Singleton
+from .config import Config
 import json
 import os
 

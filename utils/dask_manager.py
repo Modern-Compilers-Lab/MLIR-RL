@@ -6,7 +6,7 @@ from distributed import Future, as_completed
 from dask.distributed import Client
 from dask_jobqueue import SLURMCluster
 
-from utils.file_logger import FileLogger
+from .file_logger import FileLogger
 from .singleton import Singleton
 from .log import print_alert, print_error, print_info, print_success
 import os
@@ -36,7 +36,6 @@ class DaskManager(metaclass=Singleton):
             memory='100GB',
             walltime='7-00',
             job_extra_directives=[
-                '--reservation=c2',
                 '--nodes=1',
                 '--exclusive',
             ],
