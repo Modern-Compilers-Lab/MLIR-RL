@@ -27,6 +27,7 @@ for code_file in files_tqdm:
         et, _, _ = exec.execute_code(code, bench_name, [])
     except Exception as e:
         print(f"Failed to execute {bench_name}: {e}")
+        et = -1
     output_data[bench_name] = et
 
     with open('base_exec_times.json', 'w') as f:

@@ -65,6 +65,7 @@ def collect_trajectory(data: Benchmarks, model: Model, step: int):
         # Sample states that are not terminal yet
         obss = torch.cat([observations[i] for i, _ in active_states])
         actions_index, actions_bev_log_p, entropies = model.sample(obss.to(device), eps=eps)
+        actions_index, actions_bev_log_p, entropies = actions_index.cpu(), actions_bev_log_p.cpu(), entropies.cpu()
         fl['train/entropy'].extend(entropies.tolist())
 
         # Record data and update states
@@ -310,6 +311,7 @@ def evaluate_benchmarks(model: Model, data: Benchmarks):
         # Sample states that are not terminal yet
         obss = torch.cat([observations[i] for i, _ in active_states])
         actions_index, _, entropies = model.sample(obss.to(device), greedy=True)
+        actions_index, entropies = actions_index.cpu(), entropies.cpu()
         fl['eval/entropy'].extend(entropies.tolist())
 
         # Record data and update states

@@ -263,17 +263,17 @@ module attributes {{transform.with_named_sequence}} {{
   transform.named_sequence @__transform_main(%arg1: !transform.any_op {{transform.readonly}}) {{
     %op_operation = transform.structured.match attributes{{tag = "{operation_tag}"}} in %arg1 : (!transform.any_op) -> !transform.any_op
 
-    %a, %b = transform.structured.convert_conv2d_to_img2col %op_operation : (!transform.any_op) -> (!transform.any_op, !transform.any_op)
-    %a_tag = transform.param.constant "img2col_producer" -> !transform.any_param
-    transform.annotate %a "tag" = %a_tag : !transform.any_op, !transform.any_param
-
-    %matmul_op = transform.get_producer_of_operand %b[0]: (!transform.any_op) -> !transform.any_op
-    %matmul_op_tag = transform.param.constant "{operation_tag}" -> !transform.any_param
-    transform.annotate %matmul_op "tag" = %matmul_op_tag : !transform.any_op, !transform.any_param
+    transform.structured.convert_conv2d_to_img2col %op_operation : (!transform.any_op) -> (!transform.any_op, !transform.any_op)
 
     transform.yield
   }}
 }}"""
+    # // %a_tag = transform.param.constant "img2col_producer" -> !transform.any_param
+    # // transform.annotate %a "tag" = %a_tag : !transform.any_op, !transform.any_param
+
+    # // %matmul_op = transform.get_producer_of_operand %b[0]: (!transform.any_op) -> !transform.any_op
+    # // %matmul_op_tag = transform.param.constant "{operation_tag}" -> !transform.any_param
+    # // transform.annotate %matmul_op "tag" = %matmul_op_tag : !transform.any_op, !transform.any_param
 
     return __run_transform_code(code, transform_code)
 
@@ -412,6 +412,32 @@ def transform_bufferize_and_lower_v(code: str):
     return __run_transform_code(code, transform_code)
 
 
+def transform_pre_vec(code: str, operation_tag: str):
+    """Eliminate accesses with the constant 1 by adding subviews
+    which enables more vectorization.
+
+    Args:
+        code (str): The code to apply the transformation to.
+        operation_tag (str): The tag of the operation to apply the transformation to.
+
+    Returns:
+        str: The code after applying the transformation.
+    """
+    code_process = subprocess.run(
+        f'{os.getenv("PRE_VEC_BIN_PATH")} - {operation_tag}',
+        shell=True,
+        input=code.encode('utf-8'),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+    code = code_process.stdout.decode('utf-8')
+
+    if code_process.returncode != 0:
+        raise Exception(code_process.stderr.decode('utf-8'))
+
+    return code
+
+
 def __run_transform_code(code: str, transform_code: str):
     def transform_bind_call():
         with Context():
@@ -421,4 +447,4 @@ def __run_transform_code(code: str, transform_code: str):
 
         return str(module)
 
-    return BindingsProcess.call(transform_bind_call, timeout=10)
+    return BindingsProcess.call(transform_bind_call, timeout=60)

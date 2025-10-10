@@ -64,7 +64,7 @@ class DaskManager(metaclass=Singleton):
         self.client = client
         print_success("Dask client connected!", f"  Dashboard at: {client.dashboard_link}" if enable_dashboard else "")
 
-        self.batch_timeout = 200
+        self.batch_timeout = 300
         self.persistent_funcs: dict[str, Callable[[], Any]] = {}
         self.persistent_futures: dict[str, Future] = {}
 
@@ -105,7 +105,7 @@ class DaskManager(metaclass=Singleton):
             future_to_worker[future] = worker_name
 
         # Process futures as they finish
-        ac = as_completed(future_to_worker.keys(), with_results=True, timeout=self.batch_timeout)
+        ac = as_completed(future_to_worker.keys(), with_results=True, timeout=self.batch_timeout if training else None)
         try:
             for future, indexed_result in ac:
                 future: Future

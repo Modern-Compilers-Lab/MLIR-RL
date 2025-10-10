@@ -1,4 +1,4 @@
-from typing import Literal, Any
+from typing import Literal, Any, Optional
 from typeguard import check_type, CollectionCheckStrategy
 from .singleton import Singleton
 import json
@@ -42,11 +42,11 @@ class Config(metaclass=Singleton):
     """Number of iterations"""
     ppo_epochs: int
     """Number of epochs for PPO"""
-    ppo_batch_size: int
+    ppo_batch_size: Optional[int]
     """Batch size for PPO"""
     value_epochs: int
     """Number of epochs for value update"""
-    value_batch_size: int
+    value_batch_size: Optional[int]
     """Batch size for value update"""
     value_coef: float
     """Value coefficient"""

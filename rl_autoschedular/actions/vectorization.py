@@ -1,7 +1,7 @@
 from utils.config import Config
 from .base import Action
 from rl_autoschedular.transforms import (
-    transform_vectorize, transform_tile,
+    transform_pre_vec, transform_vectorize, transform_tile,
     transform_decompose, transform_transpose_conv_2d
 )
 from rl_autoschedular.state import OperationFeatures, OperationState, OperationType
@@ -60,22 +60,26 @@ class Vectorization(Action):
         if requires_decompose:
             self.preprocessing.append(lambda c: transform_tile(c, self.operation_tag, decompose_tile_sizes))
             self.preprocessing.append(lambda c: transform_decompose(c, self.operation_tag))
+        self.preprocessing.append(lambda c: transform_pre_vec(c, self.operation_tag))
 
     @classmethod
     def is_allowed(cls, state):
-        if not state.operation_features.vectorizable:
-            return False
-
         op_iter_space = 1
         for nested_loop in state.operation_features.nested_loops:
             op_iter_space *= nested_loop.upper_bound
         return op_iter_space <= Config().vect_size_limit
 
     def _apply_ready(self, code):
-        for pre in self.preprocessing:
-            code = pre(code)
+        original_code = code
 
-        return transform_vectorize(code, self.operation_tag)
+        # Special case: In vectorization failures can happen
+        # due to MLIR's preconditions, so we can ignore them
+        try:
+            for pre in self.preprocessing:
+                code = pre(code)
+            return transform_vectorize(code, self.operation_tag)
+        except Exception:
+            return original_code
 
     @classmethod
     def __requires_transpose(cls, operation_features: OperationFeatures) -> bool:

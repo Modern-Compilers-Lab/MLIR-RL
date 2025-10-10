@@ -1,6 +1,6 @@
 import os
 import ctypes
-from statistics import median
+import ctypes.util
 import numpy as np
 from mlir.ir import Context, Module, MemRefType, IntegerType, F64Type, F32Type
 from mlir.execution_engine import ExecutionEngine
@@ -133,6 +133,7 @@ class Execution(metaclass=Singleton):
                 convert-openmp-to-llvm,
                 convert-vector-to-llvm,
                 convert-math-to-llvm,
+                convert-math-to-libm,
                 finalize-memref-to-llvm,
                 convert-func-to-llvm,
                 convert-index-to-llvm,
@@ -158,12 +159,15 @@ class Execution(metaclass=Singleton):
                 shared_libs=os.getenv("MLIR_SHARED_LIBS", "").split(","),
             )
 
-            times = []
-            for _ in range(5):
-                execution_engine.invoke("main", *args)
-                times.append(outs_struct.delta)
+            try:
+                for _ in range(2):
+                    execution_engine.invoke("main", *args)
+                    # If output tensors are needed call `get_results` before `free_outputs`
+                    outs_struct.free_outputs()
+            finally:
+                outs_struct.free_outputs()
 
-            return median(times), True
+            return outs_struct.delta, True
 
         return BindingsProcess.call(execute_bind_call, timeout=600)
 
@@ -195,7 +199,8 @@ class Execution(metaclass=Singleton):
         # No hit in both cache files
         return None
 
-    def __create_params(self, module: Module):
+    @staticmethod
+    def __create_params(module: Module):
         def __get_dtype(memref_type: MemRefType):
             et = memref_type.element_type
             match et:
@@ -252,6 +257,17 @@ class Execution(metaclass=Singleton):
                     res.append(out_array.copy())
                 return res
 
+            def free_outputs(self):
+                for field_name, mem_desc_T in out_fields:
+                    memref_descriptor: ctypes.Structure = getattr(self, field_name)
+                    allocated_ptr: Optional[ctypes.c_longlong] = getattr(memref_descriptor, 'allocated', None)
+
+                    if allocated_ptr:
+                        address = ctypes.cast(allocated_ptr, ctypes.c_void_p)
+                        if address.value:
+                            Execution.free_pointer(address)
+                            setattr(self, field_name, mem_desc_T())
+
         outputs_structure = OutputsStructure()
         for i, (field_name, field_type) in enumerate(out_fields):
             out_arg = field_type()
@@ -259,7 +275,8 @@ class Execution(metaclass=Singleton):
 
         return inputs, outputs_structure
 
-    def __convert_to_args(self, inputs: list[np.ndarray], outputs_structure: ctypes.Structure):
+    @staticmethod
+    def __convert_to_args(inputs: list[np.ndarray], outputs_structure: ctypes.Structure):
         args: list[ctypes._Pointer[ctypes._Pointer[ctypes.Structure]]] = []
         args.append(ctypes.pointer(ctypes.pointer(outputs_structure)))
         for in_arr in inputs:
@@ -267,3 +284,19 @@ class Execution(metaclass=Singleton):
                 get_ranked_memref_descriptor(in_arr)
             )))
         return args
+
+    @staticmethod
+    def free_pointer(ptr: ctypes.c_void_p):
+        # Find the C standard library
+        libc_path = ctypes.util.find_library('c')
+        if not libc_path:
+            raise RuntimeError("C standard library not found.")
+        libc = ctypes.CDLL(libc_path)
+
+        # Define the signature for free
+        free = libc.free
+        free.argtypes = [ctypes.c_void_p]
+        free.restype = None
+
+        # Call free
+        free(ptr)

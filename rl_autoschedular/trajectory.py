@@ -1,6 +1,6 @@
 import torch
 from torch.utils.data import Dataset, DataLoader, Sampler, RandomSampler
-from typing import Iterator
+from typing import Iterator, Optional
 from rl_autoschedular import device
 from rl_autoschedular.model import HiearchyModel as Model
 from time import time
@@ -193,7 +193,7 @@ class TrajectoryData(Dataset):
 
         return self_other
 
-    def loader(self, batch_size: int, num_trajectories: int):
+    def loader(self, batch_size: Optional[int], num_trajectories: int):
         """Create a DataLoader for the trajectory.
 
         Args:
@@ -204,6 +204,8 @@ class TrajectoryData(Dataset):
             DataLoader: The DataLoader for the trajectory.
         """
         num_samples = sum(self.sizes[-num_trajectories:])
+        if batch_size is None:
+            batch_size = num_samples
         match Config().reuse_experience:
             case 'topk':
                 sampler = TopKAdvantageSampler(self, num_samples)
@@ -252,10 +254,11 @@ class TrajectoryData(Dataset):
             model (Model): The model to use for updating the attributes.
         """
         start = time()
-        actions_old_log_p, values, _ = model(self.obs.to(device), self.actions_index)
-        next_values = model.value_model(self.next_obs.to(device))
 
-        self.actions_old_log_p, self.values, self.next_values = actions_old_log_p.cpu(), values.cpu(), next_values.cpu()
+        actions_old_log_p, values, _ = model(self.obs.to(device), self.actions_index.to(device))
+        self.actions_old_log_p, self.values = actions_old_log_p.cpu(), values.cpu()
+
+        self.next_values = model.value_model(self.next_obs.to(device)).cpu()
 
         self.__compute_rho()
         self.__compute_returns()

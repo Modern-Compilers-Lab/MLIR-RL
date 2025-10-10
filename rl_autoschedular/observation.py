@@ -28,7 +28,7 @@ class OpFeatures(ObservationPart):
 
     @classmethod
     def size(cls) -> int:
-        return len(OperationType) + L + L + 1 + LS * LSD * L + LS * LSD * L + len(cls.arith_ops)
+        return len(OperationType) + L + L + LS * LSD * L + LS * LSD * L + len(cls.arith_ops)
 
     @classmethod
     def from_state(cls, state: OperationState) -> torch.Tensor:
@@ -56,8 +56,8 @@ class OpFeatures(ObservationPart):
             nested_loops[i] = ub
             iterator_types[i] = nested_loop.iterator_type == IteratorType.Parallel
 
-        # Vectorizable
-        vectorizable = torch.tensor([op_features.vectorizable])
+        # # Vectorizable
+        # vectorizable = torch.tensor([op_features.vectorizable])
 
         # load access matrices:
         load_access_matrices = torch.zeros((LS, LSD, L))
@@ -102,7 +102,7 @@ class OpFeatures(ObservationPart):
             op_type,
             nested_loops,
             iterator_types,
-            vectorizable,
+            # vectorizable,
             load_access_matrices.reshape(-1),
             store_access_matrices.reshape(-1),
             operations_count
