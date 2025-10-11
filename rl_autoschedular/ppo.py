@@ -1,144 +1,133 @@
-from statistics import mean
+import numpy as np
 import torch
 from rl_autoschedular.env import Env
 from rl_autoschedular.model import HiearchyModel as Model
-from rl_autoschedular.state import OperationState
 from rl_autoschedular.trajectory import TrajectoryCollector, TrajectoryData
 from rl_autoschedular.observation import Observation, NumLoops
 from rl_autoschedular.actions import ActionSpace
-from rl_autoschedular.benchmarks import Benchmarks
-from rl_autoschedular.execution import Execution
+from rl_autoschedular import config as cfg
+from rl_autoschedular import file_logger as fl , offline_data_collector
 from rl_autoschedular import device
-from utils.config import Config
-from utils.file_logger import FileLogger
-from utils.log import print_error, print_info, print_success
-from utils.dask_manager import DaskManager
+from utils.log import print_error
 from tqdm import trange
-from time import time
-from typing import Optional
+import time
 
 
-def collect_trajectory(data: Benchmarks, model: Model, step: int):
-    """Collect a trajectory using the model and the environment.
+def collect_trajectory(model: Model, env: Env, step: int):
+    """Collect a trajectory using the model and the environment (on-policy for PPO).
 
     Args:
-        model (MyModel): The model to use.
-        env (Env): The environment to use.
-        step (int): The current step of the main loop
-        tmp_exec_data_file (str): The path to the temporary execution data file.
+        model (Model): The policy/value model.
+        env (Env): The environment.
+        step (int): Current training step.
 
     Returns:
-        TrejectoryData: The collected trajectory.
+        TrajectoryData: The collected trajectory.
     """
-    dm = DaskManager()
-    fl = FileLogger()
-    exe = Execution()
-    cfg = Config()
+    tc = TrajectoryCollector()
+    
+    env_time = 0.0  # Time spent in environment steps
 
     eps = None
-    if 'epsilon' in cfg.exploration:
+    if 'epsilon' in cfg.exploration:  # optional exploration schedule
         ratio = step / cfg.nb_iterations
         final_eps = 0.001
         eps = final_eps + (cfg.init_epsilon - final_eps) * (1 - ratio)
+    
+    # store rewards and entropies to log average for the model accross the benchmarks later    
+    all_speedups = []
+    all_entropies = []
 
-    print_info(f"Trajectory collection using {dm.num_workers} workers...", end=' ')
-    traj_start = time()
+    for _ in trange(cfg.bench_count, desc='Trajectory'):
+        
+        t0 = time.perf_counter()
+        state = env.reset()
+        env_time += time.perf_counter() - t0
+        bench_done = False
+        speedup = None
+        
+        # store rewards and entropies to log average for the current benchmark later
+        bench_rewards, bench_entropies = [], []
 
-    # Prepare benchmarks to explore
-    indices = torch.randperm(len(data))[:cfg.bench_count].long().tolist()
-    if len(indices) < cfg.bench_count:
-        indices = (indices * cfg.bench_count)[:cfg.bench_count]
-    envs: list[Env] = []
-    states: list[OperationState] = []
-    observations: list[torch.Tensor] = []
-    tcs: list[TrajectoryCollector] = []
-    for idx in indices:
-        env = Env()
-        state = env.reset(data, idx)
-        envs.append(env)
-        states.append(state)
-        observations.append(Observation.from_state(state))
-        tcs.append(TrajectoryCollector())
+        bench_name = state.bench_name
 
-    while (active_states := [(i, s) for i, s in enumerate(states) if not s.terminal]):
-        # Sample states that are not terminal yet
-        obss = torch.cat([observations[i] for i, _ in active_states])
-        actions_index, actions_bev_log_p, entropies = model.sample(obss.to(device), eps=eps)
-        fl['train/entropy'].extend(entropies.tolist())
 
-        # Record data and update states
-        for (i, state), obs, action_index, action_bev_log_p in zip(active_states, obss, actions_index, actions_bev_log_p):
-            obs = obs.unsqueeze(0)
+        while not bench_done:
+            obs = Observation.from_state(state)
 
-            # Get action and use it to get next state
-            action = ActionSpace.action_by_index(action_index, state)
-            states[i] = next_state = envs[i].step(state, action)
-            observations[i] = next_obs = Observation.from_state(next_state)
+            # Sample action and log-prob from *current policy*
+            action_index, action_log_p, entropy = model.sample(obs.to(device), eps=eps)    
+            
+            assert action_index.size(0) == 1 and action_log_p.size(0) == 1
+            action = ActionSpace.action_by_index(action_index[0], state)
 
-            # If the benchmark is not done yet, keep next operation state instead
-            done = False
-            if next_state.terminal:
-                next_op_state = envs[i].get_next_op_state(next_state)
-                if next_op_state is not None:
-                    states[i] = next_op_state
-                    observations[i] = Observation.from_state(next_op_state)
-                else:
-                    done = True
+            # Step environment
+            t0 = time.perf_counter()
+            next_state, reward, op_done, speedup = env.step(state, action)
+            env_time += time.perf_counter() - t0
+            next_obs = Observation.from_state(next_state)
+            
 
-            # Record available data
-            tcs[i].append((
+            if op_done:
+                t0 = time.perf_counter()
+                next_state, bench_done = env.get_next_op_state(next_state)
+                env_time += time.perf_counter() - t0
+
+
+            tc.append((
                 Observation.get_part(obs, NumLoops).long().item(),
-                action_index.unsqueeze(0),
+                action_index,
                 obs,
                 next_obs,
-                action_bev_log_p.item(),
-                0.0,  # This will be filled after execution
-                done
+                reward,
+                bench_done,
             ))
+            
+            if cfg.collect_offline_data:
+                offline_data_collector.add_transition(
+                    obs,
+                    action_index,
+                    next_obs,
+                    reward,
+                    bench_done
+                )
+            
 
-    traj_end_sampling = time()
-    sampling_time_ms = int((traj_end_sampling - traj_start) * 1000)
+            # Accumulate metrics
+            bench_rewards.append(reward)
+            bench_entropies.append(entropy.item())
+            state = next_state
+            
+         # === Per-benchmark logging ===
+        mean_reward = float(np.mean(bench_rewards)) if bench_rewards else 0.0
+        mean_entropy = float(np.mean(bench_entropies)) if bench_entropies else 0.0
+        
+        all_speedups.append(speedup)
+        all_entropies.extend(bench_entropies)
+        
+        
+        bench_metrics = {
+            "mean_reward": mean_reward,
+            "mean_entropy": mean_entropy,
+            "final_speedup": speedup if speedup is not None else 0.0,
+        }
+        
+        fl.log_scalars(f"train/{bench_name}", bench_metrics, step)
 
-    results = dm.map_states(__execute_states, states, training=True)
-    all_rewards, all_speedups, all_exec_times, cache_misses, worker_times = tuple(zip(*results))
-    cache_miss_rate = mean(cache_misses) * 100
-    sequential_time = sum(worker_times)
-    new_cache_data: dict[str, dict[str, int]] = {}
-    for tc, state, rewards, speedup, exec_time in zip(tcs, states, all_rewards, all_speedups, all_exec_times):
-        # Update trajectory
-        tc.rewards = rewards
-        # Log metrics
-        fl['train/reward'].extend(rewards)
-        fl['train/final_speedup'].append(speedup)
-        # Get new cache data
-        if exec_time is not None:
-            cache_key = exe.get_code_cache_key(state.transformation_history)
-            if state.bench_name not in new_cache_data:
-                new_cache_data[state.bench_name] = {}
-            new_cache_data[state.bench_name][cache_key] = exec_time
+     # === Global logging (across all benchmarks) ===
+    if all_speedups:
+        fl.log_scalar("train/average_speedup", float(np.mean(all_speedups)), step)
+    if all_entropies:
+        fl.log_scalar("train/average_entropy", float(np.mean(all_entropies)), step)
+        
+    if cfg.collect_offline_data:
+        offline_data_collector.flush()
 
-    tc = sum(tcs, TrajectoryCollector())
-    exe.update_execution_cache(new_cache_data)
-
-    traj_end = time()
-    exec_time_ms = int((traj_end - traj_end_sampling) * 1000)
-    distribted_speedup = sequential_time / exec_time_ms
-    time_ms = int((traj_end - traj_start) * 1000)
-    print_info(
-        (
-            f"{time_ms}ms"
-            f", sampling: {sampling_time_ms}ms"
-            f", exec: {exec_time_ms}ms"
-            f", speedup: {distribted_speedup:.2f}x"
-            f", cache miss rate: {cache_miss_rate:.2f}%"
-        ), add_label=False
-    )
-
-    return tc.to_trajectory()
+    return tc.to_trajectory() , env_time
 
 
-def ppo_update(trajectory: TrajectoryData, model: Model, optimizer: torch.optim.Optimizer):
-    """Update the model using PPO.
+def ppo_update(trajectory: TrajectoryData, model: Model, optimizer: torch.optim.Optimizer,step):
+    """Update the model using PPO (on-policy).
 
     Args:
         trajectory (TrajectoryData): The trajectory to use.
@@ -146,32 +135,44 @@ def ppo_update(trajectory: TrajectoryData, model: Model, optimizer: torch.optim.
         optimizer (torch.optim.Optimizer): The optimizer to use.
 
     Returns:
-        float: The average loss.
+        float: The average loss across updates.
     """
-    fl = FileLogger()
-    cfg = Config()
-
     trajectory.update_attributes(model)
-    data_loader = trajectory.loader(cfg.ppo_batch_size, 1)
+
+    avg_loss = 0.0
+    total_steps = 0
+    
+    
+    metrics_accum = {
+        "policy_loss": 0.0,
+        "clip_frac": 0.0,
+        "clip_factor": 0.0,
+        "approx_kl": 0.0,
+        "value_loss": 0.0,
+        "mean_entropy": 0.0,
+    }
+    metrics_count = 0
 
     ppo_trange = trange(cfg.ppo_epochs, desc='PPO Epochs')
     for _ in ppo_trange:
-        for batch in data_loader:
-            batch: list[torch.Tensor] = [e.to(device, non_blocking=True) for e in batch]
+        for batch in trajectory.loader(cfg.ppo_batch_size, shuffle=True):
+            
+            batch = [e.to(device, non_blocking=True) for e in batch]
             (
                 _,
                 actions_index,
                 obs,
                 _,
-                actions_bev_log_p,
-                _, _,
+                _,
+                _,
                 values,
                 _,
                 actions_old_log_p,
-                off_policy_rates,
                 returns,
                 advantages,
             ) = batch
+            
+            # Normalize advantages if configured
             max_abs_adv = advantages.abs().max()
             if cfg.normalize_adv == 'standard' and advantages.size(0) > 1:
                 advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
@@ -179,21 +180,29 @@ def ppo_update(trajectory: TrajectoryData, model: Model, optimizer: torch.optim.
                 advantages = advantages / max_abs_adv
 
             with torch.enable_grad():
-                actions_log_p, new_values, entropies = model(obs, actions_index)
+                # Forward pass through policy and value
+                actions_log_p, new_values, entropy = model(obs, actions_index)
 
-                policy_loss, clip_frac = model.policy_model.loss(actions_log_p, actions_bev_log_p, off_policy_rates, advantages)
+                # PPO policy loss (clipped surrogate)
+                policy_loss, clip_frac = model.policy_model.loss(
+                    actions_log_p, actions_old_log_p, advantages
+                )
                 loss = policy_loss
 
-                if cfg.value_epochs == 0:
+                # Value loss
+                if cfg.value_epochs == 0:  # update value jointly
                     value_loss = model.value_model.loss(new_values, values, returns)
                     loss += cfg.value_coef * value_loss
 
+                # Entropy bonus
                 if 'entropy' in cfg.exploration:
-                    entropy_loss = -entropies.mean()
+                    entropy_loss = -entropy.mean()
                     loss += cfg.entropy_coef * entropy_loss
 
+            # KL estimate
             approx_kl = (actions_old_log_p - actions_log_p).pow(2).mean() / 2
 
+            # Gradient step
             optimizer.zero_grad()
             try:
                 loss.backward()
@@ -201,24 +210,43 @@ def ppo_update(trajectory: TrajectoryData, model: Model, optimizer: torch.optim.
                 optimizer.step()
             except Exception as e:
                 print_error(f'Error during PPO update: {e}')
+                continue
 
             # Logging
+            avg_loss += loss.item() * advantages.size(0)
+            total_steps += advantages.size(0)
+
             ppo_trange.set_postfix({
                 'loss': loss.item(),
                 'policy_loss': policy_loss.item(),
                 'value_loss': value_loss.item() if cfg.value_epochs == 0 else None
             })
-            fl['train_ppo/policy_loss'].append(policy_loss.item())
-            fl['train_ppo/clip_frac'].append(clip_frac.item())
-            fl['train_ppo/clip_factor'].append(clip_factor.item())
-            fl['train_ppo/approx_kl'].append(approx_kl.item())
+            
+            # Accumulate weighted averages
+            
+            bs = advantages.size(0)
+            avg_loss += loss.item() * bs
+            total_steps += bs
+
+            metrics_accum["policy_loss"] += policy_loss.item() * bs
+            metrics_accum["clip_frac"]   += clip_frac.item() * bs
+            metrics_accum["clip_factor"] += clip_factor.item() * bs
+            metrics_accum["approx_kl"]   += approx_kl.item() * bs
             if cfg.value_epochs == 0:
-                fl['train_ppo/value_loss'].append(value_loss.item())
+                metrics_accum["value_loss"] += value_loss.item() * bs
             if 'entropy' in cfg.exploration:
-                fl['train_ppo/entropy_loss'].append(entropy_loss.item())
+                metrics_accum["mean_entropy"] -= entropy_loss.item() * bs
+
+            metrics_count += bs
+            
+    # final averaging
+    final_metrics = {k: (v / metrics_count) for k, v in metrics_accum.items() if v != 0}
+    fl.log_scalars("PPO_Training", final_metrics, step)
 
 
-def value_update(trajectory: TrajectoryData, model: Model, optimizer: torch.optim.Optimizer):
+
+
+def value_update(trajectory: TrajectoryData, model: Model, optimizer: torch.optim.Optimizer,step):
     """Update the value model using the trajectory.
 
     Args:
@@ -226,24 +254,29 @@ def value_update(trajectory: TrajectoryData, model: Model, optimizer: torch.opti
         model (Model): The model to update.
         optimizer (torch.optim.Optimizer): The optimizer to use.
     """
-    fl = FileLogger()
-    cfg = Config()
-
     trajectory.update_attributes(model)
-    data_loader = trajectory.loader(cfg.value_batch_size, 1)
+    
+    metrics_accum = {
+        "loss": 0.0,
+        "clip_factor": 0.0,
+    }
+    total_steps = 0
+
 
     value_trange = trange(cfg.value_epochs, desc='Value Epochs')
     for _ in value_trange:
-        for batch in data_loader:
-            batch: list[torch.Tensor] = [e.to(device, non_blocking=True) for e in batch]
+        for batch in trajectory.loader(cfg.value_batch_size, shuffle=True):
+            
+            batch = [e.to(device, non_blocking=True) for e in batch]
             (
                 _, _,
                 obs,
-                _, _, _, _,
+                _, _,      # next_obs, rewards
+                 _,      # done
                 values,
-                _, _, _,
+                _, _,      # next_values, actions_old_log_p
                 returns,
-                _,
+                _,         # advantages
             ) = batch
             with torch.enable_grad():
                 new_values = model.value_model(obs)
@@ -258,97 +291,108 @@ def value_update(trajectory: TrajectoryData, model: Model, optimizer: torch.opti
             except Exception as e:
                 print_error(f'Error during Value update: {e}')
 
-            # Logging
-            value_trange.set_postfix({'loss': loss.item()})
-            fl['train_value/loss'].append(loss.item())
-            fl['train_value/clip_factor'].append(clip_factor.item())
-
-
-def evaluate_benchmarks(model: Model, data: Benchmarks):
-    """Evaluate the benchmark using the model.
+            # Accumulate weighted averages
+            bs = obs.size(0)
+            metrics_accum["loss"] += loss.item() * bs
+            metrics_accum["clip_factor"] += clip_factor.item() * bs
+            total_steps += bs
+    # === Final averaging ===
+    if total_steps > 0:
+        final_metrics = {k: v / total_steps for k, v in metrics_accum.items()}
+        fl.log_scalars("Value_Training", final_metrics, step)
+            
+@torch.no_grad()       
+def evaluate_benchmarks(model: Model, env: Env, step: int):
+    """Evaluta a the model on the evaluation environment.
 
     Args:
-        model (Model): The model to use.
-        env (Env): The environment to use.
-        tmp_exec_data_file (str): The path to the temporary execution data file.
+        model (Model): The policy/value model.
+        env (Env): The environment.
+        step (int): Current training step.
+
+    Returns:
+        env_time (float): Time spent in environment steps.
     """
-    dm = DaskManager()
-    fl = FileLogger()
-    exe = Execution()
 
-    print_info("Evaluation started...")
-    eval_start = time()
+    
+    env_time = 0.0  # Time spent in environment steps
 
-    # Prepare benchmarks to explore
-    indices = range(len(data))
-    envs: list[Env] = []
-    states: list[OperationState] = []
-    observations: list[torch.Tensor] = []
-    for idx in indices:
-        env = Env()
-        state = env.reset(data, idx)
-        envs.append(env)
-        states.append(state)
-        observations.append(Observation.from_state(state))
+    eps = None
 
-    while (active_states := [(i, s) for i, s in enumerate(states) if not s.terminal]):
-        # Sample states that are not terminal yet
-        obss = torch.cat([observations[i] for i, _ in active_states])
-        actions_index, _, entropies = model.sample(obss.to(device), greedy=True)
-        fl['eval/entropy'].extend(entropies.tolist())
-
-        # Record data and update states
-        for (i, state), obs, action_index in zip(active_states, obss, actions_index):
-            obs = obs.unsqueeze(0)
-
-            # Get action and use it to get next state
-            action = ActionSpace.action_by_index(action_index, state)
-            states[i] = next_state = envs[i].step(state, action)
-            observations[i] = Observation.from_state(next_state)
-
-            # If the benchmark is not done yet, keep next operation state instead
-            if next_state.terminal:
-                next_op_state = envs[i].get_next_op_state(next_state)
-                if next_op_state is not None:
-                    states[i] = next_op_state
-                    observations[i] = Observation.from_state(next_op_state)
-
-    results = dm.map_states(__execute_states, states, training=False)
-    all_rewards, all_speedups, all_exec_times, _, _ = tuple(zip(*results))
-    new_cache_data: dict[str, dict[str, int]] = {}
-    for state, rewards, speedup, exec_time in zip(states, all_rewards, all_speedups, all_exec_times):
-        fl['eval/reward'].extend(rewards)
-        fl['eval/cumulative_reward'].append(sum(rewards))
-        fl['eval/final_speedup'].append(speedup)
-        if exec_time is not None:
-            fl[f'eval/exec_time/{state.bench_name}'].append(exec_time)
-            fl[f'eval/speedup/{state.bench_name}'].append(speedup)
-            cache_key = exe.get_code_cache_key(state.transformation_history)
-            if state.bench_name not in new_cache_data:
-                new_cache_data[state.bench_name] = {}
-            new_cache_data[state.bench_name][cache_key] = exec_time
-
-        print_success("Bench:", state.bench_name)
-        print_info(state.transformation_history)
-
-    if len(all_speedups) > 0:
-        fl['eval/average_speedup'].append(sum(all_speedups) / len(all_speedups))
-    exe.update_execution_cache(new_cache_data)
-
-    eval_end = time()
-    time_ms = int((eval_end - eval_start) * 1000)
-    print_info(f"Evaluation time: {time_ms}ms")
+    
+    # store rewards and entropies to log average for the model accross the benchmarks later    
+    all_speedups = []
+    all_entropies = []
 
 
-def __execute_states(state: OperationState, exec_data_file: str, benchs: Benchmarks, main_exec_data: Optional[dict[str, dict[str, int]]]):
-    worker_start = time()
+    for _ in trange(cfg.bench_count, desc='Trajectory'):
+        
+        t0 = time.perf_counter()
+        state = env.reset()
+        env_time += time.perf_counter() - t0
+        bench_done = False
+        speedup = None
+        
+        # store rewards and entropies to log average for the current benchmark later
+        bench_rewards, bench_entropies = [], []
 
-    Execution(exec_data_file, main_exec_data)
-    env = Env()
-    env.reset(benchs, state.bench_idx)
-    rewards, speedup, new_exec_time, cache_miss = env.apply_and_run_sequence(state.transformation_history)
+        bench_name = state.bench_name
 
-    worker_end = time()
-    worker_time_ms = int((worker_end - worker_start) * 1000)
 
-    return rewards, speedup, new_exec_time, cache_miss, worker_time_ms
+        while not bench_done:
+            obs = Observation.from_state(state)
+
+            # Sample action and log-prob from *current policy*
+            action_index, action_log_p, entropy = model.sample(obs.to(device), eps=eps)
+            assert action_index.size(0) == 1 and action_log_p.size(0) == 1
+            action = ActionSpace.action_by_index(action_index[0], state)
+
+            # Step environment
+            t0 = time.perf_counter()
+            next_state, reward, op_done, speedup = env.step(state, action)
+            env_time += time.perf_counter() - t0
+            next_obs = Observation.from_state(next_state)
+            
+
+            if op_done:
+                t0 = time.perf_counter()
+                next_state, bench_done = env.get_next_op_state(next_state)
+                env_time += time.perf_counter() - t0
+
+            
+            # Accumulate metrics
+            bench_rewards.append(reward)
+            bench_entropies.append(entropy.item())
+            state = next_state
+            
+         # === Per-benchmark logging ===
+        mean_reward = float(np.mean(bench_rewards)) if bench_rewards else 0.0
+        mean_entropy = float(np.mean(bench_entropies)) if bench_entropies else 0.0
+        
+        all_speedups.append(speedup)
+        all_entropies.extend(bench_entropies)
+        
+        
+        bench_metrics = {
+            "mean_reward": mean_reward,
+            "mean_entropy": mean_entropy,
+            "final_speedup": speedup if speedup is not None else 0.0,
+        }
+        
+        fl.log_scalars(f"eval/{bench_name}", bench_metrics, step)
+        
+        print(
+            f"\033[92m\n- Eval Bench: {bench_name}\n"
+            f"- Mean Reward: {mean_reward:.4f}\n"
+            f"- Mean Entropy: {mean_entropy:.4f}\n"
+            f"- Final Speedup: {speedup if speedup is not None else 0.0:.4f}\033[0m"
+        )
+
+
+     # === Global logging (across all benchmarks) ===
+    if all_speedups:
+        fl.log_scalar("eval/average_speedup", float(np.mean(all_speedups)), step)
+    if all_entropies:
+        fl.log_scalar("eval/average_entropy", float(np.mean(all_entropies)), step)
+
+    return  env_time

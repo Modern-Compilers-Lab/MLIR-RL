@@ -2,12 +2,12 @@ import torch
 import torch.nn as nn
 from torch.distributions import Distribution
 from typing import Optional
+from rl_autoschedular import config as cfg
 from rl_autoschedular.actions import ActionSpace, Interchange
-from rl_autoschedular.observation import OpFeatures, ActionHistory, ProducerOpFeatures, Observation
-from utils.config import Config
+from rl_autoschedular.observation import OpFeatures, ActionHistory, Observation, ObservationPart
 
 
-ACTIVATION = nn.ReLU if Config().activation == 'relu' else nn.Tanh
+ACTIVATION = nn.ReLU if cfg.activation == 'relu' else nn.Tanh
 
 
 class HiearchyModel(nn.Module):
@@ -16,8 +16,8 @@ class HiearchyModel(nn.Module):
         """Initialize the model."""
         super(HiearchyModel, self).__init__()
 
-        self.policy_model = PolicyModel()
-        self.value_model = ValueModel()
+        self.policy_model = PolicyModel([OpFeatures, ActionHistory])
+        self.value_model = ValueModel([OpFeatures, ActionHistory])
 
     def __call__(self, obs: torch.Tensor, actions_index: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         return super().__call__(obs, actions_index)
@@ -75,14 +75,17 @@ class HiearchyModel(nn.Module):
 
 class ValueModel(nn.Module):
     """Value model for MLIR code optimization."""
-    def __init__(self):
-        """Initialize the model."""
+    def __init__(self, obs_parts: list[type[ObservationPart]]):
+        """Initialize the model.
+
+        Args:
+            obs_parts (list[type[ObservationPart]]): List of observation parts to be used in the model.
+        """
         super(ValueModel, self).__init__()
 
-        self.lstm = LSTMEmbedding()
-
+        self.obs_parts = obs_parts
         self.network = nn.Sequential(
-            nn.Linear(self.lstm.output_size, 512),
+            nn.Linear(sum(part.size() for part in obs_parts), 512),
             ACTIVATION(),
             nn.Linear(512, 512),
             ACTIVATION(),
@@ -103,7 +106,7 @@ class ValueModel(nn.Module):
         Returns:
             torch.Tensor: The value tensor.
         """
-        return self.network(self.lstm(obs)).squeeze(-1)
+        return self.network(Observation.get_parts(obs, *self.obs_parts)).squeeze(-1)
 
     def loss(self, new_values: torch.Tensor, values: torch.Tensor, returns: torch.Tensor) -> torch.Tensor:
         """Calculate the value loss.
@@ -116,7 +119,7 @@ class ValueModel(nn.Module):
         Returns:
             torch.Tensor: The value loss.
         """
-        if Config().value_clip:
+        if cfg.value_clip:
             vclip = values + torch.clamp(new_values - values, -0.2, 0.2)
             vloss1 = (returns - vclip).pow(2)
             vloss2 = (returns - new_values).pow(2)
@@ -126,16 +129,19 @@ class ValueModel(nn.Module):
 
 class PolicyModel(nn.Module):
     """Policy model for MLIR code optimization."""
-    def __init__(self):
-        """Initialize the model."""
+    def __init__(self, obs_parts: list[type[ObservationPart]]):
+        """Initialize the model.
+
+        Args:
+            obs_parts (list[type[ObservationPart]]): List of observation parts to be used in the model.
+        """
         super(PolicyModel, self).__init__()
 
-        self.log_std = Interchange.log_std
-
-        self.lstm = LSTMEmbedding()
+        self.obs_parts = obs_parts
+        Interchange.log_std = nn.Parameter(torch.zeros(1))
 
         self.backbone = nn.Sequential(
-            nn.Linear(self.lstm.output_size, 512),
+            nn.Linear(sum(part.size() for part in obs_parts), 512),
             ACTIVATION(),
             nn.Linear(512, 512),
             ACTIVATION(),
@@ -144,21 +150,23 @@ class PolicyModel(nn.Module):
         )
 
         output_sizes = [ActionSpace.size()] + [action.network_output_size() for action in ActionSpace.supported_actions]
-        self.heads = nn.ModuleList()
-        for output_size in output_sizes:
+        self.heads_attributes = [f'head_{i}' for i in range(len(output_sizes))]
+
+        for head_attr, output_size in zip(self.heads_attributes, output_sizes):
             if not output_size:
-                self.heads.append(None)
+                setattr(self, head_attr, None)
                 continue
+
             head = nn.Linear(512, output_size)
-            if Config().new_architecture:
+            if cfg.new_architecture:
                 head = nn.Sequential(
                     nn.Linear(512, 512),
                     ACTIVATION(),
                     head
                 )
-            self.heads.append(head)
+            setattr(self, head_attr, head)
 
-    def __call__(self, obs: torch.Tensor) -> list[Optional[Distribution]]:
+    def __call__(self, obs: torch.Tensor,) -> list[Optional[Distribution]]:
         return super().__call__(obs)
 
     def forward(self, obs: torch.Tensor) -> list[Optional[Distribution]]:
@@ -169,19 +177,20 @@ class PolicyModel(nn.Module):
 
         Returns:
             tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: The logits of the transformations, parallelizations, tilings, and interchanges.
-        """
-        embedded = self.backbone(self.lstm(obs))
-        actions_logits = [head(embedded) if head else None for head in self.heads]
+            
+        """        
+        embedded = self.backbone(Observation.get_parts(obs, *self.obs_parts))
+        heads: list[Optional[nn.Module]] = [getattr(self, attr) for attr in self.heads_attributes]
+        actions_logits = [head(embedded) if head else None for head in heads]
 
         return ActionSpace.distributions(obs, *actions_logits)
 
-    def loss(self, actions_log_p: torch.Tensor, actions_bev_log_p: torch.Tensor, off_policy_rates: torch.Tensor, advantages: torch.Tensor, clip_range: float = 0.2) -> tuple[torch.Tensor, torch.Tensor]:
+    def loss(self, actions_log_p: torch.Tensor, actions_old_log_p: torch.Tensor, advantages: torch.Tensor, clip_range: float = 0.2) -> tuple[torch.Tensor, torch.Tensor]:
         """Calculate the policy loss.
 
         Args:
             new_actions_log_p (torch.Tensor): The log probabilities of the new actions.
-            actions_bev_log_p (torch.Tensor): The log probabilities of the actions under the behavior policy.
-            off_policy_rates (torch.Tensor): The rate between the old policy and the behavioral (mu) policy.
+            actions_old_log_p (torch.Tensor): The log probabilities of the actions under the behavior policy.
             advantages (torch.Tensor): The advantages of the actions.
             clip_range (float): The clipping range for the policy loss.
 
@@ -189,42 +198,15 @@ class PolicyModel(nn.Module):
             torch.Tensor: The policy loss.
             float: The ratio clip fraction (for logging purposes)
         """
-        ratios = torch.exp(torch.clamp(actions_log_p - actions_bev_log_p, -80.0, 80.0))
+        # Importance sampling ratio
+        ratios = torch.exp(actions_log_p - actions_old_log_p)
+
+        # PPO surrogate objective
         surr1 = ratios * advantages
-        surr2 = torch.clamp(ratios, (1 - clip_range) * off_policy_rates, (1 + clip_range) * off_policy_rates) * advantages
-        clip_frac = (torch.abs((ratios / off_policy_rates - 1)) > clip_range).float().mean()
-        return - torch.min(surr1, surr2).mean(), clip_frac
+        surr2 = torch.clamp(ratios, 1.0 - clip_range, 1.0 + clip_range) * advantages
+        policy_loss = -torch.min(surr1, surr2).mean()
 
+        # Fraction of samples where clipping applied
+        clip_frac = (torch.abs(ratios - 1.0) > clip_range).float().mean()
 
-class LSTMEmbedding(nn.Module):
-    def __init__(self):
-        super(LSTMEmbedding, self).__init__()
-
-        embedding_size = 411
-
-        self.output_size = embedding_size + ActionHistory.size()
-
-        self.embedding = nn.Sequential(
-            nn.Linear(OpFeatures.size(), 512),
-            nn.ELU(),
-            nn.Dropout(0.225),
-            nn.Linear(512, 512),
-            nn.ELU(),
-            nn.Dropout(0.225),
-        )
-
-        self.lstm = nn.LSTM(512, embedding_size)
-
-    def __call__(self, obs: torch.Tensor) -> torch.Tensor:
-        return super().__call__(obs)
-
-    def forward(self, obs: torch.Tensor) -> torch.Tensor:
-        consumer_feats = Observation.get_part(obs, OpFeatures)
-        producer_feats = Observation.get_part(obs, ProducerOpFeatures)
-
-        consumer_embeddings = self.embedding(consumer_feats).unsqueeze(0)
-        producer_embeddings = self.embedding(producer_feats).unsqueeze(0)
-
-        _, (final_hidden, _) = self.lstm(torch.cat((consumer_embeddings, producer_embeddings)))
-
-        return torch.cat((final_hidden.squeeze(0), Observation.get_part(obs, ActionHistory)), 1)
+        return policy_loss, clip_frac

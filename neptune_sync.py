@@ -6,15 +6,10 @@ import neptune
 from neptune import Run
 import os
 import time
-import signal
 
 results_dir = 'results'
-ids_file = os.path.join(results_dir, 'synced_ids')
-if os.path.exists(ids_file):
-    with open(ids_file, 'r') as f:
-        synced_ids = [int(id) for id in f.readlines() if id.strip()]
-else:
-    synced_ids = []
+with open(os.path.join(results_dir, 'synced_ids'), 'r') as f:
+    synced_ids = [int(id) for id in f.readlines() if id.strip()]
 
 current_runs = [d for d in os.listdir(results_dir) if d.startswith('run_') and int(d.split('_')[1]) not in synced_ids]
 
@@ -23,7 +18,7 @@ if not current_runs:
     exit()
 print(f'Syncing runs: {current_runs}')
 
-with open(ids_file, 'a') as f:
+with open(os.path.join(results_dir, 'synced_ids'), 'a') as f:
     f.write('\n'.join(run.split('_')[1] for run in current_runs))
     f.write('\n')
 
@@ -34,6 +29,7 @@ for run in current_runs:
         tags = f.read().splitlines()
     neptune_run = neptune.init_run(
         project=os.getenv('NEPTUNE_PROJECT'),
+        api_token=os.getenv('NEPTUNE_TOKEN'),
         tags=tags,
     )
     neptune_runs[run] = neptune_run
@@ -48,25 +44,29 @@ def kill_handler(signum, frame):
     exit()
 
 
-signal.signal(signal.SIGTERM, kill_handler)
+if __name__ == '__main__':
+    signal.signal(signal.SIGINT, kill_handler)
+    signal.signal(signal.SIGTERM, kill_handler)
 
-while True:
-    print('Syncing...')
-    for run in current_runs:
-        neptune_run = neptune_runs[run]
-        run_path = os.path.join(results_dir, run, 'logs')
-        files: list[str] = []
-        for root, _, filenames in os.walk(run_path):
-            relative_root = root.replace(run_path, '')
-            relative_root = relative_root[1:] if relative_root.startswith('/') else relative_root
-            for filename in filenames:
-                files.append(os.path.join(relative_root, filename) if relative_root else filename)
-        for file in files:
-            if file not in runs_counters[run]:
-                runs_counters[run][file] = 0
-            read_idx = runs_counters[run][file]
-            with open(os.path.join(run_path, file), 'r') as f:
-                values = [float(line) for line in f.readlines()]
-            neptune_run[file].extend(values[read_idx:])
-            runs_counters[run][file] = len(values)
-    time.sleep(60)
+    while True:
+        print('Syncing...')
+        for run in current_runs:
+            neptune_run = neptune_runs[run]
+            run_path = os.path.join(results_dir, run)
+            files: list[str] = []
+            for root, _, filenames in os.walk(run_path):
+                relative_root = root.replace(run_path, '')
+                relative_root = relative_root[1:] if relative_root.startswith('/') else relative_root
+                for filename in filenames:
+                    files.append(os.path.join(relative_root, filename) if relative_root else filename)
+            for file in files:
+                if file == 'tags':
+                    continue
+                if file not in runs_counters[run]:
+                    runs_counters[run][file] = 0
+                read_idx = runs_counters[run][file]
+                with open(os.path.join(run_path, file), 'r') as f:
+                    values = [float(line) for line in f.readlines()]
+                neptune_run[file].extend(values[read_idx:])
+                runs_counters[run][file] = len(values)
+        time.sleep(60)

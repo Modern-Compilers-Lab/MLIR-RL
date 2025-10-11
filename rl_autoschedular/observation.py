@@ -1,13 +1,12 @@
+from rl_autoschedular import config as cfg
 from rl_autoschedular.actions import ActionSpace
-from rl_autoschedular.state import OperationState, OperationType, IteratorType, OperationFeatures
+from rl_autoschedular.state import OperationState, OperationType, IteratorType
 import torch
 import math
 
-from utils.config import Config
-
-L = Config().max_num_loops
-LSD = Config().max_num_load_store_dim
-LS = Config().max_num_stores_loads
+L = cfg.max_num_loops
+LSD = cfg.max_num_load_store_dim
+LS = cfg.max_num_stores_loads
 
 
 class ObservationPart:
@@ -32,10 +31,8 @@ class OpFeatures(ObservationPart):
 
     @classmethod
     def from_state(cls, state: OperationState) -> torch.Tensor:
-        return cls._from_features(state.original_operation_features)
+        op_features = state.operation_features
 
-    @classmethod
-    def _from_features(cls, op_features: OperationFeatures) -> torch.Tensor:
         indices = [nested_loop.arg for nested_loop in op_features.nested_loops]
         indices_dim = {arg: i for (i, arg) in enumerate(indices)}
 
@@ -49,7 +46,7 @@ class OpFeatures(ObservationPart):
             if i == L:
                 break
             ub = nested_loop.upper_bound
-            match Config().normalize_bounds:
+            match cfg.normalize_bounds:
                 case 'max':
                     ub = ub / 4096
                 case 'log':
@@ -148,15 +145,6 @@ class OpFeatures(ObservationPart):
         return save
 
 
-class ProducerOpFeatures(OpFeatures):
-    @classmethod
-    def from_state(cls, state: OperationState) -> torch.Tensor:
-        if state.producer_features:
-            return cls._from_features(state.producer_features)
-
-        return torch.zeros(cls.size())
-
-
 class ActionHistory(ObservationPart):
     """Class representing action history in the observation"""
 
@@ -198,7 +186,6 @@ class Observation:
 
     parts: list[type[ObservationPart]] = [
         OpFeatures,
-        ProducerOpFeatures,
         ActionHistory,
         NumLoops,
         ActionMask
@@ -238,8 +225,3 @@ class Observation:
         """Create the full observation from the current state."""
         obs_parts = [part.from_state(state) for part in cls.parts]
         return torch.cat(obs_parts).unsqueeze(0)
-
-    @classmethod
-    def from_states(cls, states: list[OperationState]) -> torch.Tensor:
-        """Create the full observation for all the states."""
-        return torch.cat([cls.from_state(s) for s in states])

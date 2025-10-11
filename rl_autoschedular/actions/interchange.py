@@ -1,7 +1,7 @@
-from utils.config import Config
 from .base import Action
+from rl_autoschedular import config as cfg
 from rl_autoschedular.state import OperationState, OperationType
-from rl_autoschedular.transforms import transform_interchange
+from rl_autoschedular.transforms import transform_dialect_interchange
 from typing import Optional
 from enum import Enum
 from utils.log import print_error
@@ -20,17 +20,12 @@ class Interchange(Action):
     """Class representing Interchange action"""
 
     symbol = 'I'
-
+    method = InterchangeMethod(cfg.interchange_mode)
     parameters: list[int]
+    log_std: Optional[torch.Tensor] = None
 
-    # --- constants ---
-    method = InterchangeMethod(Config().interchange_mode)
-    log_std = torch.nn.Parameter(torch.zeros(1))
-
-    def __init__(self, parameters: list[int], state: Optional[OperationState] = None, **extras):
+    def __init__(self, parameters: list[int], state: Optional[OperationState] = None):
         if state:
-            # Case where state is provided -> Parameters need processing
-
             assert len(parameters) == 1, 'uncompatible parameters for constructor call'
             parameter = parameters[0]
             num_loops = len(state.operation_features.nested_loops)
@@ -51,7 +46,8 @@ class Interchange(Action):
                     assert len(parameters) <= num_loops, 'interchange parameter exceeds number of loops'
                     if len(parameters) < num_loops:
                         self.ready = False
-        super().__init__(parameters, state, **extras)
+
+        super().__init__(parameters)
 
     @classmethod
     def params_size(cls):
@@ -61,19 +57,19 @@ class Interchange(Action):
     def network_output_size(cls):
         match cls.method:
             case InterchangeMethod.EnumeratedCandidates:
-                return 3 * Config().max_num_loops - 6
+                return 3 * cfg.max_num_loops - 6
             case InterchangeMethod.LevelsPointers:
-                return Config().max_num_loops
+                return cfg.max_num_loops
             case InterchangeMethod.ContinuousEncoding:
                 return 1
 
     @classmethod
     def history_size(cls):
-        return Config().truncate * Config().max_num_loops * Config().max_num_loops
+        return cfg.truncate * cfg.max_num_loops * cfg.max_num_loops
 
     @classmethod
     def action_mask(cls, state):
-        L = Config().max_num_loops
+        L = cfg.max_num_loops
         I_BEGIN_2C = L - 1
         I_BEGIN_3C = I_BEGIN_2C + L - 2
 
@@ -100,7 +96,7 @@ class Interchange(Action):
 
     @classmethod
     def action_history(cls, state):
-        history = torch.zeros((Config().truncate, Config().max_num_loops, Config().max_num_loops))
+        history = torch.zeros((cfg.truncate, cfg.max_num_loops, cfg.max_num_loops))
         for i, action in enumerate(state.transformation_history[0]):
             if not isinstance(action, Interchange):
                 continue
@@ -117,6 +113,7 @@ class Interchange(Action):
                 return Categorical(logits=logits)
             case InterchangeMethod.ContinuousEncoding:
                 logit = logits.squeeze(-1)
+                assert cls.log_std is not None, 'log_std must be set for continuous encoding'
                 return Normal(logit, cls.log_std.clamp(-1, 1).exp())
 
     @classmethod
@@ -164,8 +161,15 @@ class Interchange(Action):
 
         return index.unsqueeze(-1)
 
-    def _apply_ready(self, code):
-        return transform_interchange(code, self.operation_tag, self.parameters)
+    def _apply_ready(self, state):
+        new_code = transform_dialect_interchange(
+            state.transformed_code,
+            state.operation_tag,
+            self.parameters,
+            state.tmp_file
+        )
+
+        return new_code, bool(new_code)
 
     def update_features(self, operation_features):
         if not self.ready:
@@ -175,8 +179,8 @@ class Interchange(Action):
         for i, j in enumerate(self.parameters):
             new_operation_features.nested_loops[i] = operation_features.nested_loops[j]
 
-        # In case an interchange was applied to pooling or conv, vectorization is no longer possible
-        if operation_features.operation_type in [OperationType.Pooling, OperationType.Conv] and self.parameters != list(range(len(self.parameters))):
+        # In case an interchange was applied to pooling, vectorization is no longer possible
+        if operation_features.operation_type == OperationType.Pooling and self.parameters != list(range(len(self.parameters))):
             new_operation_features.vectorizable = False
 
         return new_operation_features
@@ -234,7 +238,7 @@ class Interchange(Action):
         interchanges = []
         for c in [1, 2, 3]:
             level_interchanges = []
-            for _ in range(Config().max_num_loops - c):
+            for _ in range(cfg.max_num_loops - c):
                 level_interchanges.append(list(range(num_loops)))
             for i in range(num_loops - c):
                 params = list(range(num_loops))

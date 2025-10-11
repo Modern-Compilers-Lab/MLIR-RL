@@ -1,4 +1,3 @@
-from utils.config import Config
 from .base import Action
 from .no_transformation import NoTransformation
 from .tiling import Tiling
@@ -6,6 +5,7 @@ from .tiled_parallelization import TiledParallelization
 from .tiled_fusion import TiledFusion
 from .interchange import Interchange
 from .vectorization import Vectorization
+from rl_autoschedular import config as cfg
 from rl_autoschedular.state import OperationState
 import torch
 from torch.distributions import Distribution, Categorical
@@ -19,7 +19,6 @@ class ActionSpace:
         NoTransformation,
         Tiling,
         TiledParallelization,
-        TiledFusion,
         Interchange,
         Vectorization
     ]
@@ -54,7 +53,7 @@ class ActionSpace:
         action_idx = int(index[0].item())
         action_type = cls.supported_actions[action_idx]
         if not action_type.params_size():
-            return action_type(state)
+            return action_type()
 
         cum_sizes = cls.cumulative_params_sizes()
         params = index[cum_sizes[action_idx]:cum_sizes[action_idx + 1]].long().tolist()
@@ -78,7 +77,6 @@ class ActionSpace:
 
     @classmethod
     def action_mask(cls, state: OperationState) -> torch.Tensor:
-        cfg = Config()
         mask = torch.zeros(cls.size(), dtype=torch.bool)
 
         def allow_action(a: type[Action]):
@@ -109,7 +107,7 @@ class ActionSpace:
 
             # Check that there is at least one action allowed
             if not mask.any():
-                raise Exception(f"no actions allowed for the current state at step {state.step_count}")
+                raise Exception("no actions allowed in the current state")
 
         for action in cls.supported_actions:
             action_mask = action.action_mask(state)

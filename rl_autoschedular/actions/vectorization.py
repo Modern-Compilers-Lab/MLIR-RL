@@ -1,11 +1,7 @@
-from utils.config import Config
 from .base import Action
-from rl_autoschedular.transforms import (
-    transform_vectorize, transform_tile,
-    transform_decompose, transform_transpose_conv_2d
-)
-from rl_autoschedular.state import OperationFeatures, OperationState, OperationType
-from typing import Callable, Optional
+from rl_autoschedular import config as cfg
+from rl_autoschedular.transforms import transform_dialect_vectorize, transform_dialect_tile, apply_conv2d_decomposition
+from rl_autoschedular.state import OperationState, OperationType
 
 
 class Vectorization(Action):
@@ -13,53 +9,10 @@ class Vectorization(Action):
 
     symbol = 'V'
     parameters: None
-
-    # --- constants ---
     terminal = True
 
-    # --- extras ---
-    preprocessing: list[Callable[[str], str]]
-
-    def __init__(
-        self,
-        state: Optional[OperationState] = None,
-        requires_transpose: Optional[bool] = None,
-        requires_decompose: Optional[bool] = None,
-        decompose_tile_sizes: Optional[list[int]] = None,
-        **extras
-    ):
-        args_is_none = [
-            requires_transpose is None,
-            requires_decompose is None,
-            decompose_tile_sizes is None
-        ]
-        if (state is None) in args_is_none:
-            raise ValueError("Either state or preprocessing attributes must be provided and not both")
-        if state:
-            op_feats = state.operation_features.copy()
-
-            if op_feats.operation_type not in [OperationType.Pooling, OperationType.Conv]:
-                requires_transpose, requires_decompose, decompose_tile_sizes = False, False, []
-            else:
-                if requires_transpose := self.__requires_transpose(op_feats):
-                    op_feats.operation_name = 'linalg.conv_2d_nhwc_hwcf'
-                decompose_tile_sizes = []
-                if requires_decompose := self.__requires_decompose(op_feats):
-                    decompose_tile_sizes = self.__decompose_tile_sizes(op_feats)
-        super().__init__(
-            state,
-            requires_transpose=requires_transpose,
-            requires_decompose=requires_decompose,
-            decompose_tile_sizes=decompose_tile_sizes,
-            **extras
-        )
-
-        self.preprocessing = []
-        if requires_transpose:
-            self.preprocessing.append(lambda c: transform_transpose_conv_2d(c, self.operation_tag))
-        if requires_decompose:
-            self.preprocessing.append(lambda c: transform_tile(c, self.operation_tag, decompose_tile_sizes))
-            self.preprocessing.append(lambda c: transform_decompose(c, self.operation_tag))
+    def __init__(self):
+        super().__init__()
 
     @classmethod
     def is_allowed(cls, state):
@@ -69,52 +22,30 @@ class Vectorization(Action):
         op_iter_space = 1
         for nested_loop in state.operation_features.nested_loops:
             op_iter_space *= nested_loop.upper_bound
-        return op_iter_space <= Config().vect_size_limit
+        return op_iter_space <= cfg.vect_size_limit
 
-    def _apply_ready(self, code):
-        for pre in self.preprocessing:
-            code = pre(code)
+    def _apply_ready(self, state):
+        code = state.transformed_code
 
-        return transform_vectorize(code, self.operation_tag)
+        # Decompose pooling operation to make it vectorizable
+        if state.operation_features.operation_type == OperationType.Pooling:
+            code, decomposed = self.__decompose_pooling(state)
+            if not decomposed:
+                raise Exception("Pooling decomposition not successful")
 
-    @classmethod
-    def __requires_transpose(cls, operation_features: OperationFeatures) -> bool:
-        return operation_features.operation_name == 'linalg.conv_2d_nhwc_fhwc'
+        new_code = transform_dialect_vectorize(code, state.operation_tag, state.tmp_file)
 
-    @classmethod
-    def __requires_decompose(cls, operation_features: OperationFeatures) -> bool:
-        """a.k.a is a two dimensional conv interface op"""
+        return new_code, bool(new_code)
 
-        if 'conv_2d' in operation_features.operation_name:
-            return True
+    @staticmethod
+    def __decompose_pooling(state: OperationState) -> tuple[str, bool]:
+        assert len(state.operation_features.nested_loops) == 6
 
-        if operation_features.operation_type == OperationType.Pooling and len(operation_features.nested_loops) >= 6:
-            return True
+        # Tile the pooling operation for decomposition
+        tile_sizes = [0, 0, 1, 0, 1, 0]
+        new_code = transform_dialect_tile(state.transformed_code, state.operation_tag, tile_sizes, state.tmp_file)
 
-        return False
+        # Apply the decomposition
+        new_code = apply_conv2d_decomposition(new_code, state.operation_tag, state.tmp_file)
 
-    @classmethod
-    def __decompose_tile_sizes(cls, operation_features: OperationFeatures) -> list[int]:
-        tile_sizes = [0 for _ in operation_features.nested_loops]
-
-        oh = None
-        if operation_features.operation_name == 'linalg.conv_2d':
-            oh = 0
-        elif '_nhwc_' in operation_features.operation_name:
-            oh = 1
-        elif '_nchw_' in operation_features.operation_name:
-            oh = 2
-
-        kh = None
-        if operation_features.operation_name == 'linalg.conv_2d':
-            kh = 2
-        elif '_fchw' in operation_features.operation_name:
-            kh = 5
-        elif '_hwc' in operation_features.operation_name or operation_features.operation_type == OperationType.Pooling:
-            kh = 4
-
-        if oh is not None and kh is not None:
-            tile_sizes[oh] = 1
-            tile_sizes[kh] = 1
-
-        return tile_sizes
+        return new_code, bool(new_code)

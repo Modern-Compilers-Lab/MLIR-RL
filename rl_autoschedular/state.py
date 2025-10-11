@@ -1,11 +1,11 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 from enum import Enum
+from rl_autoschedular import config as cfg
 import re
 import os
 import subprocess
 
-from utils.config import Config
 from utils.log import print_error
 
 if TYPE_CHECKING:
@@ -15,11 +15,9 @@ if TYPE_CHECKING:
 class OperationType(Enum):
     Generic = 'generic'
     Matmul = 'matmul'
-    Conv = 'conv'
+    Conv2D = 'conv_2d'
     Pooling = 'pooling'
     Add = 'add'
-
-    unknown = ''
 
 
 class IteratorType(Enum):
@@ -49,10 +47,10 @@ class NestedLoopFeatures:
 @dataclass
 class OperationFeatures:
     """Dataclass to store the operation features data."""
-    operation_name: str
-    """The name of the mlir operation."""
+    raw_operation: str
+    """The raw operation string without wrapping or transformations."""
     operation_type: OperationType
-    """The type of the operation."""
+    """The type of the operation (generic, matmul, conv2d, ...)."""
     op_count: dict[str, int]
     """Number of arithmetic operations in the operation."""
     load_data: list[list[str]]
@@ -61,21 +59,18 @@ class OperationFeatures:
     """List of store accesses where each store is represented by the list of access arguments."""
     nested_loops: list[NestedLoopFeatures]
     """List of nested loops where each loop is represented by the NestedLoopFeatures dataclass."""
-    producers: list[str]
-    """List of tags of operations that are consumed by the current operation"""
     vectorizable: bool
     """Flag to indicate if the operation is vectorizable."""
 
     def copy(self):
         """Copy the current OperationFeatures object."""
         return OperationFeatures(
-            self.operation_name,
+            self.raw_operation,
             self.operation_type,
             self.op_count.copy(),
             [load.copy() for load in self.load_data],
             self.store_data.copy(),
             [loop.copy() for loop in self.nested_loops],
-            self.producers.copy(),
             self.vectorizable
         )
 
@@ -107,39 +102,39 @@ class BenchmarkFeatures:
 
 @dataclass
 class OperationState:
-    bench_idx: int
-    """The benchmark's index."""
     bench_name: str
     """The benchmark's name."""
     operation_tag: str
     """Tag used to identify the operation in the MLIR code."""
-    original_operation_features: OperationFeatures
-    """Features of the operation that will be kept always unchanged."""
     operation_features: OperationFeatures
     """Features of the operation."""
-    producer_tag: Optional[str]
-    """Tag that identifies the selected producer"""
-    producer_features: Optional[OperationFeatures]
-    """Features of the selected producer"""
+    validated_code: str
+    """The latest validated benchmark code (if not in inference, this will always be the original code)."""
+    transformed_code: str
+    """The operation string with wrapping and transformations."""
     step_count: int
     """The current step in the list of transformations applied to the operation."""
+    exec_time: int
+    """Execution time of the operation in nanoseconds."""
     transformation_history: list[list['Action']]
     """List of transformations with their parameters applied to the operation."""
+    tmp_file: str
+    """Temporary file to store the MLIR code."""
     terminal: bool
     """Flag that determines if the state is terminal"""
 
     def copy(self):
         """Copy the current OperationState object."""
         return OperationState(
-            self.bench_idx,
             self.bench_name,
             self.operation_tag,
-            self.original_operation_features.copy(),
             self.operation_features.copy(),
-            self.producer_tag,
-            self.producer_features.copy() if self.producer_features is not None else None,
+            self.validated_code,
+            self.transformed_code,
             self.step_count,
+            self.exec_time,
             [seq.copy() for seq in self.transformation_history],
+            self.tmp_file,
             self.terminal
         )
 
@@ -203,26 +198,24 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
     Returns:
         BenchmarkFeatures: extracted benchmark features
     """
-    cfg = Config()
-
     info, full_code = raw_ast_info.split("########################################")
-    operations_lines, graph_str = info.split('#BEGIN_GRAPH')
+    operations_lines, _ = info.split('#BEGIN_GRAPH')
 
     operations_blocks = operations_lines.split('#START_OPERATION')
     operations_blocks = [block.strip() for block in operations_blocks if block]
 
     ops_tags = []
-    operations: dict[str, OperationFeatures] = {}
+    operations = {}
     for operation_block in operations_blocks:
         rest, operation_tag = operation_block.split("#START_TAG")
         operation_tag = operation_tag.strip().split("\n")[0]
         log_info = f"- Bench: {bench_name} - Operation: {operation_tag}"
 
-        operation_name, rest = rest.split("#START_VECTORIZABLE")
-        operation_type = __get_operation_type(operation_name)
+        raw_operation, rest = rest.split("#START_VECTORIZABLE")
+        operation_type = __get_operation_type(raw_operation)
         if operation_type is None:
             print_error(log_info)
-            print_error("Unsupported operation type:", operation_name)
+            print_error("Unsupported operation type:", raw_operation.split("\n")[0])
             continue
 
         nested_loops = []
@@ -281,22 +274,14 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
 
         ops_tags.append(operation_tag)
         operations[operation_tag] = OperationFeatures(
-            operation_name=operation_name,
+            raw_operation=raw_operation,
             operation_type=operation_type,
             op_count=op_count,
             load_data=load_data,
             store_data=store_data,
             nested_loops=nested_loops,
-            producers=[],
             vectorizable=vectorizable
         )
-
-    # Extracte Producer/Consumer features
-    graph_str = graph_str.replace("#END_GRAPH", "")
-    graph_lines = [(line.split(' --> ')[0], line.split(' --> ')[1]) for line in graph_str.strip().split("\n") if line]
-
-    for producer, consumer in graph_lines:
-        operations[consumer].producers.append(producer)
 
     return BenchmarkFeatures(
         bench_name=bench_name,
@@ -307,16 +292,16 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
     )
 
 
-def __get_operation_type(operation_name: str) -> Optional[OperationType]:
-    """Get the operation type from the operation name.
+def __get_operation_type(raw_operation: str) -> Optional[OperationType]:
+    """Get the operation type from the raw operation string.
 
     Args:
-        operation_name (str): The operation name.
+        raw_operation (str): The raw operation string.
 
     Returns:
         Optional[OperationType]: The operation type or None if not found.
     """
     for operation_type in OperationType:
-        if operation_type.value and operation_type.value in operation_name:
+        if f'linalg.{operation_type.value}' in raw_operation:
             return operation_type
-    return OperationType.unknown
+    return None

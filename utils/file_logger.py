@@ -1,63 +1,42 @@
 from utils.singleton import Singleton
-from utils.config import Config
-import json
 import os
+from torch.utils.tensorboard import SummaryWriter
 
 
-class FileLogger(metaclass=Singleton):
-    """Class to log results to files"""
-    def __init__(self):
-        cfg = Config()
-        tags = ['ppo'] + cfg.tags
+class TensorBoardLogger(metaclass=Singleton):
+    """Logger using TensorBoard for training metrics and results."""
 
-        # Create run dir
-        dir_path = cfg.results_dir
-        subdir_ids = sorted([int(d.split('_')[-1]) for d in os.listdir(dir_path) if d.startswith('run_')])
-        run_id = subdir_ids[-1] + 1 if subdir_ids else 0
-        self.run_dir = os.path.join(dir_path, f'run_{run_id}')
+    def __init__(self, log_dir: str, run_name: str, tags: list[str] = None):
+        """
+        Args:
+            log_dir (str): Base directory for logs (e.g. "logs").
+            run_name (str): Custom run name (instead of auto run_0).
+            tags (list[str], optional): Tags or metadata for this run.
+        """
+        self.run_dir = os.path.join(log_dir, run_name)
         os.makedirs(self.run_dir, exist_ok=True)
 
-        # Create tags file
-        tags_file = os.path.join(self.run_dir, 'tags')
-        with open(tags_file, 'w') as f:
-            f.write('\n'.join(tags))
-            f.write('\n')
+        # Initialize TensorBoard writer
+        self.writer = SummaryWriter(log_dir=self.run_dir)
 
-        # Create exec data file
-        self.exec_data_file = os.path.join(self.run_dir, 'exec_data.json')
-        with open(self.exec_data_file, "w") as f:
-            json.dump({}, f)
+        # Save tags to a file for reproducibility
+        if tags:
+            with open(os.path.join(self.run_dir, "tags.txt"), "w") as f:
+                f.write("\n".join(tags) + "\n")
 
-        # Create logs dir
-        self.logs_dir = os.path.join(self.run_dir, 'logs')
-        os.makedirs(self.logs_dir, exist_ok=True)
+    def log_scalar(self, name: str, value: float, step: int):
+        """Log a scalar value to TensorBoard."""
+        self.writer.add_scalar(name, value, step)
 
-        # Create models dir
-        self.models_dir = os.path.join(self.run_dir, 'models')
-        os.makedirs(self.models_dir, exist_ok=True)
+    def log_scalars(self, main_tag: str, tag_scalar_dict: dict, step: int):
+        """Log multiple scalars under a main tag (TensorBoard grouping)."""
+        self.writer.add_scalars(main_tag, tag_scalar_dict, step)
 
-        # Init files dict
-        self.files_dict: dict[str, FileInstance] = {}
+    def flush(self):
+        """Flush events to disk (useful if crashing)."""
+        self.writer.flush()
 
-    def __getitem__(self, path: str):
-        if path not in self.files_dict:
-            full_path = os.path.join(self.logs_dir, path)
-            os.makedirs(os.path.dirname(full_path), exist_ok=True)
-            assert not os.path.exists(full_path), f"File {path} already exists"
-            self.files_dict[path] = FileInstance(full_path)
-        return self.files_dict[path]
+    def close(self):
+        """Close the TensorBoard writer."""
+        self.writer.close()
 
-
-class FileInstance:
-    def __init__(self, path: str):
-        self.path = path
-
-    def append(self, data):
-        with open(self.path, 'a') as f:
-            f.write(str(data))
-            f.write('\n')
-
-    def extend(self, data: list):
-        with open(self.path, 'a') as f:
-            f.write('\n'.join(map(str, data)))
-            f.write('\n')
