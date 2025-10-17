@@ -13,6 +13,7 @@ from rl_autoschedular.execution import Execution
 from rl_autoschedular import device
 from utils.config import Config
 from utils.file_logger import FileLogger
+from utils.gpu_occupier import GPUOccupier
 from utils.log import print_error, print_info, print_success
 from utils.dask_manager import DaskManager
 from time import time
@@ -61,46 +62,47 @@ def collect_trajectory(data: Benchmarks, model: Model, step: int):
         observations.append(Observation.from_state(state))
         tcs.append(TrajectoryCollector())
 
-    while (active_states := [(i, s) for i, s in enumerate(states) if not s.terminal]):
-        # Sample states that are not terminal yet
-        obss = torch.cat([observations[i] for i, _ in active_states])
-        actions_index, actions_bev_log_p, entropies = model.sample(obss.to(device), eps=eps)
-        actions_index, actions_bev_log_p, entropies = actions_index.cpu(), actions_bev_log_p.cpu(), entropies.cpu()
-        fl['train/entropy'].extend(entropies.tolist())
+    with GPUOccupier().gpu_needed():
+        while (active_states := [(i, s) for i, s in enumerate(states) if not s.terminal]):
+            # Sample states that are not terminal yet
+            obss = torch.cat([observations[i] for i, _ in active_states])
+            actions_index, actions_bev_log_p, entropies = model.sample(obss.to(device), eps=eps)
+            actions_index, actions_bev_log_p, entropies = actions_index.cpu(), actions_bev_log_p.cpu(), entropies.cpu()
+            fl['train/entropy'].extend(entropies.tolist())
 
-        # Record data and update states
-        for (i, state), obs, action_index, action_bev_log_p in zip(active_states, obss, actions_index, actions_bev_log_p):
-            obs = obs.unsqueeze(0)
+            # Record data and update states
+            for (i, state), obs, action_index, action_bev_log_p in zip(active_states, obss, actions_index, actions_bev_log_p):
+                obs = obs.unsqueeze(0)
 
-            # Get action and use it to get next state
-            action = ActionSpace.action_by_index(action_index, state)
-            states[i] = next_state = envs[i].step(state, action)
-            observations[i] = next_obs = Observation.from_state(next_state)
+                # Get action and use it to get next state
+                action = ActionSpace.action_by_index(action_index, state)
+                states[i] = next_state = envs[i].step(state, action)
+                observations[i] = next_obs = Observation.from_state(next_state)
 
-            # If the benchmark is not done yet, keep next operation state instead
-            done = False
-            if next_state.terminal:
-                next_op_state = envs[i].get_next_op_state(next_state)
-                if next_op_state is not None:
-                    states[i] = next_op_state
-                    observations[i] = Observation.from_state(next_op_state)
-                else:
-                    done = True
+                # If the benchmark is not done yet, keep next operation state instead
+                done = False
+                if next_state.terminal:
+                    next_op_state = envs[i].get_next_op_state(next_state)
+                    if next_op_state is not None:
+                        states[i] = next_op_state
+                        observations[i] = Observation.from_state(next_op_state)
+                    else:
+                        done = True
 
-            # Record available data
-            tcs[i].append((
-                Observation.get_part(obs, NumLoops).long().item(),
-                action_index.unsqueeze(0),
-                obs,
-                next_obs,
-                action_bev_log_p.item(),
-                0.0,  # This will be filled after execution
-                done
-            ))
+                # Record available data
+                tcs[i].append((
+                    Observation.get_part(obs, NumLoops).long().item(),
+                    action_index.unsqueeze(0),
+                    obs,
+                    next_obs,
+                    action_bev_log_p.item(),
+                    0.0,  # This will be filled after execution
+                    done
+                ))
 
     traj_end_sampling = time()
 
-    results = dm.map_states(__execute_states, states, data, exe.main_exec_data, training=True)
+    results = dm.map_objs(__execute_states, states, data, exe.main_exec_data, training=True, obj_str=lambda s: s.bench_name)
 
     traj_end_exec_states = time()
 
@@ -307,30 +309,31 @@ def evaluate_benchmarks(model: Model, data: Benchmarks):
         states.append(state)
         observations.append(Observation.from_state(state))
 
-    while (active_states := [(i, s) for i, s in enumerate(states) if not s.terminal]):
-        # Sample states that are not terminal yet
-        obss = torch.cat([observations[i] for i, _ in active_states])
-        actions_index, _, entropies = model.sample(obss.to(device), greedy=True)
-        actions_index, entropies = actions_index.cpu(), entropies.cpu()
-        fl['eval/entropy'].extend(entropies.tolist())
+    with GPUOccupier().gpu_needed():
+        while (active_states := [(i, s) for i, s in enumerate(states) if not s.terminal]):
+            # Sample states that are not terminal yet
+            obss = torch.cat([observations[i] for i, _ in active_states])
+            actions_index, _, entropies = model.sample(obss.to(device), greedy=True)
+            actions_index, entropies = actions_index.cpu(), entropies.cpu()
+            fl['eval/entropy'].extend(entropies.tolist())
 
-        # Record data and update states
-        for (i, state), obs, action_index in zip(active_states, obss, actions_index):
-            obs = obs.unsqueeze(0)
+            # Record data and update states
+            for (i, state), obs, action_index in zip(active_states, obss, actions_index):
+                obs = obs.unsqueeze(0)
 
-            # Get action and use it to get next state
-            action = ActionSpace.action_by_index(action_index, state)
-            states[i] = next_state = envs[i].step(state, action)
-            observations[i] = Observation.from_state(next_state)
+                # Get action and use it to get next state
+                action = ActionSpace.action_by_index(action_index, state)
+                states[i] = next_state = envs[i].step(state, action)
+                observations[i] = Observation.from_state(next_state)
 
-            # If the benchmark is not done yet, keep next operation state instead
-            if next_state.terminal:
-                next_op_state = envs[i].get_next_op_state(next_state)
-                if next_op_state is not None:
-                    states[i] = next_op_state
-                    observations[i] = Observation.from_state(next_op_state)
+                # If the benchmark is not done yet, keep next operation state instead
+                if next_state.terminal:
+                    next_op_state = envs[i].get_next_op_state(next_state)
+                    if next_op_state is not None:
+                        states[i] = next_op_state
+                        observations[i] = Observation.from_state(next_op_state)
 
-    results = dm.map_states(__execute_states, states, data, exe.main_exec_data, training=False)
+    results = dm.map_objs(__execute_states, states, data, exe.main_exec_data, training=False, obj_str=lambda s: s.bench_name)
     results = [
         (*e.failed_seq(s.transformation_history), float(dm.batch_timeout))
         if not r else r

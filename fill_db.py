@@ -1,83 +1,90 @@
+from dotenv import load_dotenv
+
+from utils.log import print_info, print_success
+load_dotenv(override=True)
+load_dotenv('.env.debug')
+
+import json
+from typing import Optional
+
+from rl_autoschedular.actions import ActionSpace
+from rl_autoschedular.benchmarks import Benchmarks
 from rl_autoschedular.env import Env
-from rl_autoschedular.model import apply_masks, extract_masks, indices_to_raw_actions
-import torch
-import math
-from torch.distributions import Categorical, Distribution, Uniform
-from rl_autoschedular import config as cfg
-from tqdm import tqdm
+from rl_autoschedular.execution import Execution
+from rl_autoschedular.observation import Observation
+
+from utils.config import Config
+from utils.dask_manager import DaskManager
+from utils.file_logger import FileLogger
 
 
-N = cfg.num_transformations
-L = cfg.max_num_loops
-TS = cfg.num_tile_sizes
-match cfg.interchange_mode:
-    case 'enumerate':
-        interchange_mask = 3 * L - 6
-    case 'pointers':
-        interchange_mask = L
-    case 'continuous':
-        interchange_mask = 0
-action_mask_size = N + 2 * L * (TS + 1) + interchange_mask
+def execute_bench(bench_idx: int, exec_data_file: str, benchs: Benchmarks, main_exec_data: Optional[dict[str, dict[str, int]]]):
+    exec = Execution(exec_data_file, main_exec_data)
+    env = Env()
+    state = env.reset(benchs, bench_idx)
 
+    finalized = False
+    while not finalized:
+        assert not state.terminal
+        obs = Observation.from_state(state)
+        eps_distributions = ActionSpace.uniform_distributions(obs)
+        action_index = ActionSpace.sample(obs, eps_distributions, eps_distributions, uniform=True)
+        assert action_index.size(0) == 1
+        action_index = action_index[0]
+        action = ActionSpace.action_by_index(action_index, state)
+        state = env.step(state, action)
+        if state.terminal:
+            next_op_state = env.get_next_op_state(state)
+            if next_op_state is not None:
+                state = next_op_state
+            else:
+                finalized = True
 
-def create_uniform_distributions(obs: torch.Tensor, num_loops: list[int]) -> tuple[Distribution, Distribution, Distribution, Distribution]:
-    """Create uniform distributions for the actions.
+    cache_key = exec.get_code_cache_key(state.transformation_history)
+    _, _, new_exec_time, cache_miss = env.apply_and_run_sequence(state.transformation_history)
 
-    Args:
-        obs (torch.Tensor): The input tensor.
-
-    Returns:
-        tuple[Distribution, Distribution, Distribution, Distribution]: The uniform distributions for the transformations, parallelizations, tilings, and interchanges.
-    """
-    batch_size = obs.shape[0]
-    action_mask = obs[:, -(action_mask_size):].bool()
-
-    transformation_logits = torch.zeros((batch_size, N), dtype=torch.float32)
-    parallelization_logits = torch.zeros((batch_size, L, TS + 1), dtype=torch.float32)
-    tiling_logits = torch.zeros((batch_size, L, TS + 1), dtype=torch.float32)
-    match cfg.interchange_mode:
-        case 'enumerate':
-            interchange_logits = torch.zeros((batch_size, 3 * L - 6), dtype=torch.float32)
-        case 'pointers':
-            interchange_logits = torch.zeros((batch_size, L), dtype=torch.float32)
-        case 'continuous':
-            interchange_logits = torch.zeros((batch_size, 1), dtype=torch.float32)
-
-    # Apply masks on logits
-    transformation_logits, parallelization_logits, tiling_logits, interchange_logits = apply_masks(transformation_logits, parallelization_logits, tiling_logits, interchange_logits, *extract_masks(action_mask))
-
-    # Create distributions with the masked probabilities
-    transformation_dist = Categorical(logits=transformation_logits)
-    parallelization_dist = Categorical(logits=parallelization_logits)
-    tiling_dist = Categorical(logits=tiling_logits)
-    if cfg.interchange_mode != 'continuous':
-        interchange_dist = Categorical(logits=interchange_logits)
-    else:
-        total_count = torch.tensor([math.factorial(loops) for loops in num_loops], dtype=torch.float64)
-        interchange_dist = Uniform(0.0, total_count)
-
-    return transformation_dist, parallelization_dist, tiling_dist, interchange_dist
+    return new_exec_time, state.bench_name, cache_key, cache_miss
 
 
 if __name__ == "__main__":
-    env = Env(is_training=True)
-    print(f"Environments initialized: {env.tmp_file}")
+    dm = DaskManager()
+    fl = FileLogger()
+    cfg = Config()
 
-    pbar = tqdm(unit="bench")
+    print_info(f"Config: {cfg}")
+    print_success(f'Logging to: {fl.run_dir}')
+
+    def load_eval_data():
+        return Benchmarks()
+
+    def load_main_exec_data() -> Optional[dict[str, dict[str, int]]]:
+        main_exec_data = None
+        if Config().main_exec_data_file:
+            with open(Config().main_exec_data_file) as f:
+                main_exec_data = json.load(f)
+        return main_exec_data
+
+    train_data = dm.run_and_register_to_workers(load_eval_data)
+    main_exec_data = dm.run_and_register_to_workers(load_main_exec_data)
+
+    exec = Execution(fl.exec_data_file, main_exec_data)
+
+    counter = 0
     while True:
-        state, obs = env.reset()
-        bench_done = False
-        while not bench_done:
-            num_loops = len(state.operation_features.nested_loops)
-            transformation_eps_dist, parallelization_eps_dist, tiling_eps_dist, interchange_eps_dist = create_uniform_distributions(obs, [num_loops])
-            transformation_index = transformation_eps_dist.sample()
-            parallelization_index = parallelization_eps_dist.sample()
-            tiling_index = tiling_eps_dist.sample()
-            interchange_index = interchange_eps_dist.sample().long()
-            actions = indices_to_raw_actions(transformation_index, parallelization_index, tiling_index, interchange_index, [num_loops])
-            next_state, next_obs, _, op_done, _ = env.step(state, actions[0])
-            if op_done:
-                next_state, next_obs, bench_done = env.get_next_op_state(next_state)
-            state = next_state
-            obs = next_obs
-        pbar.update(1)
+        print_info(f"Collection {counter}...", end=' ', add_label=False)
+        results = dm.map_objs(execute_bench, range(len(train_data)), train_data, main_exec_data, training=False, obj_str=lambda i: train_data[i].bench_name)
+        new_cache_data: dict[str, dict[str, int]] = {}
+        cache_misses = 0
+        for res in results:
+            if not res:
+                continue
+            exec_time, bench_name, cache_key, cache_miss = res
+            cache_misses += int(cache_miss)
+            if exec_time is None or not cache_miss:
+                continue
+            if bench_name not in new_cache_data:
+                new_cache_data[bench_name] = {}
+            new_cache_data[bench_name][cache_key] = exec_time
+        exec.update_execution_cache(new_cache_data)
+        print_info(f"{cache_misses / len(results) * 100:.2f}% new records")
+        counter += 1

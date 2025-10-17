@@ -1,6 +1,6 @@
 import subprocess
-from time import sleep
-from typing import TYPE_CHECKING, Any, Callable, Optional, TypeVar
+from time import sleep, time
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Optional, TypeVar
 
 from distributed import Future, as_completed
 from dask.distributed import Client
@@ -14,10 +14,10 @@ import os
 if TYPE_CHECKING:
     from rl_autoschedular.benchmarks import Benchmarks
     from dask_jobqueue.slurm import SLURMJob
-    from rl_autoschedular.state import OperationState
 
 ENABLED = True
 T = TypeVar('T')
+obj_T = TypeVar('obj_T')
 
 
 class DaskManager(metaclass=Singleton):
@@ -80,28 +80,29 @@ class DaskManager(metaclass=Singleton):
             return 0
         return len(self.cluster.workers)
 
-    def map_states(
+    def map_objs(
         self,
-        func: Callable[['OperationState', str, 'Benchmarks', Optional[dict[str, dict[str, int]]]], T],
-        states: list['OperationState'],
+        func: Callable[[obj_T, str, 'Benchmarks', Optional[dict[str, dict[str, int]]]], T],
+        objs: Iterable[obj_T],
         benchs: 'Benchmarks',
         main_exec_data: Optional[dict[str, dict[str, int]]],
         training: bool,
+        obj_str: Callable[[obj_T], str] = lambda o: str(o)
     ) -> list[Optional[T]]:
         if not ENABLED or self.num_workers == 0:
-            return [func(s, FileLogger().exec_data_file, benchs, main_exec_data) for s in states]
+            return [func(o, FileLogger().exec_data_file, benchs, main_exec_data) for o in objs]
 
-        # Prepare states for submission
-        states_count = len(states)
-        ordered_states = list(zip(range(states_count), states))
-        results: list[Optional[T]] = [None] * states_count
+        # Prepare objs for submission
+        objs_count = len(objs)
+        ordered_objs = list(zip(range(objs_count), objs))
+        results: list[Optional[T]] = [None] * objs_count
         future_to_worker: dict[Future, str] = {}
 
-        # Submit first states to each worker
-        initial_states_count = min(states_count, self.num_workers)
-        for i in range(initial_states_count):
+        # Submit first objs to each worker
+        initial_objs_count = min(objs_count, self.num_workers)
+        for i in range(initial_objs_count):
             worker_name = self.workers_names[i]
-            future = self.__submit_state(func, *ordered_states.pop(0), worker_name, training)
+            future = self.__submit_obj(func, *ordered_objs.pop(0), worker_name, training)
             future_to_worker[future] = worker_name
 
         # Process futures as they finish
@@ -115,9 +116,9 @@ class DaskManager(metaclass=Singleton):
                 results[idx] = result
                 freed_worker = future_to_worker.pop(future)
 
-                # If there are still remaining states submit them
-                if ordered_states:
-                    new_future = self.__submit_state(func, *ordered_states.pop(0), freed_worker, training)
+                # If there are still remaining objs submit them
+                if ordered_objs:
+                    new_future = self.__submit_obj(func, *ordered_objs.pop(0), freed_worker, training)
                     future_to_worker[new_future] = freed_worker
 
                     # Include the new future in the queue
@@ -136,8 +137,8 @@ class DaskManager(metaclass=Singleton):
                 self.__renew_worker_persistents(worker)
             print_error(
                 "States exec timed out\n"
-                f"Cancelling benchmarks: {[s.bench_name for s, r in zip(states, results) if r is None]}\n"
-                f"Unvisited benchmarks: {[s.bench_name for _, s in ordered_states]}\n"
+                f"Cancelling benchmarks: {[obj_str(o) for o, r in zip(objs, results) if r is None]}\n"
+                f"Unvisited benchmarks: {[obj_str(o) for _, o in ordered_objs]}\n"
                 f"Restarted workers: {restarted_workers}\n"
                 f"Failed to restart workers: {unrestarted_workers}"
             )
@@ -196,11 +197,11 @@ class DaskManager(metaclass=Singleton):
         for key in self.persistent_funcs:
             self.__renew_persistent(key, worker)
 
-    def __submit_state(
+    def __submit_obj(
         self,
-        func: Callable[['OperationState', str, 'Benchmarks', Optional[dict[str, dict[str, int]]]], T],
+        func: Callable[[obj_T, str, 'Benchmarks', Optional[dict[str, dict[str, int]]]], T],
         idx: int,
-        state: 'OperationState',
+        obj: obj_T,
         worker: str,
         training: bool
     ):
@@ -215,7 +216,7 @@ class DaskManager(metaclass=Singleton):
 
         return self.client.submit(
             func_wrapper,
-            idx, state, exec_data_file, benchs, main_exec_data,
+            idx, obj, exec_data_file, benchs, main_exec_data,
             workers=worker,
             resources={'single_task_slot': 1},
             pure=False
@@ -236,27 +237,30 @@ class DaskManager(metaclass=Singleton):
         job_id_to_worker = {j.job_id: w for w, j in workers.items() if isinstance(j.job_id, str)}
 
         # Give it some time for the jobs to be accepted
-        sleep(5)
+        pending_jobs = set(job_id_to_worker.keys())
+        start_wait = time()
+        print_info("Waiting for jobs to be accepted")
+        while time() - start_wait < 60 and pending_jobs:
+            command = ['squeue', '-h', '-o', '%i %T', '-j', ','.join(job_id_to_worker.keys())]
+            running_workers: set[str] = set()
+            pending_jobs: set[str] = set()
+            try:
+                # Run the command
+                result = subprocess.run(command, capture_output=True, text=True, check=True)
 
-        command = ['squeue', '-h', '-o', '%i %T', '-j', ','.join(job_id_to_worker.keys())]
-        running_workers: set[str]
-        try:
-            # Run the command
-            result = subprocess.run(command, capture_output=True, text=True, check=True)
+                # The output will be one status per line
+                output_statuses = result.stdout.strip().split('\n')
 
-            # The output will be one status per line
-            output_statuses = result.stdout.strip().split('\n')
-
-            # Map job IDs to their retrieved statuses
-            running_workers = set()
-            for id_status in output_statuses:
-                job_id, status = id_status.split()
-                if status != 'RUNNING':
-                    continue
-                running_workers.add(job_id_to_worker[job_id])
-
-        except subprocess.CalledProcessError:
-            running_workers = set()
+                # Map job IDs to their retrieved statuses
+                for id_status in output_statuses:
+                    job_id, status = id_status.split()
+                    if status == 'RUNNING':
+                        running_workers.add(job_id_to_worker[job_id])
+                    elif status == 'PENDING':
+                        pending_jobs.add(job_id_to_worker[job_id])
+            except subprocess.CalledProcessError:
+                pass
+            sleep(1)
         non_running_workers = set(workers.keys()) - running_workers
         if non_running_workers:
             print_alert(

@@ -85,8 +85,15 @@ class Execution(metaclass=Singleton):
                 data[bench_name] = {}
             data[bench_name].update(bench_data)
 
-        with open(self.exec_data_file, "w") as file:
-            json.dump(data, file, indent=4)
+        try:
+            with open(self.exec_data_file + ".tmp", "w") as file:
+                json.dump(data, file, indent=4)
+                file.flush()
+                os.fsync(file.fileno())
+            os.replace(self.exec_data_file + ".tmp", self.exec_data_file)
+        finally:
+            if os.path.exists(self.exec_data_file + ".tmp"):
+                os.remove(self.exec_data_file + ".tmp")
 
     def get_code_cache_key(self, seq: list[list['Action']]) -> str:
         """Get the code cache key for the given operation state.
