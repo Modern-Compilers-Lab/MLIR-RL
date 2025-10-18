@@ -16,14 +16,14 @@ class TiledFusion(TiledParallelization):
     producer_feats_updated: bool
 
     @overload
-    def __new__(cls, parameters: list[int], state: OperationState, **extras) -> Union[TiledParallelization, 'TiledFusion']:
+    def __new__(cls, parameters: list[int], state: OperationState, /, **extras) -> Union[TiledParallelization, 'TiledFusion']:
         ...
 
     @overload
     def __new__(
         cls,
         parameters: list[int],
-        *_,
+        /, *,
         producer_tag: str,
         producer_operand_idx: int,
         **extras
@@ -49,6 +49,7 @@ class TiledFusion(TiledParallelization):
         self,
         parameters: list[int],
         state: Optional[OperationState] = None,
+        /, *,
         producer_tag: Optional[str] = None,
         producer_operand_idx: Optional[int] = None,
         **extras
@@ -77,6 +78,11 @@ class TiledFusion(TiledParallelization):
 
     def __str__(self):
         return f"{self.symbol}({self.producer_tag};{','.join(map(str, self.parameters))})"
+
+    @classmethod
+    def from_str(cls, state: OperationState, action_str: str):
+        action_str = action_str.replace(f'({state.producer_tag};', '(')
+        return super().from_str(state, action_str)
 
     @property
     def consumer_tag(self):

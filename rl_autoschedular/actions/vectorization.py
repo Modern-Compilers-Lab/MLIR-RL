@@ -23,6 +23,7 @@ class Vectorization(Action):
     def __init__(
         self,
         state: Optional[OperationState] = None,
+        /, *,
         requires_transpose: Optional[bool] = None,
         requires_decompose: Optional[bool] = None,
         decompose_tile_sizes: Optional[list[int]] = None,

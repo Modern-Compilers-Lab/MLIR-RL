@@ -26,8 +26,15 @@ class Interchange(Action):
     method = InterchangeMethod(Config().interchange_mode)
     log_std = torch.nn.Parameter(torch.zeros(1))
 
-    def __init__(self, parameters: list[int], state: Optional[OperationState] = None, **extras):
-        if state:
+    def __init__(
+        self,
+        parameters: list[int],
+        state: Optional[OperationState] = None,
+        /, *,
+        process_params: bool = True,
+        **extras
+    ):
+        if state and process_params:
             # Case where state is provided -> Parameters need processing
 
             assert len(parameters) == 1, 'uncompatible parameters for constructor call'

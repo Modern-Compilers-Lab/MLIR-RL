@@ -64,7 +64,7 @@ class Execution(metaclass=Singleton):
             return cache_exec_time, True, False
 
         bufferized_code = transform_bufferize_and_lower_v(code)
-        real_exec_time, success = self.__execute_bufferized_code(bufferized_code)
+        real_exec_time, success = self.__execute_bufferized_code_wrapper(bufferized_code)
         return real_exec_time, success, True
 
     def update_execution_cache(self, new_data: dict[str, dict[str, int]]):
@@ -112,6 +112,9 @@ class Execution(metaclass=Singleton):
 
         return '|'.join(ops_codes)
 
+    def __execute_bufferized_code_wrapper(self, code: str):
+        return BindingsProcess.call(self.__execute_bufferized_code, code, timeout=600)
+
     def __execute_bufferized_code(self, code: str) -> tuple[int, bool]:
         """Lowers and runs the given MLIR code using Python bindings, then returns the execution time and assertion
         result (if the executed code returns the correct result).
@@ -124,59 +127,56 @@ class Execution(metaclass=Singleton):
             bool: the assertion result.
         """
 
-        def execute_bind_call():
-            pass_pipeline = """builtin.module(
-                canonicalize,
-                buffer-deallocation-pipeline,
-                convert-bufferization-to-memref,
-                convert-linalg-to-loops,
-                scf-forall-to-parallel,
-                convert-scf-to-openmp,
-                expand-strided-metadata,
-                finalize-memref-to-llvm,
-                convert-scf-to-cf,
-                lower-affine,
+        pass_pipeline = """builtin.module(
+            canonicalize,
+            buffer-deallocation-pipeline,
+            convert-bufferization-to-memref,
+            convert-linalg-to-loops,
+            scf-forall-to-parallel,
+            convert-scf-to-openmp,
+            expand-strided-metadata,
+            finalize-memref-to-llvm,
+            convert-scf-to-cf,
+            lower-affine,
 
-                convert-openmp-to-llvm,
-                convert-vector-to-llvm,
-                convert-math-to-llvm,
-                convert-math-to-libm,
-                finalize-memref-to-llvm,
-                convert-func-to-llvm,
-                convert-index-to-llvm,
-                convert-arith-to-llvm,
-                convert-cf-to-llvm,
+            convert-openmp-to-llvm,
+            convert-vector-to-llvm,
+            convert-math-to-llvm,
+            convert-math-to-libm,
+            finalize-memref-to-llvm,
+            convert-func-to-llvm,
+            convert-index-to-llvm,
+            convert-arith-to-llvm,
+            convert-cf-to-llvm,
 
-                reconcile-unrealized-casts,
-                canonicalize,
-                cse
-            )"""
+            reconcile-unrealized-casts,
+            canonicalize,
+            cse
+        )"""
 
-            with Context():
-                module = Module.parse(code)
-                pm = PassManager.parse(pass_pipeline)
+        with Context():
+            module = Module.parse(code)
+            pm = PassManager.parse(pass_pipeline)
 
-            inputs, outs_struct = self.__create_params(module)
-            args = self.__convert_to_args(inputs, outs_struct)
+        inputs, outs_struct = self.__create_params(module)
+        args = self.__convert_to_args(inputs, outs_struct)
 
-            pm.run(module.operation)
-            execution_engine = ExecutionEngine(
-                module,
-                opt_level=3,
-                shared_libs=os.getenv("MLIR_SHARED_LIBS", "").split(","),
-            )
+        pm.run(module.operation)
+        execution_engine = ExecutionEngine(
+            module,
+            opt_level=3,
+            shared_libs=os.getenv("MLIR_SHARED_LIBS", "").split(","),
+        )
 
-            try:
-                for _ in range(2):
-                    execution_engine.invoke("main", *args)
-                    # If output tensors are needed call `get_results` before `free_outputs`
-                    outs_struct.free_outputs()
-            finally:
+        try:
+            for _ in range(2):
+                execution_engine.invoke("main", *args)
+                # If output tensors are needed call `get_results` before `free_outputs`
                 outs_struct.free_outputs()
+        finally:
+            outs_struct.free_outputs()
 
-            return outs_struct.delta, True
-
-        return BindingsProcess.call(execute_bind_call, timeout=600)
+        return outs_struct.delta, True
 
     def __check_execution_cache(self, bench_name: str, cache_key: str) -> Optional[int]:
         """Check the execution cache for the given operation state.

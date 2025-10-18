@@ -19,12 +19,12 @@ class Action:
     sub_actions: list['Action'] = []
 
     @overload
-    def __init__(self, *_, operation_tag: str, **extras):
+    def __init__(self, *, operation_tag: str, **extras):
         """Initialize action without parameters"""
         ...
 
     @overload
-    def __init__(self, state: OperationState, **extras):
+    def __init__(self, state: OperationState, /, **extras):
         """Initialize action dependent on state but without parameters
 
         Args:
@@ -33,7 +33,7 @@ class Action:
         ...
 
     @overload
-    def __init__(self, parameters: list[int], *_, operation_tag: str, **extras):
+    def __init__(self, parameters: list[int], /, *, operation_tag: str, **extras):
         """Initialize action with parameters
 
         Args:
@@ -42,7 +42,7 @@ class Action:
         ...
 
     @overload
-    def __init__(self, parameters: list[int], state: OperationState, **extras):
+    def __init__(self, parameters: list[int], state: OperationState, /, **extras):
         """Initialize action with unprocessed parameters
 
         Args:
@@ -55,6 +55,7 @@ class Action:
         self,
         arg1: Optional[Union[OperationState, list[int]]] = None,
         arg2: Optional[OperationState] = None,
+        /, *,
         operation_tag: Optional[str] = None,
         **extras
     ):
@@ -71,6 +72,8 @@ class Action:
         self.operation_tag = operation_tag
         self.parameters = parameters
         self.extras = {'operation_tag': operation_tag, **extras}
+        if 'process_params' in self.extras:
+            del self.extras['process_params']
 
     def __repr__(self) -> str:
         """String representation of the action with extra params"""
@@ -82,6 +85,26 @@ class Action:
     def __str__(self) -> str:
         """String representation of the action"""
         return f"{self.symbol}({','.join(map(str, self.parameters)) if self.parameters else ''})"
+
+    @classmethod
+    def from_str(cls, state: OperationState, action_str: str) -> 'Action':
+        """Create an action from a string representation
+
+        Args:
+            state (OperationState): current state to apply the action on
+            action_str (str): string representation of the action
+
+        Returns:
+            Action: action created from the string representation
+        """
+        symbol = action_str.split('(')[0]
+        if symbol != cls.symbol:
+            raise ValueError(f'Symbol mismatch for class {cls.__name__}: {symbol} != {cls.symbol}')
+
+        parameters = list(map(int, action_str.split('(')[1].split(')')[0].split(',')))
+        if not parameters:
+            return cls(state)
+        return cls(parameters, state, process_params=False)
 
     @classmethod
     def params_size(cls) -> int:

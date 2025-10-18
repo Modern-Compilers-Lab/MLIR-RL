@@ -5,6 +5,7 @@ load_dotenv(override=True)
 load_dotenv('.env.debug')
 
 import json
+import sys
 from typing import Optional
 
 from rl_autoschedular.actions import ActionSpace
@@ -88,3 +89,5 @@ if __name__ == "__main__":
         exec.update_execution_cache(new_cache_data)
         print_info(f"{cache_misses / len(results) * 100:.2f}% new records")
         counter += 1
+        sys.stdout.flush()
+        sys.stderr.flush()

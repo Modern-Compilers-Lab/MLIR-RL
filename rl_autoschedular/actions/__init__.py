@@ -50,6 +50,14 @@ class ActionSpace:
         return sizes
 
     @classmethod
+    def action_from_str(cls, state: OperationState, action_str: str) -> Action:
+        symbol_to_action = {action.symbol: action for action in cls.supported_actions}
+        symbol = action_str.split('(')[0]
+        if symbol not in symbol_to_action:
+            raise ValueError(f"Action symbol '{symbol}' not supported")
+        return symbol_to_action[symbol].from_str(state, action_str)
+
+    @classmethod
     def action_by_index(cls, index: torch.Tensor, state: OperationState) -> Action:
         action_idx = int(index[0].item())
         action_type = cls.supported_actions[action_idx]

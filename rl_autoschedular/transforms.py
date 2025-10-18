@@ -31,7 +31,7 @@ def transform_TP(code: str, operation_tag: str, tiling_sizes: list[int]):
         f'}}'
     )
 
-    return __run_transform_code(code, transform_code)
+    return __run_transform_code_wrapper(code, transform_code)
 
 
 def transform_tile(code: str, operation_tag: str, tiling_sizes: list[int]):
@@ -63,7 +63,7 @@ def transform_tile(code: str, operation_tag: str, tiling_sizes: list[int]):
         f'}}\n'
     )
 
-    return __run_transform_code(code, transform_code)
+    return __run_transform_code_wrapper(code, transform_code)
 
 
 def transform_interchange(code: str, operation_tag: str, interchange_list: list[int]):
@@ -94,7 +94,7 @@ def transform_interchange(code: str, operation_tag: str, interchange_list: list[
         f'}}\n'
     )
 
-    return __run_transform_code(code, transform_code)
+    return __run_transform_code_wrapper(code, transform_code)
 
 
 def transform_vectorize_img2col(code: str, operation_tag: str):
@@ -169,7 +169,7 @@ transform.named_sequence @__transform_main(%variant_op: !transform.any_op {{tran
 }}
 """
 
-    return __run_transform_code(code, transform_code)
+    return __run_transform_code_wrapper(code, transform_code)
 
 
 def transform_vectorize_children(code: str):
@@ -198,7 +198,7 @@ def transform_vectorize_children(code: str):
         }
     }"""
 
-    return __run_transform_code(code, transform_code)
+    return __run_transform_code_wrapper(code, transform_code)
 
 
 def transform_vectorize_with_vectorizer(code: str, operation_tag: str):
@@ -245,7 +245,7 @@ def transform_vectorize(code: str, operation_tag: str):
         }}
     }}"""
 
-    return __run_transform_code(code, transform_code)
+    return __run_transform_code_wrapper(code, transform_code)
 
 
 def transform_img2col(code: str, operation_tag: str):
@@ -275,7 +275,7 @@ module attributes {{transform.with_named_sequence}} {{
     # // %matmul_op_tag = transform.param.constant "{operation_tag}" -> !transform.any_param
     # // transform.annotate %matmul_op "tag" = %matmul_op_tag : !transform.any_op, !transform.any_param
 
-    return __run_transform_code(code, transform_code)
+    return __run_transform_code_wrapper(code, transform_code)
 
 
 def transform_TF(code: str, consumer_tag: str, producer_tag: str, new_producer_tag: str, tiling_sizes: list[int]):
@@ -310,7 +310,7 @@ def transform_TF(code: str, consumer_tag: str, producer_tag: str, new_producer_t
         f'}}\n'
     )
 
-    return __run_transform_code(code, transform_code)
+    return __run_transform_code_wrapper(code, transform_code)
 
 
 def transform_decompose(code: str, operation_tag: str):
@@ -334,7 +334,7 @@ def transform_decompose(code: str, operation_tag: str):
         }}
     }}"""
 
-    return __run_transform_code(code, transform_code)
+    return __run_transform_code_wrapper(code, transform_code)
 
 
 def transform_transpose_conv_2d(code: str, operation_tag: str):
@@ -358,7 +358,7 @@ def transform_transpose_conv_2d(code: str, operation_tag: str):
         }}
     }}"""
 
-    return __run_transform_code(code, transform_code)
+    return __run_transform_code_wrapper(code, transform_code)
 
 
 def transform_bufferize_and_lower_v(code: str):
@@ -409,7 +409,7 @@ def transform_bufferize_and_lower_v(code: str):
         }
     }"""
 
-    return __run_transform_code(code, transform_code)
+    return __run_transform_code_wrapper(code, transform_code)
 
 
 def transform_pre_vec(code: str, operation_tag: str):
@@ -438,13 +438,14 @@ def transform_pre_vec(code: str, operation_tag: str):
     return code
 
 
+def __run_transform_code_wrapper(code: str, transform_code: str):
+    return BindingsProcess.call(__run_transform_code, code, transform_code, timeout=60)
+
+
 def __run_transform_code(code: str, transform_code: str):
-    def transform_bind_call():
-        with Context():
-            module = Module.parse(code)
-            t_module = Module.parse(transform_code)
-        interpreter.apply_named_sequence(module, t_module.body.operations[0], t_module)
+    with Context():
+        module = Module.parse(code)
+        t_module = Module.parse(transform_code)
+    interpreter.apply_named_sequence(module, t_module.body.operations[0], t_module)
 
-        return str(module)
-
-    return BindingsProcess.call(transform_bind_call, timeout=60)
+    return str(module)

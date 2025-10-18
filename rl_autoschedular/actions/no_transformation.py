@@ -13,7 +13,7 @@ class NoTransformation(Action):
     # --- constants ---
     terminal = True
 
-    def __init__(self, state: Optional[OperationState] = None, **extras):
+    def __init__(self, state: Optional[OperationState] = None, /, **extras):
         super().__init__(state, **extras)
 
     def _apply_ready(self, code):

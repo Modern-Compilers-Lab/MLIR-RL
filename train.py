@@ -8,7 +8,6 @@ import os
 import logging
 import torch
 import json
-import multiprocessing
 from typing import Optional
 from time import time
 from datetime import timedelta
@@ -26,8 +25,6 @@ from utils.gpu_occupier import GPUOccupier
 
 
 if __name__ == "__main__":
-    multiprocessing.set_start_method('spawn')
-
     logging.basicConfig(
         filename=f"logs/{os.getenv('SLURM_JOB_NAME', 'interactive')}_{os.environ['SLURM_JOB_ID']}.debug",
         filemode="w",

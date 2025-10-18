@@ -1,15 +1,14 @@
+import os
 import subprocess
 from time import sleep, time
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Optional, TypeVar
 
-from distributed import Future, as_completed
-from dask.distributed import Client
+from dask.distributed import Client, Future, as_completed
 from dask_jobqueue import SLURMCluster
 
 from .file_logger import FileLogger
 from .singleton import Singleton
 from .log import print_alert, print_error, print_info, print_success
-import os
 
 if TYPE_CHECKING:
     from rl_autoschedular.benchmarks import Benchmarks
