@@ -1,62 +1,73 @@
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 
-# Your online dataset benchmarks
-online_data = [
-    "matmul_256_768_2",
-    "matmul_256_768_3072",
-    "matmul_256_2048_2048",
-    "matmul_256_256_512",
-    "matmul_256_1024_1024",
-    "matmul_256_1536_1000",
-    "matmul_256_256_128",
-    "matmul_256_512_1024",
-    "matmul_256_1536_4096",
-    "matmul_256_1408_1000",
-    "matmul_256_1280_1000",
-    "matmul_256_768_768",
-    "matmul_256_2048_1000",
-    "matmul_256_4096_1024",
-    "matmul_256_128_256",
-    "matmul_1024_128_768",
-    "matmul_1024_2048_128",
-    "matmul_1024_128_256",
-    "matmul_1024_128_512",
-    "matmul_1024_1024_128",
-    "matmul_1024_1024_256",
-    "matmul_1024_128_1024",
-    "matmul_1024_1536_128",
-    "matmul_1024_128_128",
-    "matmul_1024_128_2048",
-]
+# Define which benchmarks belong to which dataset
+online_data = {
+    "offline": [
+        "matmul_256_768_3072",
+        "matmul_256_2048_2048",
+        "matmul_256_256_512",
+        "matmul_256_512_1024",
+    ],
+    "online": [
+        "matmul_1024_128_768",
+        "matmul_1024_128_512",
+        "matmul_1024_1024_128",
+        "matmul_1024_128_1024",
+        "matmul_1024_128_2048",
+    ],
+}
 
-# Load your CSV file
+# Load CSV
 df = pd.read_csv("online_iql.csv", sep=";")
 
-# Exclude "average_speedup" from bar chart (optional, keep only benchmarks)
-benchmarks_df = df[df["metric"] != "average_speedup"]
+# Filter out "average_speedup" rows
+df = df[df["metric"] != "average_speedup"]
 
-# Assign colors depending on online/offline
-colors = [
-    "blue" if metric in online_data else "red"
-    for metric in benchmarks_df["metric"]
-]
+# Pivot table for easier comparison
+pivot_df = df.pivot(index="metric", columns="algorithm", values="score")
 
-# Plot horizontal bar chart
-plt.figure(figsize=(10, 6))
-plt.barh(benchmarks_df["metric"], benchmarks_df["score"], color=colors)
+# Determine dataset (online/offline) for each metric
+def get_dataset(metric):
+    if metric in online_data["online"]:
+        return "online"
+    elif metric in online_data["offline"]:
+        return "offline"
+    else:
+        return "unknown"
 
-plt.xlabel("Score")
+pivot_df["dataset"] = pivot_df.index.map(get_dataset)
+
+# Assign colors based on dataset
+color_map = {"online": "blue", "offline": "red", "unknown": "gray"}
+colors = pivot_df["dataset"].map(color_map)
+
+# Plot grouped horizontal bars
+ax = pivot_df[["Online Finetuned IQL", "PPO"]].plot.barh(
+    figsize=(10, 6),
+    color=["#1f77b4", "#ff7f0e"],
+    edgecolor="black"
+)
+
+# Apply y-labels and color backgrounds per dataset type
+for i, (dataset, metric) in enumerate(zip(pivot_df["dataset"], pivot_df.index)):
+    ax.get_yticklabels()[i].set_color(color_map[dataset])
+
+plt.xlabel("Speedup")
 plt.ylabel("Benchmark")
-plt.title("Online finetuning of IQL")
+plt.title("Online Finetuned IQL vs PPO — Benchmark Speedup Comparison")
 
-# Add legend manually
-import matplotlib.patches as mpatches
+# Create legend
 blue_patch = mpatches.Patch(color="blue", label="Online data")
 red_patch = mpatches.Patch(color="red", label="Offline data")
-plt.legend(handles=[blue_patch, red_patch])
+orange_patch = mpatches.Patch(color="#ff7f0e", label="PPO")
+blue_bar_patch = mpatches.Patch(color="#1f77b4", label="IQL")
+
+plt.legend(handles=[blue_bar_patch, orange_patch, blue_patch, red_patch], loc="best")
 
 plt.tight_layout()
-plt.savefig("online_offline_iql.png")
+plt.savefig("online_offline_iql_vs_ppo.png", dpi=300)
+plt.show()
 
-print("Plot saved as online_offline_iql.png")
+print("✅ Plot saved as online_offline_iql_vs_ppo.png")

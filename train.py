@@ -37,15 +37,15 @@ print_success(f'Logging to: {fl.run_dir}')
 # Set environments
 
 # run_name for /tmp/ path
-env = Env(is_training=True,run_name="online_ppo_data_collection")
-eval_env = Env(is_training=False,run_name="online_ppo_data_collection")
+env = Env(is_training=True,run_name="online_ppo")
+eval_env = Env(is_training=False,run_name="online_ppo")
 print_success(f"Environments initialized: {env.tmp_file}")
 
 # Set model
 model = Model().to(device)
 optimizer = torch.optim.Adam(
     model.parameters(),
-    lr=cfg.lr
+    lr=3e-4
 )
 print_success("Model initialized")
 

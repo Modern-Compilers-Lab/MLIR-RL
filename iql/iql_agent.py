@@ -49,11 +49,13 @@ class IQLAgent(nn.Module):
         self.value_optimizer = torch.optim.Adam(self.value_model.parameters(), lr=cfg.lr["value"])
         self.q_optimizer = torch.optim.Adam(self.q_model.parameters(), lr=cfg.lr["q"])
         self.policy_optimizer = torch.optim.Adam(self.policy_model.parameters(), lr=cfg.lr["policy"])
+        """ 
         self.policy_lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             self.policy_optimizer,
             T_max=600000,
             eta_min=1e-5
-        )
+        ) 
+        """
 
     # --------- helpers to move inputs to device ----------
     def _to_device_tensor(self, x: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
@@ -225,7 +227,7 @@ class IQLAgent(nn.Module):
 
         
         self.policy_optimizer.step()
-        self.policy_lr_scheduler.step()
+        # self.policy_lr_scheduler.step()
         return loss_pi
 
     # ------------------------
@@ -281,6 +283,3 @@ class IQLAgent(nn.Module):
             "policy": float(loss_pi.item()),
             "value": float(loss_v.item()),
         }
-
-
-

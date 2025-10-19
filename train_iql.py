@@ -83,7 +83,7 @@ def evaluate_benchmarks(model: IQLAgent, env: Env, step: int):
             obs = Observation.from_state(state)
 
             # Sample action and log-prob from *current policy*
-            action_index, action_log_p, entropy = model.sample(obs.to(device), greedy=True)
+            action_index, action_log_p, entropy = model.sample(obs.to(device))
             assert action_index.size(0) == 1 and action_log_p.size(0) == 1
             action = ActionSpace.action_by_index(action_index[0], state)
 
