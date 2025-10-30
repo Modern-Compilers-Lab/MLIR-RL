@@ -1,5 +1,7 @@
 import os
 import ctypes
+import json
+import re
 import ctypes.util
 import numpy as np
 from mlir.ir import Context, Module, MemRefType, IntegerType, F64Type, F32Type
@@ -11,7 +13,6 @@ from typing import TYPE_CHECKING, Optional, overload
 from rl_autoschedular.transforms import transform_bufferize_and_lower_v
 from utils.bindings_process import BindingsProcess
 from utils.singleton import Singleton
-import json
 
 if TYPE_CHECKING:
     from rl_autoschedular.actions import Action
@@ -111,6 +112,12 @@ class Execution(metaclass=Singleton):
             ops_codes.append(''.join(map(str, op_seq)))
 
         return '|'.join(ops_codes)
+
+    def decode_cache_key(self, cache_key: str) -> list[list[str]]:
+        return [
+            [s for s in re.findall(r"\w+\([^\)]*\)", op_seq_s)]
+            for op_seq_s in cache_key.split('|')
+        ]
 
     def __execute_bufferized_code_wrapper(self, code: str):
         return BindingsProcess.call(self.__execute_bufferized_code, code, timeout=600)

@@ -29,6 +29,10 @@ class ActionSpace:
         return len(cls.supported_actions)
 
     @classmethod
+    def action_number(cls, action_type: type[Action]) -> int:
+        return cls.supported_actions.index(action_type)
+
+    @classmethod
     def cumulative_params_sizes(cls):
         sizes: list[int] = [1]
         for trans in cls.supported_actions:
@@ -69,8 +73,14 @@ class ActionSpace:
         return action_type(params, state)
 
     @classmethod
-    def action_number(cls, action_type: type[Action]) -> int:
-        return cls.supported_actions.index(action_type)
+    def action_to_index(cls, action: Action) -> torch.Tensor:
+        cum_sizes = cls.cumulative_params_sizes()
+        index = torch.zeros(cum_sizes[-1])
+        action_idx = cls.action_number(type(action))
+        index[0] = action_idx
+        if action.params_size():
+            index[cum_sizes[action_idx]:cum_sizes[action_idx + 1]] = action.params_to_index()
+        return index
 
     @classmethod
     def action_type_by_symbol(cls, symbol: str) -> type[Action]:

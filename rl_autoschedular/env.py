@@ -1,11 +1,9 @@
 from rl_autoschedular.state import OperationState, BenchmarkFeatures
-from rl_autoschedular.benchmarks import Benchmarks
 from typing import Optional
 from rl_autoschedular.execution import Execution
 from rl_autoschedular.actions import Action, TiledFusion
 from utils.log import print_error
 from utils.config import Config
-import random
 import math
 import traceback
 
@@ -13,25 +11,19 @@ import traceback
 class Env:
     """RL Environment class"""
 
-    bench_idx: int
-    """Index of the selected benchmark"""
     benchmark_data: BenchmarkFeatures
     """Features of the selected benchmark"""
 
-    def reset(self, benchs: Benchmarks, bench_idx: Optional[int] = None) -> OperationState:
+    def reset(self, bench: BenchmarkFeatures) -> OperationState:
         """Reset the environment.
 
         Args:
-            bench_idx (Optional[int]): The index of the benchmark to set the environement to. If None, a random benchmark is selected. Defaults to None.
+            bench (BenchmarkFeatures): The benchmark to use.
 
         Returns:
             OperationState: The initial state of the environment.
         """
-        # Get the benchmark
-        if bench_idx is None:
-            bench_idx = random.randint(0, len(benchs) - 1)
-        self.bench_idx = bench_idx
-        self.benchmark_data = benchs[bench_idx].copy()
+        self.benchmark_data = bench.copy()
 
         return self.__init_op_state(-1)
 
@@ -116,15 +108,57 @@ class Env:
             cache_miss = True
 
         # The reward will take into consideration whether execution succeeded or not
-        rewards[-1] = self.__action_reward(True, exec_succeeded, new_exec_time, self.benchmark_data.root_exec_time)
+        rewards[-1] = self.action_reward(True, exec_succeeded, new_exec_time, self.benchmark_data.root_exec_time)
         speedup = (self.benchmark_data.root_exec_time / new_exec_time) if new_exec_time is not None else 1.0
 
         return rewards, speedup, new_exec_time, cache_miss
 
-    def failed_seq(self, seq: list[list[Action]]) -> tuple[list[float], float, Optional[int], bool]:
+    @classmethod
+    def failed_seq(cls, seq: list[list[Action]]) -> tuple[list[float], float, Optional[int], bool]:
         rewards = [0.0 for op_seq in reversed(seq) for action in op_seq for _ in range(len(action.sub_actions) + 1)]
-        rewards[-1] = self.__action_reward(True, False)
+        rewards[-1] = cls.action_reward(True, False)
         return rewards, 1.0, None, True
+
+    @classmethod
+    def action_reward(cls, trans_succeeded: bool, exec_succeeded: Optional[bool] = None, new_exec_time: Optional[int] = None, old_exec_time: Optional[int] = None) -> float:
+        """Get the reward of the action based on the transformation and execution results.
+
+        Args:
+            trans_succeeded (bool): A flag indicating if the transformation was successful.
+            exec_succeeded (Optional[bool]): A flag indicating if the execution was successful. (required if trans succeeded)
+            new_exec_time (Optional[float]): The execution time after transformation. (required if exec succeeded)
+            old_exec_time (Optional[float]): The original execution time. (required if exec succeeded)
+
+        Returns:
+            float: The reward of the action.
+        """
+        if not trans_succeeded:
+            return -5.0
+
+        assert exec_succeeded is not None
+        if not exec_succeeded:
+            return -20.0
+
+        assert new_exec_time is not None and old_exec_time is not None
+        return cls.speedup_reward(new_exec_time, old_exec_time)
+
+    @staticmethod
+    def speedup_reward(new: int, old: int) -> float:
+        """Get the reward based on the speedup.
+
+        Args:
+            new (float): The new execution time.
+            old (float): The old execution time.
+
+        Returns:
+            float: The calculated reward.
+        """
+
+        # if old < new * 2:
+        #     return math.log(old / (new * 2))
+        # else:
+        #     return old / (new * 2) - 1
+        return math.log10(old / new)
 
     def __init_op_state(self, operation_idx: int) -> OperationState:
         """Create a new operation state.
@@ -153,7 +187,6 @@ class Env:
             producer_features = self.benchmark_data.operations[producer_tag].copy()
 
         state = OperationState(
-            bench_idx=self.bench_idx,
             bench_name=self.benchmark_data.bench_name,
             operation_tag=operation_tag,
             original_operation_features=self.benchmark_data.operations[operation_tag].copy(),
@@ -188,45 +221,6 @@ class Env:
             bool: A flag indicating if the benchmark is done.
         """
         return self.__current_op_index(state) == 0
-
-    def __action_reward(self, trans_succeeded: bool, exec_succeeded: Optional[bool] = None, new_exec_time: Optional[int] = None, old_exec_time: Optional[int] = None) -> float:
-        """Get the reward of the action based on the transformation and execution results.
-
-        Args:
-            trans_succeeded (bool): A flag indicating if the transformation was successful.
-            exec_succeeded (Optional[bool]): A flag indicating if the execution was successful. (required if trans succeeded)
-            new_exec_time (Optional[float]): The execution time after transformation. (required if exec succeeded)
-            old_exec_time (Optional[float]): The original execution time. (required if exec succeeded)
-
-        Returns:
-            float: The reward of the action.
-        """
-        if not trans_succeeded:
-            return -5.0
-
-        assert exec_succeeded is not None
-        if not exec_succeeded:
-            return -20.0
-
-        assert new_exec_time is not None and old_exec_time is not None
-        return self.__speedup_reward(new_exec_time, old_exec_time)
-
-    def __speedup_reward(self, new: int, old: int) -> float:
-        """Get the reward based on the speedup.
-
-        Args:
-            new (float): The new execution time.
-            old (float): The old execution time.
-
-        Returns:
-            float: The calculated reward.
-        """
-
-        # if old < new * 2:
-        #     return math.log(old / (new * 2))
-        # else:
-        #     return old / (new * 2) - 1
-        return math.log10(old / new)
 
     def __update_state_infos(self, state: OperationState, action: Action):
         """Update state infos after applying a transformation.
@@ -288,7 +282,7 @@ class Env:
                         f"Benchmark: {self.benchmark_data.bench_name}\n"
                         f"Transformations:\n{seq_str}"
                     )
-                    rewards.extend([self.__action_reward(False)] * rewards_count)
+                    rewards.extend([self.action_reward(False)] * rewards_count)
                     op_seq_already_failed = True
                     continue
 

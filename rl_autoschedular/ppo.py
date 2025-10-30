@@ -171,7 +171,7 @@ def ppo_update(trajectory: TrajectoryData, model: Model, optimizer: torch.optim.
     data_loader = trajectory.loader(cfg.ppo_batch_size, 1)
     for _ in range(cfg.ppo_epochs):
         for batch in data_loader:
-            batch: list[torch.Tensor] = [e.to(device, non_blocking=True) for e in batch]
+            batch = [e.to(device, non_blocking=True) for e in batch]
             (
                 _,
                 actions_index,
@@ -249,7 +249,7 @@ def value_update(trajectory: TrajectoryData, model: Model, optimizer: torch.opti
     data_loader = trajectory.loader(cfg.value_batch_size, 1)
     for _ in range(cfg.value_epochs):
         for batch in data_loader:
-            batch: list[torch.Tensor] = [e.to(device, non_blocking=True) for e in batch]
+            batch = [e.to(device, non_blocking=True) for e in batch]
             (
                 _, _,
                 obs,
@@ -370,7 +370,7 @@ def __execute_states(state: OperationState, exec_data_file: str, benchs: Benchma
 
     Execution(exec_data_file, main_exec_data)
     env = Env()
-    env.reset(benchs, state.bench_idx)
+    env.reset(benchs[state.bench_name])
     rewards, speedup, new_exec_time, cache_miss = env.apply_and_run_sequence(state.transformation_history)
 
     worker_end = time()

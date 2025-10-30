@@ -234,6 +234,14 @@ class Action:
         """
         raise NotImplementedError
 
+    def params_to_index(self) -> torch.Tensor:
+        """Get the index tensor for the parameters of this action type
+
+        Returns:
+            torch.Tensor: index tensor for the parameters of this action type
+        """
+        raise NotImplementedError
+
     def apply(self, code: str) -> str:
         """Apply action on the current code
 

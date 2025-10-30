@@ -113,8 +113,6 @@ class BenchmarkFeatures:
 
 @dataclass
 class OperationState:
-    bench_idx: int
-    """The benchmark's index."""
     bench_name: str
     """The benchmark's name."""
     operation_tag: str
@@ -161,7 +159,6 @@ class OperationState:
     def copy(self):
         """Copy the current OperationState object."""
         return OperationState(
-            self.bench_idx,
             self.bench_name,
             self.operation_tag,
             self.original_operation_features.copy(),

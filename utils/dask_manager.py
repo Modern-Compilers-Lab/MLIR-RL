@@ -1,7 +1,7 @@
 import os
 import subprocess
 from time import sleep, time
-from typing import TYPE_CHECKING, Any, Callable, Iterable, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Optional, TypeVar
 
 from dask.distributed import Client, Future, as_completed
 from dask_jobqueue import SLURMCluster
@@ -66,6 +66,8 @@ class DaskManager(metaclass=Singleton):
         self.batch_timeout = 300
         self.persistent_funcs: dict[str, Callable[[], Any]] = {}
         self.persistent_futures: dict[str, Future] = {}
+
+        self.local_client = Client(processes=False)
 
     @property
     def workers_names(self) -> list[str]:
@@ -143,6 +145,10 @@ class DaskManager(metaclass=Singleton):
             )
 
         return results
+
+    def map_local_iter(self, func: Callable[..., T], *args) -> Iterator[T]:
+        futures = self.local_client.map(func, *args)
+        return as_completed(futures, with_results=True)
 
     def run_and_register_to_workers(self, func: Callable[[], T]):
         if not ENABLED or self.num_workers == 0:

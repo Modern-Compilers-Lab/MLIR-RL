@@ -107,6 +107,16 @@ class Tiling(Action):
 
         return index
 
+    def params_to_index(self):
+        index = torch.zeros(self.params_size())
+        for i, param in enumerate(self.parameters):
+            if param == 0:
+                index[i] = 0
+            else:
+                index[i] = int(math.log2(param)) + 1
+
+        return index
+
     def _apply_ready(self, code):
         return transform_tile(code, self.operation_tag, self.parameters)
 

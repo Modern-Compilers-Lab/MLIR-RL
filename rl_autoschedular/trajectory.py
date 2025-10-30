@@ -2,9 +2,16 @@ import torch
 from torch.utils.data import Dataset, DataLoader, Sampler, RandomSampler
 from typing import Iterator, Optional
 from rl_autoschedular import device
+from rl_autoschedular.actions import ActionSpace
+from rl_autoschedular.benchmarks import Benchmarks
+from rl_autoschedular.env import Env
+from rl_autoschedular.execution import Execution
 from rl_autoschedular.model import HiearchyModel as Model
 from time import time
+from rl_autoschedular.observation import NumLoops, Observation
+from rl_autoschedular.state import BenchmarkFeatures
 from utils.config import Config
+from utils.dask_manager import DaskManager
 from utils.log import print_info
 
 
@@ -193,7 +200,7 @@ class TrajectoryData(Dataset):
 
         return self_other
 
-    def loader(self, batch_size: Optional[int], num_trajectories: int):
+    def loader(self, batch_size: Optional[int], num_trajectories: int) -> Iterator[tuple[torch.Tensor, ...]]:
         """Create a DataLoader for the trajectory.
 
         Args:
@@ -404,3 +411,37 @@ class TrajectoryCollector:
         self.actions_bev_log_p.clear()
         self.rewards.clear()
         self.done.clear()
+
+    def fill_from_exec_data(self, benchs: Benchmarks, exec_data: dict[str, dict[str, int]]):
+        env = Env()
+        data = [
+            (benchs[bn], c, e)
+            for bn, d in exec_data.items() for c, e in d.items()
+        ]
+
+        def collect(bench: BenchmarkFeatures, cache_key: str, exec_time: int):
+            tc = TrajectoryCollector()
+            reward = env.action_reward(True, True, exec_time, bench.root_exec_time)
+            seq_str = Execution().decode_cache_key(cache_key)
+            state = env.reset(bench)
+            for op_seq_str in reversed(seq_str):
+                assert state is not None
+                for action_str in op_seq_str:
+                    global_action = ActionSpace.action_from_str(state, action_str)
+                    for action in global_action.sub_actions + [global_action]:
+                        obs = Observation.from_state(state)
+                        num_loops = Observation.get_part(obs, NumLoops).long().item()
+                        action_index = ActionSpace.action_to_index(action)
+                        next_state = env.step(state, action)
+                        next_obs = Observation.from_state(next_state)
+                        tc.append((num_loops, action_index.unsqueeze(0), obs, next_obs, 0.0, 0.0, False))
+                        state = next_state
+                assert state.terminal
+                state = env.get_next_op_state(state)
+            assert state is None
+            tc.rewards[-1] = reward
+            tc.done[-1] = True
+            return tc
+
+        for tc in DaskManager().map_local_iter(collect, *zip(*data)):
+            self += tc

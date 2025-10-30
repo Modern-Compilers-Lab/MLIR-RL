@@ -22,7 +22,7 @@ from utils.file_logger import FileLogger
 def execute_bench(bench_idx: int, exec_data_file: str, benchs: Benchmarks, main_exec_data: Optional[dict[str, dict[str, int]]]):
     exec = Execution(exec_data_file, main_exec_data)
     env = Env()
-    state = env.reset(benchs, bench_idx)
+    state = env.reset(benchs[bench_idx])
 
     finalized = False
     while not finalized:
