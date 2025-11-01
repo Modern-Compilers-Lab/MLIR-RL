@@ -6,6 +6,7 @@ from .tiled_parallelization import TiledParallelization
 from .tiled_fusion import TiledFusion
 from .interchange import Interchange
 from .vectorization import Vectorization
+from .img2col import Img2Col
 from rl_autoschedular.state import OperationState
 import torch
 from torch.distributions import Distribution, Categorical
@@ -22,6 +23,7 @@ class ActionSpace:
         TiledFusion,
         Interchange,
         Vectorization
+        # Img2Col
     ]
 
     @classmethod

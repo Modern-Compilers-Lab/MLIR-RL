@@ -11,8 +11,13 @@ path_to_folder = sys.argv[1]
 if not os.path.isdir(path_to_folder):
     print(f"Error: {path_to_folder} is not a valid directory.")
     sys.exit(1)
+    
+with open(f"{path_to_folder}/../benchmarks_split.json", 'r') as f:
+    benchmarks_split = json.load(f)
 
-output_data = {}
+train_output_data = {}
+eval_output_data = {}
+
 exec = Execution("")
 
 code_files = [f for f in os.listdir(path_to_folder) if f.endswith('.mlir')]
@@ -28,7 +33,13 @@ for code_file in files_tqdm:
     except Exception as e:
         print(f"Failed to execute {bench_name}: {e}")
         et = -1
-    output_data[bench_name] = et
-
-    with open('base_exec_times.json', 'w') as f:
-        json.dump(output_data, f, indent=4)
+        
+    if bench_name in benchmarks_split['train']:
+        train_output_data[bench_name] = et
+        with open(f"{path_to_folder}/../execution_times_train.json", 'w') as f:
+            json.dump(train_output_data, f, indent=4)
+            
+    elif bench_name in benchmarks_split['eval']:
+        eval_output_data[bench_name] = et
+        with open(f"{path_to_folder}/../execution_times_eval.json", 'w') as f:
+            json.dump(eval_output_data, f, indent=4)

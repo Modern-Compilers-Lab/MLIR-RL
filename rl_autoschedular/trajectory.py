@@ -255,6 +255,8 @@ class TrajectoryData(Dataset):
         """
         start = time()
 
+
+        print(f"OBS size: {self.obs.size()}, Next OBS size: {self.next_obs.size()}, Actions Index size: {self.actions_index.size()}")
         actions_old_log_p, values, _ = model(self.obs.to(device), self.actions_index.to(device))
         self.actions_old_log_p, self.values = actions_old_log_p.cpu(), values.cpu()
 
@@ -297,6 +299,7 @@ class TrajectoryData(Dataset):
             mask = ~self.done[t]
             last_return = last_return * mask
 
+            print(f"Values size: {self.values.size()}, Rewards size: {self.rewards.size()}, Off-policy rates size: {self.off_policy_rates.size()}")
             last_return = self.values[t] + (self.rewards[t] + gamma * last_return - self.values[t]) * self.off_policy_rates[t].clamp_max(1)
 
             self.returns[t] = last_return

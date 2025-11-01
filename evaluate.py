@@ -71,6 +71,7 @@ eval_dir = os.path.abspath(eval_dir)
 
 # Read the files in the evaluation directory
 eval_files = [f for f in os.listdir(eval_dir) if f.endswith('.pt')]
+eval_files = [eval_files[-1]]  # Only evaluate the last model
 
 # Order files
 eval_files.sort(key=lambda x: int(x.split('_')[1].split('.')[0]))

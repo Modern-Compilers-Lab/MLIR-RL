@@ -22,6 +22,8 @@ from typing import Optional
 from time import time
 from datetime import timedelta
 
+from pprint import pprint
+
 logging.basicConfig(
     filename=f"logs/{os.getenv('SLURM_JOB_NAME', 'interactive')}_{os.environ['SLURM_JOB_ID']}.debug",
     filemode="w",
@@ -57,6 +59,9 @@ def load_main_exec_data() -> Optional[dict[str, dict[str, int]]]:
 train_data = dm.run_and_register_to_workers(load_train_data)
 eval_data = dm.run_and_register_to_workers(load_eval_data)
 main_exec_data = dm.run_and_register_to_workers(load_main_exec_data)
+
+pprint(train_data[0].code)
+# exit()
 
 # Initialize execution singleton
 Execution(fl.exec_data_file, main_exec_data)

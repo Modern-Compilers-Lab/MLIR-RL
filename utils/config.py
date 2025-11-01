@@ -4,6 +4,8 @@ from .singleton import Singleton
 import json
 import os
 
+from utils.keys import CONFIG_FILE_PATH
+
 
 class Config(metaclass=Singleton):
     """Class to store and load global configuration"""
@@ -22,6 +24,8 @@ class Config(metaclass=Singleton):
     """The order of actions that needs to bo followed"""
     interchange_mode: Literal['enumerate', 'pointers', 'continuous']
     """The method used for interchange action"""
+    use_img2col: bool
+    """Whether to use img2col transformation on conv2d operations"""
     exploration: list[Literal['entropy', 'epsilon']]
     """The exploration method"""
     init_epsilon: float
@@ -76,7 +80,7 @@ class Config(metaclass=Singleton):
         or get existing instance if any.
         """
         # Open the JSON file
-        with open(os.getenv("CONFIG_FILE_PATH"), "r") as f:
+        with open(CONFIG_FILE_PATH, "r") as f:
             config_data: dict[str, Any] = json.load(f)
 
         for element, element_t in self.__annotations__.items():
