@@ -22,8 +22,6 @@ from typing import Optional
 from time import time
 from datetime import timedelta
 
-from pprint import pprint
-
 logging.basicConfig(
     filename=f"logs/{os.getenv('SLURM_JOB_NAME', 'interactive')}_{os.environ['SLURM_JOB_ID']}.debug",
     filemode="w",
@@ -59,9 +57,6 @@ def load_main_exec_data() -> Optional[dict[str, dict[str, int]]]:
 train_data = dm.run_and_register_to_workers(load_train_data)
 eval_data = dm.run_and_register_to_workers(load_eval_data)
 main_exec_data = dm.run_and_register_to_workers(load_main_exec_data)
-
-pprint(train_data[0].code)
-# exit()
 
 # Initialize execution singleton
 Execution(fl.exec_data_file, main_exec_data)
@@ -103,6 +98,16 @@ for step in range(cfg.nb_iterations):
 
     # Collect trajectory using the model
     trajectory = collect_trajectory(train_data, model, step)
+    
+    # print the sizes of the trajectory components for debugging
+    print_info(
+        f"Trajectory collected: "
+        f"Obs size: {trajectory.obs.size()}, "
+        f"Next Obs size: {trajectory.next_obs.size()}, "
+        f"Actions size: {trajectory.actions_index.size()}, "
+        f"Rewards size: {trajectory.rewards.size()}, ",
+        flush=True
+    )
 
     # Extend trajectory with previous trajectory
     if cfg.reuse_experience != 'none':
@@ -122,7 +127,7 @@ for step in range(cfg.nb_iterations):
     ppo_update(trajectory, model, optimizer)
 
     # Save the model
-    if (step + 1) % 5 == 0:
+    if (step + 1) % cfg.save_model_every == 0:
         torch.save(
             model.state_dict(),
             os.path.join(
@@ -131,7 +136,7 @@ for step in range(cfg.nb_iterations):
             )
         )
 
-    if (step + 1) % 100 == 0:
+    if (step + 1) % cfg.evaluate_every == 0:
         print_info('- Evaluating benchmarks -')
         evaluate_benchmarks(model, eval_data)
 
@@ -143,6 +148,6 @@ for step in range(cfg.nb_iterations):
     elapsed_dlt = timedelta(seconds=int(elapsed))
     eta_dlt = timedelta(seconds=int(eta))
 
-if (step + 1) % 100 != 0:
+if (step + 1) % cfg.evaluate_every != 0:
     print_info('- Evaluating benchmarks -')
     evaluate_benchmarks(model, eval_data)

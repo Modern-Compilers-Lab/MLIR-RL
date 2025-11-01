@@ -49,7 +49,6 @@ class Env:
             bool: A flag indicating if the operation is done.
             Optional[float]: The speedup (if the operation is executed successfully) for logging purposes.
         """
-        # print(f"State = {state.operation_features}")
         
         # Copy the current state to introduce the changes throughout the function
         next_state = state.copy()
@@ -266,7 +265,6 @@ class Env:
             state.producer_tag = i2c_state.producer_tag
             state.producer_operand_idx = i2c_state.producer_operand_idx
             state.producer_features = i2c_state.producer_features
-            state.transformation_history = i2c_state.transformation_history
             state.terminal = i2c_state.terminal
 
         # Get updated operation features
@@ -282,14 +280,11 @@ class Env:
         Returns:
             tuple[str, list[float]]: the resulting code and rewards received for each action in the sequence.
         """
-        print(f"Length of sequence to apply: {len(seq)}")
         rewards: list[float] = []
         transformed_code = self.benchmark_data.code
         for op_seq in reversed(seq):
-            print(f"Applying operation sequence of length {len(op_seq)}")
             op_seq_already_failed = False
             for action in op_seq:
-                print(f"Applying action: {repr(action)}")
                 # We need to assign the same reward to all sub actions
                 rewards_count = len(action.sub_actions) + 1
 

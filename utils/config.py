@@ -74,6 +74,10 @@ class Config(metaclass=Singleton):
     """Path to the file containing the execution data"""
     results_dir: str
     """Path to the results directory"""
+    save_model_every: int
+    """Number of iterations between saving the model"""
+    evaluate_every: int
+    """Number of iterations between evaluations"""
 
     def __init__(self):
         """Load the configuration from the JSON file

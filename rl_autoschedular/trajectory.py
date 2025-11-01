@@ -256,7 +256,6 @@ class TrajectoryData(Dataset):
         start = time()
 
 
-        print(f"OBS size: {self.obs.size()}, Next OBS size: {self.next_obs.size()}, Actions Index size: {self.actions_index.size()}")
         actions_old_log_p, values, _ = model(self.obs.to(device), self.actions_index.to(device))
         self.actions_old_log_p, self.values = actions_old_log_p.cpu(), values.cpu()
 
@@ -299,7 +298,6 @@ class TrajectoryData(Dataset):
             mask = ~self.done[t]
             last_return = last_return * mask
 
-            print(f"Values size: {self.values.size()}, Rewards size: {self.rewards.size()}, Off-policy rates size: {self.off_policy_rates.size()}")
             last_return = self.values[t] + (self.rewards[t] + gamma * last_return - self.values[t]) * self.off_policy_rates[t].clamp_max(1)
 
             self.returns[t] = last_return
@@ -407,3 +405,12 @@ class TrajectoryCollector:
         self.actions_bev_log_p.clear()
         self.rewards.clear()
         self.done.clear()
+
+    def __len__(self) -> int:
+        """Get the length of the collected trajectory.
+
+        Returns:
+            int: The length of the collected trajectory.
+        """
+        assert len(self.num_loops) == len(self.actions_index) == len(self.obs) == len(self.next_obs) == len(self.actions_bev_log_p) == len(self.rewards) == len(self.done)
+        return len(self.obs)

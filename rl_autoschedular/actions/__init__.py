@@ -22,8 +22,8 @@ class ActionSpace:
         TiledParallelization,
         TiledFusion,
         Interchange,
-        Vectorization
-        # Img2Col
+        Vectorization,
+        Img2Col
     ]
 
     @classmethod

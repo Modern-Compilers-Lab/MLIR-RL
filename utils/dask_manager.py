@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from dask_jobqueue.slurm import SLURMJob
     from rl_autoschedular.state import OperationState
 
-ENABLED = False
+ENABLED = True
 T = TypeVar('T')
 
 

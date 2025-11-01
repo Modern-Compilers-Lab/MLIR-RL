@@ -27,3 +27,7 @@ class Img2Col(Action):
             return transform_img2col(code, self.operation_tag)
         except Exception:
             return original_code
+
+    @classmethod
+    def is_allowed(cls, state: OperationState):
+        return state.operation_features.operation_type == OperationType.Conv
