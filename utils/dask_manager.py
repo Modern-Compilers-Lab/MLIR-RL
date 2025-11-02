@@ -9,12 +9,13 @@ from dask_jobqueue import SLURMCluster
 from .file_logger import FileLogger
 from .singleton import Singleton
 from .log import print_alert, print_error, print_info, print_success
+from .bindings_process import ENABLED as BP_ENABLED
 
 if TYPE_CHECKING:
     from rl_autoschedular.benchmarks import Benchmarks
     from dask_jobqueue.slurm import SLURMJob
 
-ENABLED = True
+ENABLED = int(os.getenv('DASK_NODES', '0')) > 0
 T = TypeVar('T')
 obj_T = TypeVar('obj_T')
 
@@ -26,6 +27,7 @@ class DaskManager(metaclass=Singleton):
             return
 
         enable_dashboard = True
+        dask_reservation = os.getenv('DASK_RESERVATION')
         cluster = SLURMCluster(
             job_name='dask',
             queue='compute',
@@ -35,6 +37,7 @@ class DaskManager(metaclass=Singleton):
             memory='100GB',
             walltime='7-00',
             job_extra_directives=[
+                f'--reservation={dask_reservation}' if dask_reservation else '',
                 '--nodes=1',
                 '--exclusive',
             ],
@@ -45,6 +48,7 @@ class DaskManager(metaclass=Singleton):
                 'eval "$(conda shell.bash hook)"',
                 f'conda activate {os.getenv("CONDA_ENV")}',
                 'export OMP_NUM_THREADS=12',
+                'export DASK_DISTRIBUTED__WORKER__DAEMON=False' if BP_ENABLED else '',
             ],
             scheduler_options={
                 'dashboard': enable_dashboard,

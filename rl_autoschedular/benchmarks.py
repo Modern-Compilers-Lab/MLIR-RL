@@ -5,6 +5,8 @@ import json
 from tqdm import tqdm
 import os
 
+from utils.log import print_error
+
 
 class Benchmarks:
     """A class that holds benchmarks data"""
@@ -38,8 +40,12 @@ class Benchmarks:
             for op_tag in benchmark_data.operation_tags:
                 if 'conv_2d' not in benchmark_data.operations[op_tag].operation_name:
                     continue
-                bench_code = transform_img2col(bench_code, op_tag)
-                modified = True
+                try:
+                    bench_code = transform_img2col(bench_code, op_tag)
+                except Exception as e:
+                    print_error(f"Filed to apply img2col on {bench_name}[{op_tag}] with error: {e}")
+                else:
+                    modified = True
             if modified:
                 benchmark_data = extract_bench_features_from_code(bench_name, bench_code, root_exec_time)
             self.data.append(benchmark_data)

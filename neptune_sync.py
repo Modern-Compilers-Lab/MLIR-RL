@@ -17,6 +17,7 @@ else:
     synced_ids = []
 
 current_runs = [d for d in os.listdir(results_dir) if d.startswith('run_') and int(d.split('_')[1]) not in synced_ids]
+current_runs.sort(key=lambda x: int(x.split('_')[1]))
 
 if not current_runs:
     print('No new runs to sync')
@@ -32,8 +33,10 @@ for run in current_runs:
     run_path = os.path.join(results_dir, run)
     with open(os.path.join(run_path, 'tags'), 'r') as f:
         tags = f.read().splitlines()
+    name = run.split('_')[1]
     neptune_run = neptune.init_run(
         project=os.getenv('NEPTUNE_PROJECT'),
+        name=name,
         tags=tags,
     )
     neptune_runs[run] = neptune_run

@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from torch import device as Device
 
 
-MATRIX_SIZE = 32
+MATRIX_SIZE = 64
 
 
 class GPUOccupier(metaclass=Singleton):

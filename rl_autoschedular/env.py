@@ -104,7 +104,7 @@ class Env:
         except Exception as e:
             seq_str = '\n'.join([str(list(map(str, op_seq))) for op_seq in seq])
             print_error(
-                "Error while evaluating the code\n"
+                "Error while executing the code\n"
                 f"Error: {e}\n"
                 f"Exception type: {type(e).__name__}\n"
                 f"Call stack: {traceback.format_exc()}\n"

@@ -220,6 +220,7 @@ class TrajectoryData(Dataset):
             shuffle=sampler is None,
             sampler=sampler,
             pin_memory=device.type != 'cpu',
+            drop_last=True
         )
 
     def copy(self) -> 'TrajectoryData':

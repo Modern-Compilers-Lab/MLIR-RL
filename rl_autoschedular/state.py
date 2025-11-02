@@ -243,6 +243,7 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
 
     ops_tags = []
     operations: dict[str, OperationFeatures] = {}
+    true_loads_count: dict[str, int] = {}
     for operation_block in operations_blocks:
         rest, operation_tag = operation_block.split("#START_TAG")
         operation_tag = operation_tag.strip().split("\n")[0]
@@ -286,6 +287,7 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
         if any(len(load) > cfg.max_num_load_store_dim for load in load_data):
             print_error(f"Number of load dims {len(load_data[-1])} is not supported\n" + log_info)
             continue
+        true_loads_count[operation_tag] = len(load_data)
         if len(load_data) > cfg.max_num_stores_loads:
             # We ignore this overflow, because there are many cases with a huge number of loads
             load_data = load_data[:cfg.max_num_stores_loads]
@@ -325,8 +327,20 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
     graph_lines = [(line.split(' --> ')[0].split(' '), line.split(' --> ')[1].split(' ')) for line in graph_str.strip().split("\n") if line]
 
     for (producer, res_idx), (consumer, op_idx) in graph_lines:
-        operations[consumer].producers.append((producer, int(op_idx)))
-        operations[producer].consumers.append((consumer, int(res_idx)))
+        op_idx = int(op_idx)
+        res_idx = int(res_idx)
+        if op_idx >= len(operations[consumer].load_data):
+            if 0 <= (op_idx - true_loads_count[consumer]) < len(operations[consumer].store_data):
+                # Case where the index falls within the supported number of stores
+                # -> align the index
+                op_idx = op_idx - true_loads_count[consumer] + len(operations[consumer].load_data)
+            else:
+                # Case where the index falls within unsupported number of loads or stores
+                # -> ignore
+                continue
+
+        operations[consumer].producers.append((producer, op_idx))
+        operations[producer].consumers.append((consumer, res_idx))
 
     return BenchmarkFeatures(
         bench_name=bench_name,

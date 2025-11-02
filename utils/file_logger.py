@@ -8,7 +8,6 @@ class FileLogger(metaclass=Singleton):
     """Class to log results to files"""
     def __init__(self):
         cfg = Config()
-        tags = ['ppo'] + cfg.tags
 
         # Create run dir
         dir_path = cfg.results_dir
@@ -20,7 +19,7 @@ class FileLogger(metaclass=Singleton):
         # Create tags file
         tags_file = os.path.join(self.run_dir, 'tags')
         with open(tags_file, 'w') as f:
-            f.write('\n'.join(tags))
+            f.write('\n'.join(cfg.tags))
             f.write('\n')
 
         # Create exec data file
