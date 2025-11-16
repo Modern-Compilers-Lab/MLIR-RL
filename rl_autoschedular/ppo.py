@@ -200,7 +200,7 @@ def ppo_update(trajectory: TrajectoryData, model: Model, optimizer: torch.optim.
 
                 if cfg.value_epochs == 0:
                     value_loss = model.value_model.loss(new_values, values, returns)
-                    loss += cfg.value_coef * value_loss
+                    loss += value_loss
 
                 if 'entropy' in cfg.exploration:
                     entropy_loss = -entropies.mean()

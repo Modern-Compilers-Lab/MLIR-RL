@@ -63,8 +63,10 @@ class Interchange(Action):
     def from_str(cls, state, action_str):
         action = super().from_str(state, action_str)
         if cls.method == InterchangeMethod.LevelsPointers:
-            for i in range(len(action.parameters) - 1):
-                action.sub_actions.append(cls(action.parameters[:i], state, process_params=False))
+            for i in range(1, len(action.parameters)):
+                sub_action = cls(action.parameters[:i], state, process_params=False)
+                sub_action.ready = False
+                action.sub_actions.append(sub_action)
 
         return action
 
@@ -185,7 +187,7 @@ class Interchange(Action):
                 return torch.tensor([self.__encode_continuous(self.parameters[0])])
             case InterchangeMethod.EnumeratedCandidates:
                 candidates = self.__get_candidates(len(self.parameters))
-                return next(c for c in candidates if c == self.parameters)
+                return torch.tensor([candidates.index(self.parameters)])
             case InterchangeMethod.LevelsPointers:
                 return torch.tensor(self.parameters[-1:])
 

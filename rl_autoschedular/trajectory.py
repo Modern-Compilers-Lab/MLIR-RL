@@ -445,3 +445,5 @@ class TrajectoryCollector:
 
         for tc in DaskManager().map_local_iter(collect, *zip(*data)):
             self += tc
+
+        return self

@@ -18,6 +18,7 @@ class HiearchyModel(nn.Module):
 
         self.policy_model = PolicyModel()
         self.value_model = ValueModel()
+        self.target_value_model = ValueModel()
 
     def __call__(self, obs: torch.Tensor, actions_index: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         return super().__call__(obs, actions_index)
@@ -105,7 +106,7 @@ class ValueModel(nn.Module):
         """
         return self.network(self.lstm(obs)).squeeze(-1)
 
-    def loss(self, new_values: torch.Tensor, values: torch.Tensor, returns: torch.Tensor) -> torch.Tensor:
+    def loss(self, new_values: torch.Tensor, values: torch.Tensor, returns: torch.Tensor, expectile: float = 0.5) -> torch.Tensor:
         """Calculate the value loss.
 
         Args:
@@ -121,7 +122,8 @@ class ValueModel(nn.Module):
             vloss1 = (returns - vclip).pow(2)
             vloss2 = (returns - new_values).pow(2)
             return torch.max(vloss1, vloss2).mean()
-        return (returns - new_values).pow(2).mean()
+        coef = (expectile - (returns < new_values).float()).abs()
+        return (coef * (returns - new_values).pow(2)).mean()
 
 
 class PolicyModel(nn.Module):

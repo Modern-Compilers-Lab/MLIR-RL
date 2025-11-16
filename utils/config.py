@@ -52,6 +52,12 @@ class Config(metaclass=Singleton):
     """Value coefficient"""
     value_clip: bool
     """Clip value loss or not"""
+    vem_epochs: int
+    """Number of epochs for vem update"""
+    vem_batch_size: Optional[int]
+    """Batch size for vem update"""
+    vem_soft_update: float
+    """Soft update factor for vem"""
     entropy_coef: float
     """Entropy coefficient"""
     lr: float

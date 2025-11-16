@@ -1,5 +1,7 @@
 from dotenv import load_dotenv
 
+from rl_autoschedular.vem import vem_fit
+
 # Load environment variables
 load_dotenv(override=True)
 load_dotenv('.env.debug')
@@ -15,7 +17,7 @@ from rl_autoschedular.benchmarks import Benchmarks
 from rl_autoschedular.execution import Execution
 from rl_autoschedular.model import HiearchyModel as Model
 from rl_autoschedular import device
-from rl_autoschedular.trajectory import TrajectoryData
+from rl_autoschedular.trajectory import TrajectoryCollector, TrajectoryData
 from rl_autoschedular.ppo import collect_trajectory, ppo_update, value_update, evaluate_benchmarks
 from utils.log import print_info, print_success
 from utils.config import Config
@@ -84,6 +86,10 @@ if __name__ == "__main__":
         lr=cfg.lr
     )
     print_success("Model initialized")
+
+    # Pre-train with VEM
+    offline_trajectory = TrajectoryCollector().fill_from_exec_data(train_data, main_exec_data)
+    vem_fit(offline_trajectory, model, optimizer)
 
     # Start training
     old_trajectory: Optional[TrajectoryData] = None
