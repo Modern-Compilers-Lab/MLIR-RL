@@ -18,7 +18,7 @@ module load miniconda-nobashrc
 eval "$(conda shell.bash hook)"
 
 # Activate any environments if required
-conda activate testenv
+conda activate main
 
 # Execute the code
 python $SCRATCH/MLIR-RL/neptune_sync.py

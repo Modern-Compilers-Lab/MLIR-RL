@@ -6,8 +6,9 @@ load_dotenv('.env.debug')
 
 # Import modules
 import os
-import logging
 import torch
+import numpy as np
+import random
 from typing import Optional
 from rl_autoschedular.execution import Execution
 from rl_autoschedular.model import HiearchyModel as Model
@@ -24,14 +25,13 @@ from time import time
 
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        filename=f"logs/{os.getenv('SLURM_JOB_NAME', 'interactive')}_{os.environ['SLURM_JOB_ID']}.debug",
-        filemode="w",
-        format="${asctime} - [${levelname}]    ${name}: ${message}",
-        datefmt="%m-%d %H:%M",
-        style='$',
-        level=logging.DEBUG
-    )
+    # Set random seeds for reproducibility
+    torch.manual_seed(123)
+    torch.cuda.manual_seed_all(123)
+    np.random.seed(123)
+    random.seed(123)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
     # Initialize singleton classes
     cfg = Config()
