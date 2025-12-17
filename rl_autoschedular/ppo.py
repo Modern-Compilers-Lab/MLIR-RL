@@ -1,6 +1,5 @@
 from datetime import timedelta
 from statistics import mean
-import sys
 import torch
 from rl_autoschedular.env import Env
 from rl_autoschedular.model import HiearchyModel as Model
@@ -365,7 +364,7 @@ def evaluate_benchmarks(model: Model, data: Benchmarks):
 
 
 def __execute_states(state: OperationState, exec_data_file: str, benchs: Benchmarks, main_exec_data: Optional[dict[str, dict[str, int]]]):
-    print(f"Handling bench: {state.bench_name}...", end=' ', file=sys.stderr)
+    print("Handling benchmark:", state.bench_name, flush=True)
     worker_start = time()
 
     Execution(exec_data_file, main_exec_data)
@@ -375,6 +374,5 @@ def __execute_states(state: OperationState, exec_data_file: str, benchs: Benchma
 
     worker_end = time()
     worker_time = worker_end - worker_start
-    print('Done', file=sys.stderr)
 
     return rewards, speedup, new_exec_time, cache_miss, worker_time

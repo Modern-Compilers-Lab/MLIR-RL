@@ -186,14 +186,17 @@ def extract_bench_features_from_code(bench_name: str, code: str, root_execution_
     Returns:
         BenchmarkFeatures: the extracted benchmark features
     """
-    result = subprocess.run(
-        f'{os.getenv("AST_DUMPER_BIN_PATH")} -',
-        shell=True,
-        input=code.encode('utf-8'),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE
-    )
-    raw_ast_info = result.stdout.decode('utf-8')
+    try:
+        result = subprocess.run(
+            [os.getenv("AST_DUMPER_BIN_PATH", ''), '-'],
+            input=code,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        raw_ast_info = result.stdout
+    except subprocess.CalledProcessError as e:
+        raise Exception(e.stderr)
 
     return __extract_bench_features_from_ast_result(bench_name, raw_ast_info, root_execution_time)
 
@@ -210,13 +213,16 @@ def extract_bench_features_from_file(bench_name: str, file_path: str, root_execu
     Returns:
         BenchmarkFeatures: the extracted benchmark features
     """
-    result = subprocess.run(
-        f'{os.getenv("AST_DUMPER_BIN_PATH")} {file_path}',
-        shell=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE
-    )
-    raw_ast_info = result.stdout.decode('utf-8')
+    try:
+        result = subprocess.run(
+            [os.getenv("AST_DUMPER_BIN_PATH", ''), file_path],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        raw_ast_info = result.stdout
+    except subprocess.CalledProcessError as e:
+        raise Exception(e.stderr)
 
     return __extract_bench_features_from_ast_result(bench_name, raw_ast_info, root_execution_time)
 

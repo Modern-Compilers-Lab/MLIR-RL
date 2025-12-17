@@ -211,17 +211,17 @@ def transform_vectorize_with_vectorizer(code: str, operation_tag: str):
     Returns:
         str: The code after applying the transformation.
     """
-    vect_code_process = subprocess.run(
-        f'{os.getenv("VECTORIZER_BIN_PATH")} - {operation_tag}',
-        shell=True,
-        input=code.encode('utf-8'),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE
-    )
-    vect_code = vect_code_process.stdout.decode('utf-8')
-
-    if vect_code_process.returncode != 0:
-        raise Exception(vect_code_process.stderr.decode('utf-8'))
+    try:
+        vect_code_process = subprocess.run(
+            [os.getenv("VECTORIZER_BIN_PATH", ''), '-', operation_tag],
+            input=code,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        vect_code = vect_code_process.stdout
+    except subprocess.CalledProcessError as e:
+        raise Exception(e.stderr)
 
     return vect_code
 
@@ -423,17 +423,17 @@ def transform_pre_vec(code: str, operation_tag: str):
     Returns:
         str: The code after applying the transformation.
     """
-    code_process = subprocess.run(
-        f'{os.getenv("PRE_VEC_BIN_PATH")} - {operation_tag}',
-        shell=True,
-        input=code.encode('utf-8'),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE
-    )
-    code = code_process.stdout.decode('utf-8')
-
-    if code_process.returncode != 0:
-        raise Exception(code_process.stderr.decode('utf-8'))
+    try:
+        code_process = subprocess.run(
+            [os.getenv("PRE_VEC_BIN_PATH", ''), '-', operation_tag],
+            input=code,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        code = code_process.stdout
+    except subprocess.CalledProcessError as e:
+        raise Exception(e.stderr)
 
     return code
 

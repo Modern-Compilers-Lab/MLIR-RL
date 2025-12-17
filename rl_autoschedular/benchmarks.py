@@ -35,19 +35,20 @@ class Benchmarks:
         for bench_name, root_exec_time in tqdm(benchmarks_json.items(), desc="Extracting benchmark features", unit="bench"):
             bench_file = os.path.join(cfg.benchmarks_folder_path, bench_name + ".mlir")
             benchmark_data = extract_bench_features_from_file(bench_name, bench_file, root_exec_time)
-            modified = False
-            bench_code = benchmark_data.code
-            for op_tag in benchmark_data.operation_tags:
-                if 'conv_2d' not in benchmark_data.operations[op_tag].operation_name:
-                    continue
-                try:
-                    bench_code = transform_img2col(bench_code, op_tag)
-                except Exception as e:
-                    print_error(f"Filed to apply img2col on {bench_name}[{op_tag}] with error: {e}")
-                else:
-                    modified = True
-            if modified:
-                benchmark_data = extract_bench_features_from_code(bench_name, bench_code, root_exec_time)
+            if os.getenv("DISABLE_IMG2COL", "0") != "1" and bench_name.startswith('conv_2d_'):
+                modified = False
+                bench_code = benchmark_data.code
+                for op_tag in benchmark_data.operation_tags:
+                    if 'conv_2d' not in benchmark_data.operations[op_tag].operation_name:
+                        continue
+                    try:
+                        bench_code = transform_img2col(bench_code, op_tag)
+                    except Exception as e:
+                        print_error(f"Filed to apply img2col on {bench_name}[{op_tag}] with error: {e}")
+                    else:
+                        modified = True
+                if modified:
+                    benchmark_data = extract_bench_features_from_code(bench_name, bench_code, root_exec_time)
             self.data.append(benchmark_data)
 
     def __len__(self):
