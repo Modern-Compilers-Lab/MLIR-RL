@@ -1,0 +1,10 @@
+# LLM
+CLAUDE_LLM_MODEL = "claude-haiku-4-5"
+CLAUDE_LLM_TEMPERATURE = 1.0
+
+# Execution
+CODE_TRANSFORM_TIMEOUT = 10  # seconds
+CODE_EXECUTION_TIMEOUT = 10  # seconds
+
+# History
+NUM_HISTORY_RUNS = 10

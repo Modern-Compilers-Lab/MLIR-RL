@@ -19,7 +19,7 @@ from time import time
 from typing import Optional
 
 
-def collect_trajectory(data: Benchmarks, model: Model, step: int):
+def collect_trajectory(data: Benchmarks, model: Model, step: int) -> TrajectoryData:
     """Collect a trajectory using the model and the environment.
 
     Args:
@@ -34,7 +34,7 @@ def collect_trajectory(data: Benchmarks, model: Model, step: int):
     dm = DaskManager()
     fl = FileLogger()
     exe = Execution()
-    cfg = Config()
+    cfg = Config()    
 
     eps = None
     if 'epsilon' in cfg.exploration:
@@ -362,7 +362,7 @@ def evaluate_benchmarks(model: Model, data: Benchmarks):
 
 
 def __execute_states(state: OperationState, exec_data_file: str, benchs: Benchmarks, main_exec_data: Optional[dict[str, dict[str, int]]]):
-    print(f"Handling bench: {state.bench_name}...", end=' ', file=sys.stderr)
+    print(f"Handling bench: {state.bench_name} with {[[action.__str__() for action in transformation] for transformation in state.transformation_history]}", end=' ', file=sys.stderr)
     worker_start = time()
 
     Execution(exec_data_file, main_exec_data)

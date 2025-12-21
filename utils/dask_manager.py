@@ -11,6 +11,8 @@ from .singleton import Singleton
 from .log import print_alert, print_error, print_info, print_success
 import os
 
+from utils.keys import CONDA_ENV
+
 if TYPE_CHECKING:
     from rl_autoschedular.benchmarks import Benchmarks
     from dask_jobqueue.slurm import SLURMJob
@@ -36,6 +38,7 @@ class DaskManager(metaclass=Singleton):
             memory='100GB',
             walltime='7-00',
             job_extra_directives=[
+                '--reservation=c2',
                 '--nodes=1',
                 '--exclusive',
             ],
@@ -44,7 +47,7 @@ class DaskManager(metaclass=Singleton):
             job_script_prologue=[
                 'module load miniconda-nobashrc',
                 'eval "$(conda shell.bash hook)"',
-                f'conda activate {os.getenv("CONDA_ENV")}',
+                f'conda activate {CONDA_ENV}',
                 'export OMP_NUM_THREADS=12',
             ],
             scheduler_options={

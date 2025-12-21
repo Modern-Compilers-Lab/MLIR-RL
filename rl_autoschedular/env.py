@@ -2,13 +2,14 @@ from rl_autoschedular.state import OperationState, BenchmarkFeatures
 from rl_autoschedular.benchmarks import Benchmarks
 from typing import Optional
 from rl_autoschedular.execution import Execution
-from rl_autoschedular.actions import Action, TiledFusion
+from rl_autoschedular.actions import Action, TiledFusion, Img2Col
 from utils.log import print_error
 from utils.config import Config
 import random
 import math
 import traceback
 
+from rl_autoschedular.state import extract_bench_features_from_code
 
 class Env:
     """RL Environment class"""
@@ -48,6 +49,7 @@ class Env:
             bool: A flag indicating if the operation is done.
             Optional[float]: The speedup (if the operation is executed successfully) for logging purposes.
         """
+        
         # Copy the current state to introduce the changes throughout the function
         next_state = state.copy()
 
@@ -249,6 +251,21 @@ class Env:
         # In case of fusion we need to update the producer features as well
         if isinstance(action, TiledFusion):
             action.update_producer_features(state, self.benchmark_data)
+            
+        # In case of Img2Col, we need to update the benchmark data as whole
+        if isinstance(action, Img2Col):
+            self.benchmark_data = extract_bench_features_from_code(self.benchmark_data.bench_name, action.apply(self.benchmark_data.code), self.benchmark_data.root_exec_time)
+            i2c_state = self.__init_op_state(-1)
+            
+            state.bench_idx = i2c_state.bench_idx
+            state.bench_name = i2c_state.bench_name
+            state.operation_tag = i2c_state.operation_tag
+            state.original_operation_features = i2c_state.original_operation_features
+            state.operation_features = i2c_state.operation_features
+            state.producer_tag = i2c_state.producer_tag
+            state.producer_operand_idx = i2c_state.producer_operand_idx
+            state.producer_features = i2c_state.producer_features
+            state.terminal = i2c_state.terminal
 
         # Get updated operation features
         state.operation_features = action.update_features(state.operation_features)

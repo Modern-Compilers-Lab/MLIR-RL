@@ -366,7 +366,6 @@ def transform_bufferize_and_lower_v(code: str):
 
     Args:
         code (str): The code to apply the transformation to.
-        operation_tag (str): The tag of the operation to apply the transformation to.
 
     Returns:
         str: The code after applying the transformation.

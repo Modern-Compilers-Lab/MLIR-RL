@@ -35,10 +35,13 @@ class Benchmarks:
             benchmark_data = extract_bench_features_from_file(bench_name, bench_file, root_exec_time)
             modified = False
             bench_code = benchmark_data.code
+            print("BEFORE: ", bench_code)
             for op_tag in benchmark_data.operation_tags:
-                if 'conv_2d' not in benchmark_data.operations[op_tag].operation_name:
+                print(op_tag)
+                if 'conv_2d' not in benchmark_data.operations[op_tag].operation_name or not cfg.use_img2col:
                     continue
                 bench_code = transform_img2col(bench_code, op_tag)
+                print("AFTER: ", bench_code)
                 modified = True
             if modified:
                 benchmark_data = extract_bench_features_from_code(bench_name, bench_code, root_exec_time)
