@@ -8,6 +8,8 @@ import subprocess
 from utils.config import Config
 from utils.log import print_error
 
+from utils.keys import AST_DUMPER_BIN_PATH
+
 if TYPE_CHECKING:
     from rl_autoschedular.actions.base import Action
 
@@ -44,6 +46,16 @@ class NestedLoopFeatures:
     def copy(self):
         """Copy the current NestedLoopFeatures object."""
         return NestedLoopFeatures(self.arg, self.lower_bound, self.upper_bound, self.step, self.iterator_type)
+    
+    def to_dict(self):
+        """Convert the NestedLoopFeatures to a dictionary."""
+        return {
+            "arg": self.arg,
+            "lower_bound": self.lower_bound,
+            "upper_bound": self.upper_bound,
+            "step": self.step,
+            "iterator_type": self.iterator_type.value
+        }
 
 
 @dataclass
@@ -84,6 +96,23 @@ class OperationFeatures:
             self.vectorizable,
             self.pre_actions.copy()
         )
+        
+    def to_dict(self):
+        """Convert the OperationFeatures to a dictionary."""
+        return {
+            "operation_name": self.operation_name,
+            "operation_type": self.operation_type.value,
+            "op_count": self.op_count,
+            "load_data": self.load_data,
+            "store_data": self.store_data,
+            "nested_loops": [
+                loop.to_dict() for loop in self.nested_loops
+            ],
+            "producers": self.producers,
+            "consumers": self.consumers,
+            "vectorizable": self.vectorizable,
+            "pre_actions": [action.symbol for action in self.pre_actions]
+        }
 
 
 @dataclass
@@ -109,6 +138,18 @@ class BenchmarkFeatures:
             {tag: op.copy() for tag, op in self.operations.items()},
             self.root_exec_time
         )
+        
+    def to_dict(self):
+        """Convert the BenchmarkFeatures to a dictionary."""
+        return {
+            "bench_name": self.bench_name,
+            "code": self.code,
+            "operation_tags": self.operation_tags,
+            "operations": {
+                tag: op.to_dict() for tag, op in self.operations.items()
+            },
+            "root_exec_time": self.root_exec_time
+        }
 
 
 @dataclass
@@ -173,6 +214,23 @@ class OperationState:
             self.terminal
         )
 
+    def to_dict(self):
+        """Convert the OperationState to a dictionary."""
+        return {
+            "bench_idx": self.bench_idx,
+            "bench_name": self.bench_name,
+            "operation_tag": self.operation_tag,
+            "original_operation_features": self.original_operation_features.to_dict(),
+            "operation_features": self.operation_features.to_dict(),
+            "producer_tag": self.producer_tag,
+            "producer_operand_idx": self.producer_operand_idx,
+            "producer_features": self.producer_features.to_dict() if self.producer_features is not None else None,
+            "transformation_history": [
+                [action.__repr__() for action in seq] for seq in self.transformation_history
+            ],
+            "terminal": self.terminal
+        }
+
 
 def extract_bench_features_from_code(bench_name: str, code: str, root_execution_time: int):
     """Extract benchmark features from the given code.
@@ -187,7 +245,7 @@ def extract_bench_features_from_code(bench_name: str, code: str, root_execution_
         BenchmarkFeatures: the extracted benchmark features
     """
     result = subprocess.run(
-        f'{os.getenv("AST_DUMPER_BIN_PATH")} -',
+        f'{AST_DUMPER_BIN_PATH} -',
         shell=True,
         input=code.encode('utf-8'),
         stdout=subprocess.PIPE,
@@ -211,7 +269,7 @@ def extract_bench_features_from_file(bench_name: str, file_path: str, root_execu
         BenchmarkFeatures: the extracted benchmark features
     """
     result = subprocess.run(
-        f'{os.getenv("AST_DUMPER_BIN_PATH")} {file_path}',
+        f'{AST_DUMPER_BIN_PATH} {file_path}',
         shell=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE
@@ -348,5 +406,7 @@ def __get_operation_type(operation_name: str):
     """
     for operation_type in OperationType:
         if operation_type.value and operation_type.value in operation_name:
+            if operation_type.value == "conv" and ( "op0" in operation_name or "op1" in operation_name or "i2c" in operation_name):
+                return OperationType.unknown
             return operation_type
     return OperationType.unknown

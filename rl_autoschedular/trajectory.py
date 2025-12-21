@@ -255,6 +255,7 @@ class TrajectoryData(Dataset):
         """
         start = time()
 
+
         actions_old_log_p, values, _ = model(self.obs.to(device), self.actions_index.to(device))
         self.actions_old_log_p, self.values = actions_old_log_p.cpu(), values.cpu()
 
@@ -404,3 +405,12 @@ class TrajectoryCollector:
         self.actions_bev_log_p.clear()
         self.rewards.clear()
         self.done.clear()
+
+    def __len__(self) -> int:
+        """Get the length of the collected trajectory.
+
+        Returns:
+            int: The length of the collected trajectory.
+        """
+        assert len(self.num_loops) == len(self.actions_index) == len(self.obs) == len(self.next_obs) == len(self.actions_bev_log_p) == len(self.rewards) == len(self.done)
+        return len(self.obs)

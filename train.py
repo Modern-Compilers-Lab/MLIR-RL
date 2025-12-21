@@ -98,6 +98,16 @@ for step in range(cfg.nb_iterations):
 
     # Collect trajectory using the model
     trajectory = collect_trajectory(train_data, model, step)
+    
+    # print the sizes of the trajectory components for debugging
+    # print_info(
+    #     f"Trajectory collected: "
+    #     f"Obs size: {trajectory.obs.size()}, "
+    #     f"Next Obs size: {trajectory.next_obs.size()}, "
+    #     f"Actions size: {trajectory.actions_index.size()}, "
+    #     f"Rewards size: {trajectory.rewards.size()}, ",
+    #     flush=True
+    # )
 
     # Extend trajectory with previous trajectory
     if cfg.reuse_experience != 'none':
@@ -117,7 +127,7 @@ for step in range(cfg.nb_iterations):
     ppo_update(trajectory, model, optimizer)
 
     # Save the model
-    if (step + 1) % 5 == 0:
+    if (step + 1) % cfg.save_model_every == 0:
         torch.save(
             model.state_dict(),
             os.path.join(
@@ -126,7 +136,7 @@ for step in range(cfg.nb_iterations):
             )
         )
 
-    if (step + 1) % 100 == 0:
+    if (step + 1) % cfg.evaluate_every == 0:
         print_info('- Evaluating benchmarks -')
         evaluate_benchmarks(model, eval_data)
 
@@ -138,6 +148,6 @@ for step in range(cfg.nb_iterations):
     elapsed_dlt = timedelta(seconds=int(elapsed))
     eta_dlt = timedelta(seconds=int(eta))
 
-if (step + 1) % 100 != 0:
+if (step + 1) % cfg.evaluate_every != 0:
     print_info('- Evaluating benchmarks -')
     evaluate_benchmarks(model, eval_data)

@@ -1,6 +1,4 @@
-# Load environment variables
-from dotenv import load_dotenv
-load_dotenv(override=True)
+from utils.keys import NEPTUNE_TOKEN, NEPTUNE_PROJECT
 
 import neptune
 from neptune import Run
@@ -33,7 +31,8 @@ for run in current_runs:
     with open(os.path.join(run_path, 'tags'), 'r') as f:
         tags = f.read().splitlines()
     neptune_run = neptune.init_run(
-        project=os.getenv('NEPTUNE_PROJECT'),
+        project=NEPTUNE_PROJECT,
+        api_token=NEPTUNE_TOKEN,
         tags=tags,
     )
     neptune_runs[run] = neptune_run
