@@ -43,7 +43,7 @@ std::string getLinalgOpTag(mlir::linalg::LinalgOp op) {
 
 int main(int argc, char **argv) {
   if (argc < 3) {
-    llvm::errs() << "Usage: AstDumper <input.mlir> <tag>\n";
+    llvm::errs() << "Usage: PreVec <input.mlir> <tag>\n";
     return 1;
   }
   llvm::StringRef inputFilename = argv[1];
@@ -197,9 +197,9 @@ int main(int argc, char **argv) {
   return 0;
 }
 
-// mkdir tools/ast_dumper/build
-// cd tools/ast_dumper/build
+// mkdir tools/pre_vec/build
+// cd tools/pre_vec/build
 // cmake .. -DMLIR_DIR=$LLVM_BUILD_PATH/lib/cmake/mlir -DLLVM_EXTERNAL_LIT=$LLVM_BUILD_PATH/bin/llvm-lit
 // cd ../../..
-// cmake --build tools/ast_dumper/build
-// tools/ast_dumper/build/bin/AstDumper examples/x1.mlir
+// cmake --build tools/pre_vec/build
+// tools/pre_vec/build/bin/PreVec examples/x1.mlir

@@ -52,6 +52,7 @@ class Vectorization(Action):
             requires_transpose=requires_transpose,
             requires_decompose=requires_decompose,
             decompose_tile_sizes=decompose_tile_sizes,
+            vectorized=True,
             **extras
         )
 
@@ -62,6 +63,9 @@ class Vectorization(Action):
             self.preprocessing.append(lambda c: transform_tile(c, self.operation_tag, decompose_tile_sizes))
             self.preprocessing.append(lambda c: transform_decompose(c, self.operation_tag))
         self.preprocessing.append(lambda c: transform_pre_vec(c, self.operation_tag))
+
+    def __str__(self):
+        return f"{self.symbol}({self.extras['vectorized']})"
 
     @classmethod
     def is_allowed(cls, state):
@@ -80,6 +84,7 @@ class Vectorization(Action):
                 code = pre(code)
             return transform_vectorize(code, self.operation_tag)
         except Exception:
+            self.extras['vectorized'] = False
             return original_code
 
     @classmethod

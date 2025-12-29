@@ -1,4 +1,6 @@
-from .tiling import Tiling, Optional
+from typing import Optional
+from .array_packing import ArrayPacking
+from .tiling import Tiling
 from rl_autoschedular.transforms import transform_tile, transform_TP
 from rl_autoschedular.state import OperationState, IteratorType
 
@@ -38,7 +40,7 @@ class TiledParallelization(Tiling):
     @classmethod
     def is_allowed(cls, state):
         return not any(
-            isinstance(action, Tiling) for action in
+            (isinstance(action, Tiling) and not isinstance(action, ArrayPacking)) for action in
             state.operation_features.pre_actions + state.current_history
         )
 

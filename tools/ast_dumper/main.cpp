@@ -39,17 +39,22 @@ std::string getLinalgOpTag(mlir::linalg::LinalgOp op) {
   if (tagAttr) {
     return tagAttr.getValue().str();
   }
-  // It's better to let the caller handle the "not found" case
+
   return "";
 }
 
 
 int main(int argc, char **argv) {
   if (argc < 2) {
-    llvm::errs() << "Usage: AstDumper <input.mlir>\n";
-    return 1;
+    llvm::errs() << "Usage: AstDumper <input.mlir> [<prev_tag_count>]\n";
+    exit(1);
   }
   llvm::StringRef inputFilename = argv[1];
+  int prevTagCount;
+  if (argc > 2)
+    prevTagCount = std::stoi(argv[2]);
+  else
+    prevTagCount = 0;
 
   mlir::registerAsmPrinterCLOptions();
   mlir::registerMLIRContextCLOptions();
@@ -72,7 +77,7 @@ int main(int argc, char **argv) {
       llvm::MemoryBuffer::getFileOrSTDIN(inputFilename);
   if (std::error_code ec = fileOrErr.getError()) {
     llvm::errs() << "Could not open input file: " << ec.message() << "\n";
-    return 1;
+    exit(1);
   }
 
   llvm::SourceMgr sourceMgr;
@@ -80,26 +85,47 @@ int main(int argc, char **argv) {
   mlir::OwningOpRef<mlir::ModuleOp> module = mlir::parseSourceFile<mlir::ModuleOp>(sourceMgr, &context);
   if (!module) {
     llvm::errs() << "Error can't load file " << inputFilename << "\n";
-    return 1;
+    exit(1);
   }
 
   llvm::SmallVector<linalg::LinalgOp> ops_list;
+  std::set<std::string> tags_set;
+
+  // A pass for existing tags
+  module->walk([&](mlir::linalg::LinalgOp linalgOp){
+    std::string tagName = getLinalgOpTag(linalgOp);
+    if (!tagName.empty()) {
+      tags_set.insert(tagName);
+    }
+  });
+
   module->walk([&](mlir::linalg::LinalgOp linalgOp){
     // If iteration space is zero, skip
     if (linalgOp.getNumLoops() == 0) {
       return;
     }
 
-    std::string tagName = "operation_" + std::to_string(ops_list.size());
-    linalgOp->setAttr("tag", mlir::StringAttr::get(&context, tagName));
-    // std::string tagName = getLinalgOpTag(linalgOp);
-    // if (tagName.empty()) {
-    // }
+    std::string tagName = getLinalgOpTag(linalgOp);
+    if (tagName.empty()) {
+      std::string newTagName = "operation_" + std::to_string(prevTagCount);
+      prevTagCount++;
+      if (tags_set.find(newTagName) != tags_set.end()) {
+        llvm::errs() << "Unexpected: Tag " << newTagName << " already exists\n";
+        exit(1);
+      }
+
+      tagName = newTagName;
+      tags_set.insert(tagName);
+      linalgOp->setAttr("tag", mlir::StringAttr::get(&context, tagName));
+    }
 
     ops_list.push_back(linalgOp);
 
     llvm::outs() << "#START_OPERATION" << "\n";
     llvm::outs() << linalgOp->getName() << "\n";
+
+    llvm::outs() << "#START_TAG" << "\n";
+    llvm::outs() << tagName << "\n";
 
     llvm::outs() << "#START_VECTORIZABLE" << "\n";
     llvm::outs() << (failed(mlir::linalg::vectorizeOpPrecondition(linalgOp)) ? "false" : "true") << "\n";
@@ -156,14 +182,12 @@ int main(int argc, char **argv) {
     llvm::outs() << "* " << mul_count << "\n";
     llvm::outs() << "/ " << div_count << "\n";
     llvm::outs() << "exp " << exp_count << "\n";
-    llvm::outs() << "#START_TAG" << "\n";
-    llvm::outs() << tagName << "\n";
     llvm::outs() << "#END_OPERATION" << "\n";
-    llvm::outs() << "\n\n\n\n\n" << "\n";
   });
 
-  llvm::outs() << "\n\n\n\n" << "\n";
-  llvm::outs() << "#BEGIN_GRAPH" << "\n";
+  llvm::outs() << "#TAG_COUNTER" << "\n";
+  llvm::outs() << prevTagCount << "\n";
+  llvm::outs() << "#GRAPH" << "\n";
 
   for (auto producer_op : ops_list) {
     std::string producerTag = getLinalgOpTag(producer_op);
@@ -177,8 +201,6 @@ int main(int argc, char **argv) {
       llvm::outs() << producerTag << " " << prod_res_nbr << " --> " << consumerTag << " " << op_order << "\n";
     }
   }
-
-  llvm::outs() << "#END_GRAPH\n";
 
   llvm::outs() << "########################################\n";
 

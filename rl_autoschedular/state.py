@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 from enum import Enum
 import re
@@ -99,6 +99,8 @@ class BenchmarkFeatures:
     """List of operations where each operation is represented by the OperationFeatures dataclass."""
     root_exec_time: int
     """Execution time of the benchmark in nanoseconds without any transformation."""
+    tag_counter: int
+    """A counter to generate unique tags"""
 
     def copy(self):
         """Copy the current BenchmarkFeatures object."""
@@ -107,7 +109,8 @@ class BenchmarkFeatures:
             self.code,
             self.operation_tags.copy(),
             {tag: op.copy() for tag, op in self.operations.items()},
-            self.root_exec_time
+            self.root_exec_time,
+            self.tag_counter
         )
 
 
@@ -129,10 +132,12 @@ class OperationState:
     """The index of the producer's operand"""
     producer_features: Optional[OperationFeatures]
     """Features of the selected producer"""
-    transformation_history: list[list['Action']]
+    transformation_history: list[list['Action']] = field(default_factory=lambda: [[]])
     """List of transformations with their parameters applied to the operation."""
-    terminal: bool
+    terminal: bool = False
     """Flag that determines if the state is terminal"""
+    failed: bool = False
+    """Flag that determines if the state ended in a failed action"""
 
     @property
     def current_history(self):
@@ -170,11 +175,12 @@ class OperationState:
             self.producer_operand_idx,
             self.producer_features.copy() if self.producer_features is not None else None,
             [seq.copy() for seq in self.transformation_history],
-            self.terminal
+            self.terminal,
+            self.failed,
         )
 
 
-def extract_bench_features_from_code(bench_name: str, code: str, root_execution_time: int):
+def extract_bench_features_from_code(bench_name: str, code: str, root_execution_time: int, previous_op_count: Optional[int] = None):
     """Extract benchmark features from the given code.
 
     Args:
@@ -188,7 +194,7 @@ def extract_bench_features_from_code(bench_name: str, code: str, root_execution_
     """
     try:
         result = subprocess.run(
-            [os.getenv("AST_DUMPER_BIN_PATH", ''), '-'],
+            [os.getenv("AST_DUMPER_BIN_PATH", ''), '-'] + ([str(previous_op_count)] if previous_op_count is not None else []),
             input=code,
             capture_output=True,
             text=True,
@@ -201,7 +207,7 @@ def extract_bench_features_from_code(bench_name: str, code: str, root_execution_
     return __extract_bench_features_from_ast_result(bench_name, raw_ast_info, root_execution_time)
 
 
-def extract_bench_features_from_file(bench_name: str, file_path: str, root_execution_time: int):
+def extract_bench_features_from_file(bench_name: str, file_path: str, root_execution_time: int, previous_op_count: Optional[int] = None):
     """Extract benchmark features from the code in the file.
 
     Args:
@@ -215,7 +221,7 @@ def extract_bench_features_from_file(bench_name: str, file_path: str, root_execu
     """
     try:
         result = subprocess.run(
-            [os.getenv("AST_DUMPER_BIN_PATH", ''), file_path],
+            [os.getenv("AST_DUMPER_BIN_PATH", ''), file_path] + ([str(previous_op_count)] if previous_op_count is not None else []),
             capture_output=True,
             text=True,
             check=True,
@@ -242,31 +248,36 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
     cfg = Config()
 
     info, full_code = raw_ast_info.split("########################################")
-    operations_lines, graph_str = info.split('#BEGIN_GRAPH')
+    operations_lines, info = info.split('#TAG_COUNTER')
+    tag_counter_str, graph_str = info.split('#GRAPH')
 
     operations_blocks = operations_lines.split('#START_OPERATION')
-    operations_blocks = [block.strip() for block in operations_blocks if block]
+    operations_blocks = [block.strip() for block in operations_blocks if block.strip()]
 
     ops_tags = []
     operations: dict[str, OperationFeatures] = {}
     true_loads_count: dict[str, int] = {}
     for operation_block in operations_blocks:
-        rest, operation_tag = operation_block.split("#START_TAG")
-        operation_tag = operation_tag.strip().split("\n")[0]
-        log_info = f"- Bench: {bench_name}\n- Operation: {operation_tag}"
-
-        operation_name, rest = rest.split("#START_VECTORIZABLE")
+        operation_name, rest = operation_block.split("#START_TAG")
         operation_name = operation_name.strip()
         operation_type = __get_operation_type(operation_name)
+
+        operation_tag, rest = rest.split("#START_VECTORIZABLE")
+        operation_tag = operation_tag.strip()
+        if operation_tag in ops_tags:
+            with open("dup_err.mlir", "w") as f:
+                f.write(full_code)
+            raise Exception(f"Duplicate operation tag: {operation_tag} when parsing benchmark {bench_name}")
+        log_info = f"- Bench: {bench_name}\n- Operation: {operation_tag}"
+
+        vectorizable_str, rest = rest.split("#START_NESTED_LOOPS")
+        assert vectorizable_str.strip() in ["true", "false"], f"Vectorizable string is not valid: {vectorizable_str}"
+        vectorizable = vectorizable_str.strip() == "true"
 
         nested_loops = []
         op_count = {}
         load_data: list[list[str]] = []
         store_data: list[list[str]] = []
-
-        vectorizable_str, rest = rest.split("#START_NESTED_LOOPS")
-        assert vectorizable_str.strip() in ["true", "false"], f"Vectorizable string is not valid: {vectorizable_str}"
-        vectorizable = vectorizable_str.strip() == "true"
 
         nested_loops_str, rest = rest.split("#START_LOAD_DATA")
         for nested_loop_str in nested_loops_str.strip().split("\n"):
@@ -298,7 +309,7 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
             # We ignore this overflow, because there are many cases with a huge number of loads
             load_data = load_data[:cfg.max_num_stores_loads]
 
-        stores_data_str, ops_count_str = rest.split("#START_OP_COUNT")
+        stores_data_str, rest = rest.split("#START_OP_COUNT")
         stores_data_str = re.sub(r'd\d+', lambda m: f'%{m.group()}', stores_data_str)
         for store_data_str in stores_data_str.strip().split("\n"):
             if not store_data_str:
@@ -310,6 +321,7 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
         if len(store_data) > cfg.max_num_stores_loads:
             store_data = store_data[:cfg.max_num_stores_loads]
 
+        ops_count_str, rest = rest.split("#END_OPERATION")
         for op_count_str in ops_count_str.strip().split("\n"):
             op, count = op_count_str.strip().split(" ")
             op_count[op] = int(count)
@@ -329,7 +341,6 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
         )
 
     # Extracte Producer/Consumer features
-    graph_str = graph_str.replace("#END_GRAPH", "")
     graph_lines = [(line.split(' --> ')[0].split(' '), line.split(' --> ')[1].split(' ')) for line in graph_str.strip().split("\n") if line]
 
     for (producer, res_idx), (consumer, op_idx) in graph_lines:
@@ -354,6 +365,7 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
         operation_tags=ops_tags,
         operations=operations,
         root_exec_time=root_execution_time,
+        tag_counter=int(tag_counter_str.strip()),
     )
 
 

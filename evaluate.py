@@ -2,7 +2,6 @@
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
-load_dotenv('.env.debug')
 
 # Import modules
 import os
@@ -57,7 +56,7 @@ if __name__ == "__main__":
     Execution(fl.exec_data_file, main_exec_data)
 
     # Prepare logging
-    print_info(f"Config: {cfg}")
+    cfg.print_config()
     print_success(f'Logging to: {fl.run_dir}')
 
     # Setup torch

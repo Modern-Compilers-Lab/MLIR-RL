@@ -16,7 +16,7 @@ from utils.gpu_occupier import GPUOccupier
 from utils.log import print_error, print_info, print_success
 from utils.dask_manager import DaskManager
 from time import time
-from typing import Optional
+from typing import Optional, Union
 
 
 def collect_trajectory(data: Benchmarks, model: Model, step: int):
@@ -101,7 +101,14 @@ def collect_trajectory(data: Benchmarks, model: Model, step: int):
 
     traj_end_sampling = time()
 
-    results = dm.map_objs(__execute_states, states, data, exe.main_exec_data, training=True, obj_str=lambda s: s.bench_name)
+    results = dm.map_objs(
+        __execute_states,
+        list(zip(envs, states)) if cfg.intermediate_transforms else states,
+        data,
+        exe.main_exec_data,
+        training=True,
+        obj_str=lambda s: s[1].bench_name if isinstance(s, tuple) else s.bench_name
+    )
 
     traj_end_exec_states = time()
 
@@ -292,6 +299,7 @@ def evaluate_benchmarks(model: Model, data: Benchmarks):
     dm = DaskManager()
     fl = FileLogger()
     exe = Execution()
+    cfg = Config()
 
     print_info("Evaluation started...")
     eval_start = time()
@@ -332,7 +340,14 @@ def evaluate_benchmarks(model: Model, data: Benchmarks):
                         states[i] = next_op_state
                         observations[i] = Observation.from_state(next_op_state)
 
-    results = dm.map_objs(__execute_states, states, data, exe.main_exec_data, training=False, obj_str=lambda s: s.bench_name)
+    results = dm.map_objs(
+        __execute_states,
+        list(zip(envs, states)) if cfg.intermediate_transforms else states,
+        data,
+        exe.main_exec_data,
+        training=False,
+        obj_str=lambda s: s[1].bench_name if isinstance(s, tuple) else s.bench_name
+    )
     results = [
         (*e.failed_seq(s.transformation_history), float(dm.batch_timeout))
         if not r else r
@@ -363,13 +378,17 @@ def evaluate_benchmarks(model: Model, data: Benchmarks):
     print_info(f"Evaluation time: {timedelta(seconds=eval_end - eval_start)}")
 
 
-def __execute_states(state: OperationState, exec_data_file: str, benchs: Benchmarks, main_exec_data: Optional[dict[str, dict[str, int]]]):
+def __execute_states(state: Union[OperationState, tuple[Env, OperationState]], exec_data_file: str, benchs: Benchmarks, main_exec_data: Optional[dict[str, dict[str, int]]]):
+    Execution(exec_data_file, main_exec_data)
+    if isinstance(state, tuple):
+        env, state = state
+    else:
+        env = Env()
+        env.reset(benchs, state.bench_idx)
     print("Handling benchmark:", state.bench_name, flush=True)
+
     worker_start = time()
 
-    Execution(exec_data_file, main_exec_data)
-    env = Env()
-    env.reset(benchs, state.bench_idx)
     rewards, speedup, new_exec_time, cache_miss = env.apply_and_run_sequence(state.transformation_history)
 
     worker_end = time()

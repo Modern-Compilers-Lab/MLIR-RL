@@ -1,8 +1,6 @@
 from dotenv import load_dotenv
 
-from utils.log import print_info, print_success
 load_dotenv(override=True)
-load_dotenv('.env.debug')
 
 import json
 import sys
@@ -14,6 +12,7 @@ from rl_autoschedular.env import Env
 from rl_autoschedular.execution import Execution
 from rl_autoschedular.observation import Observation
 
+from utils.log import print_info, print_success
 from utils.config import Config
 from utils.dask_manager import DaskManager
 from utils.file_logger import FileLogger

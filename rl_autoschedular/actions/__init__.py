@@ -6,6 +6,7 @@ from .tiled_parallelization import TiledParallelization
 from .tiled_fusion import TiledFusion
 from .interchange import Interchange
 from .vectorization import Vectorization
+from .array_packing import ArrayPacking
 from rl_autoschedular.state import OperationState
 import torch
 from torch.distributions import Distribution, Categorical
@@ -20,6 +21,7 @@ class ActionSpace:
         Tiling,
         TiledParallelization,
         TiledFusion,
+        ArrayPacking,
         Interchange,
         Vectorization
     ]

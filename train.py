@@ -2,7 +2,6 @@ from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv(override=True)
-load_dotenv('.env.debug')
 
 import os
 import json
@@ -65,7 +64,7 @@ if __name__ == "__main__":
     # Initialize execution singleton
     Execution(fl.exec_data_file, main_exec_data)
 
-    print_info(f"Config: {cfg}")
+    cfg.print_config()
     print_success(f'Logging to: {fl.run_dir}')
     if cfg.main_exec_data_file:
         print_info(f"Global execution data located in: {cfg.main_exec_data_file}")

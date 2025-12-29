@@ -263,17 +263,16 @@ module attributes {{transform.with_named_sequence}} {{
   transform.named_sequence @__transform_main(%arg1: !transform.any_op {{transform.readonly}}) {{
     %op_operation = transform.structured.match attributes{{tag = "{operation_tag}"}} in %arg1 : (!transform.any_op) -> !transform.any_op
 
-    transform.structured.convert_conv2d_to_img2col %op_operation : (!transform.any_op) -> (!transform.any_op, !transform.any_op)
+    %a, %b = transform.structured.convert_conv2d_to_img2col %op_operation : (!transform.any_op) -> (!transform.any_op, !transform.any_op)
 
+    %matmul_op = transform.get_producer_of_operand %b[0]: (!transform.any_op) -> !transform.any_op
+    %matmul_op_tag = transform.param.constant "{operation_tag}" -> !transform.any_param
+    transform.annotate %matmul_op "tag" = %matmul_op_tag : !transform.any_op, !transform.any_param
     transform.yield
   }}
 }}"""
-    # // %a_tag = transform.param.constant "img2col_producer" -> !transform.any_param
-    # // transform.annotate %a "tag" = %a_tag : !transform.any_op, !transform.any_param
-
-    # // %matmul_op = transform.get_producer_of_operand %b[0]: (!transform.any_op) -> !transform.any_op
-    # // %matmul_op_tag = transform.param.constant "{operation_tag}" -> !transform.any_param
-    # // transform.annotate %matmul_op "tag" = %matmul_op_tag : !transform.any_op, !transform.any_param
+    # %a_tag = transform.param.constant "{operation_tag}_img2col" -> !transform.any_param
+    # transform.annotate %a "tag" = %a_tag : !transform.any_op, !transform.any_param
 
     return __run_transform_code_wrapper(code, transform_code)
 
@@ -303,12 +302,12 @@ def transform_TF(code: str, consumer_tag: str, producer_tag: str, new_producer_t
         f'    %tiled_op_{consumer_tag}, %forall_op_{consumer_tag} = transform.structured.tile_using_forall %op_{consumer_tag} tile_sizes {str(tiling_sizes)} : (!transform.any_op) -> (!transform.any_op, !transform.any_op)\n'
         f'    %op_{producer_tag} = transform.structured.match attributes{{tag = "{producer_tag}"}} in %arg1 : (!transform.any_op) -> !transform.any_op\n'
         f'    %fused, %containing = transform.structured.fuse_into_containing_op %op_{producer_tag} into %forall_op_{consumer_tag} : (!transform.any_op, !transform.any_op) -> (!transform.any_op, !transform.any_op)\n'
-        f'    %fused_tag = transform.param.constant "{new_producer_tag}" -> !transform.any_param\n'
-        f'    transform.annotate %fused "tag" = %fused_tag : !transform.any_op, !transform.any_param\n'
         f'    transform.yield\n'
         f'  }}\n'
         f'}}\n'
     )
+    # f'    %fused_tag = transform.param.constant "{new_producer_tag}" -> !transform.any_param\n'
+    # f'    transform.annotate %fused "tag" = %fused_tag : !transform.any_op, !transform.any_param\n'
 
     return __run_transform_code_wrapper(code, transform_code)
 
@@ -436,6 +435,40 @@ def transform_pre_vec(code: str, operation_tag: str):
         raise Exception(e.stderr)
 
     return code
+
+
+def transform_pack(code: str, operation_tag: str, tiling_sizes: list[int]):
+    """Apply array packing transformation to the specified operation in the given code.
+
+    Args:
+        code (str): The code to apply the transformation to.
+        operation_tag (str): The tag of the operation to apply the transformation to.
+        tiling_sizes (list[int]): The tiling size to apply.
+
+    Returns:
+        str: The code after applying the transformation.
+    """
+    # If tiling sizes are all zeros, means no tiling is needed
+    if all([a == 0 for a in tiling_sizes]):
+        return code
+
+    transform_code = (
+        f'\nmodule attributes {{transform.with_named_sequence}} {{\n'
+        f'  transform.named_sequence @__transform_main(%arg0: !transform.any_op {{transform.readonly}}) {{\n'
+        f'    %op_{operation_tag} = transform.structured.match attributes{{tag = "{operation_tag}"}} in %arg0 : (!transform.any_op) -> !transform.any_op\n'
+        f'    %op_packed_{operation_tag} = transform.structured.pack %op_{operation_tag} packed_sizes = {str(tiling_sizes)} : (!transform.any_op) -> !transform.any_op\n'
+        f'    %packed_tag = transform.param.constant "{operation_tag}" -> !transform.any_param\n'
+        f'    transform.annotate %op_packed_{operation_tag} "tag" = %packed_tag : !transform.any_op, !transform.any_param\n'
+        f'    %pack = transform.structured.match ops{{["tensor.pack"]}} in %arg0 : (!transform.any_op) -> !transform.op<"tensor.pack">'
+        f'    transform.structured.lower_pack %pack : (!transform.op<"tensor.pack">) -> (!transform.op<"tensor.pad">, !transform.op<"tensor.expand_shape">, !transform.op<"linalg.transpose">)'
+        f'    %unpack = transform.structured.match ops{{["tensor.unpack"]}} in %arg0 : (!transform.any_op) -> !transform.op<"tensor.unpack">'
+        f'    transform.structured.lower_unpack %unpack : (!transform.op<"tensor.unpack">) -> (!transform.op<"tensor.empty">, !transform.op<"linalg.transpose">, !transform.op<"tensor.collapse_shape">, !transform.op<"tensor.extract_slice">)'
+        f'    transform.yield\n'
+        f'  }}\n'
+        f'}}'
+    )
+
+    return __run_transform_code_wrapper(code, transform_code)
 
 
 def __run_transform_code_wrapper(code: str, transform_code: str):
