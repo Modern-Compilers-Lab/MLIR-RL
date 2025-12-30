@@ -1,3 +1,10 @@
+"""Global configuration management for MLIR RL training.
+
+This module provides a singleton configuration class that loads and validates
+configuration parameters from JSON files, managing all hyperparameters and settings
+for the training pipeline.
+"""
+
 from typing import Literal, Any, Optional
 from typeguard import check_type, CollectionCheckStrategy
 from .singleton import Singleton

@@ -1,9 +1,19 @@
+"""Logging utilities for console output with labels and colors.
+
+This module provides helper functions for printing status messages with
+labels and consistent formatting, supporting both local and distributed execution.
+"""
+
 from datetime import datetime
 import random
 import string
 import sys
-from dask.distributed import print
 import pytz
+
+try:
+    from distributed import print
+except ImportError:
+    pass
 
 
 def generate_random_string():

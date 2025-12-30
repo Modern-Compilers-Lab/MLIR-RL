@@ -1,29 +1,46 @@
-import os
+"""Reinforcement learning environment for MLIR RL.
+
+This module implements the RL environment that simulates MLIR code transformations.
+It manages the state transitions, reward computation, and execution of transformation
+sequences. The environment tracks operations across benchmarks and evaluates the
+effectiveness of optimizations.
+"""
+
 from rl_autoschedular.state import OperationState, BenchmarkFeatures, extract_bench_features_from_code
 from rl_autoschedular.benchmarks import Benchmarks
-from typing import Optional
+from typing import Optional, Union
 from rl_autoschedular.execution import Execution
 from rl_autoschedular.actions import Action, TiledFusion
-from utils.file_logger import FileLogger
 from utils.log import print_error
 from utils.config import Config
+from mlir._mlir_libs._mlir.ir import Context, Module  # type: ignore
 import random
 import math
 import traceback
 
 
 class Env:
-    """RL Environment class"""
+    """RL Environment class
+
+    Attributes:
+        bench_idx: Index of the selected benchmark.
+        benchmark_data: Features of the selected benchmark.
+        processed_tags: List of tags that have already been processed.
+    """
 
     bench_idx: int
-    """Index of the selected benchmark"""
     benchmark_data: BenchmarkFeatures
-    """Features of the selected benchmark"""
     processed_tags: set[str]
-    """List of tags that have already been processed"""
 
-    def __new__(cls):
-        # If intermediate_transformations is enabled instantiate reactive environment, else predictive
+    def __new__(cls) -> Union['ReactiveEnv', 'PredictiveEnv']:
+        """Create a new instance of the environment.
+
+        If intermediate_transformations is enabled, a reactive environment
+        is instantiated, else a predictive environment is instantiated.
+
+        Returns:
+            A new instance of the environment.
+        """
         if Config().intermediate_transforms:
             return super().__new__(ReactiveEnv)
         else:
@@ -33,10 +50,12 @@ class Env:
         """Reset the environment.
 
         Args:
-            bench_idx (Optional[int]): The index of the benchmark to set the environement to. If None, a random benchmark is selected. Defaults to None.
+            benchs: The benchmarks dataset.
+            bench_idx: The index of the benchmark to set the environment to.
+                If None, a random benchmark is selected. Defaults to None.
 
         Returns:
-            OperationState: The initial state of the environment.
+            The initial state of the environment.
         """
         # Get the benchmark
         if bench_idx is None:
@@ -51,14 +70,13 @@ class Env:
         """Take a step in the environment.
 
         Args:
-            state (OperationState): The current state.
-            action (Action): The action to take.
+            state: The current state.
+            action: The action to take.
 
         Returns:
-            OperationState: The new state.
-            float: The reward of the action.
-            bool: A flag indicating if the operation is done.
-            Optional[float]: The speedup (if the operation is executed successfully) for logging purposes.
+            The new state after applying the action. The state's terminal
+                flag is set if the action failed, is terminal, or the truncation
+                step limit is reached.
         """
         # Copy the current state to introduce the changes throughout the function
         next_state = state.copy()
@@ -91,10 +109,10 @@ class Env:
         """Get the state that represents the next operation (None if benchmark is done).
 
         Args:
-            state (OperationState): The current state.
+            state: The current state.
 
         Returns:
-            Optional[OperationState]: The next state. If None then bench is done.
+            The next state. If None then bench is done.
         """
         # Reset to another benchmark if the current benchmark is done (reached first operation)
         if self._bench_is_done:
@@ -109,6 +127,17 @@ class Env:
         return next_state
 
     def apply_and_run_sequence(self, seq: list[list[Action]]) -> tuple[list[float], float, Optional[int], bool]:
+        """Apply the sequence of actions to the state's code and run it.
+
+        Args:
+            seq: The sequence of actions to apply.
+
+        Returns:
+            The rewards received.
+            The final speedup.
+            The execution time.
+            Whether it was a cache miss.
+        """
         transformed_code, rewards = self._apply_sequence(seq)
 
         # Evaluate the code (since the operation is done)
@@ -130,14 +159,6 @@ class Env:
             exec_succeeded = False
             cache_miss = True
 
-            with open(os.path.join(FileLogger().run_dir, "errors.mlir"), "a") as f:
-                seq_str = '\n// '.join([str(list(map(str, op_seq))) for op_seq in seq])
-                f.write(f"// {self.benchmark_data.bench_name}\n")
-                f.write("// EXEC ERROR\n")
-                f.write(f"// {seq_str}\n")
-                f.write(transformed_code)
-                f.write("\n// -----\n")
-
         # The reward will take into consideration whether execution succeeded or not
         rewards[-1] = self._action_reward(True, exec_succeeded, new_exec_time, self.benchmark_data.root_exec_time)
         speedup = (self.benchmark_data.root_exec_time / new_exec_time) if new_exec_time is not None else 1.0
@@ -145,6 +166,19 @@ class Env:
         return rewards, speedup, new_exec_time, cache_miss
 
     def failed_seq(self, seq: list[list[Action]]) -> tuple[list[float], float, Optional[int], bool]:
+        """Generate results for a failed sequence.
+        Typically used for aborted states which never
+        reached the last operation.
+
+        Args:
+            seq: The sequence of actions that failed.
+
+        Returns:
+            The rewards received.
+            The final speedup.
+            The execution time.
+            Whether it was a cache miss.
+        """
         rewards = [0.0 for op_seq in reversed(seq) for action in op_seq for _ in range(len(action.sub_actions) + 1)]
         rewards[-1] = self._action_reward(True, False)
         return rewards, 1.0, None, True
@@ -162,11 +196,8 @@ class Env:
     def _bench_is_done(self) -> bool:
         """Check if the benchmark is done.
 
-        Args:
-            state (OperationState): The current state.
-
         Returns:
-            bool: A flag indicating if the benchmark is done.
+            A boolean indicating if the benchmark is done.
         """
         return len(self._unprocessed_tags) == 0
 
@@ -174,11 +205,10 @@ class Env:
         """Create a new operation state.
 
         Args:
-            operation_idx (int): The operation index.
+            operation_tag: The tag of the operation.
 
         Returns:
-            OperationState: The new operation state.
-            torch.Tensor: The observation vector of the new operation state.
+            The new operation state.
         """
         operation_features = self.benchmark_data.operations[operation_tag].copy()
 
@@ -212,13 +242,13 @@ class Env:
         """Get the reward of the action based on the transformation and execution results.
 
         Args:
-            trans_succeeded (bool): A flag indicating if the transformation was successful.
-            exec_succeeded (Optional[bool]): A flag indicating if the execution was successful. (required if trans succeeded)
-            new_exec_time (Optional[float]): The execution time after transformation. (required if exec succeeded)
-            old_exec_time (Optional[float]): The original execution time. (required if exec succeeded)
+            trans_succeeded: A flag indicating if the transformation was successful.
+            exec_succeeded: A flag indicating if the execution was successful. (required if trans succeeded)
+            new_exec_time: The execution time after transformation. (required if exec succeeded)
+            old_exec_time: The original execution time. (required if exec succeeded)
 
         Returns:
-            float: The reward of the action.
+            The reward of the action.
         """
         if not trans_succeeded:
             return -5.0
@@ -234,11 +264,11 @@ class Env:
         """Get the reward based on the speedup.
 
         Args:
-            new (float): The new execution time.
-            old (float): The old execution time.
+            new: The new execution time.
+            old: The old execution time.
 
         Returns:
-            float: The calculated reward.
+            The calculated reward.
         """
 
         # if old < new * 2:
@@ -251,30 +281,33 @@ class Env:
         """Update state infos after applying a transformation.
 
         Args:
-            state (OperationState): The current state.
-            action (Action): The action taken.
+            state: The current state.
+            action: The action taken.
         """
         # Record action
         state.record_action(action)
 
-    def _apply_sequence(self, seq: list[list[Action]]) -> tuple[str, list[float]]:
+    def _apply_sequence(self, seq: list[list[Action]]) -> tuple[Module, list[float]]:
         """Apply the sequence of actions to the state's code.
 
         Args:
-            code (str): code to apply the actions to.
-            seq (list[Action]): the sequence of actions to apply.
+            seq: the sequence of actions to apply.
 
         Returns:
-            tuple[str, list[float]]: the resulting code and rewards received for each action in the sequence.
+            The resulting code.
+            The rewards received for each action in the sequence.
         """
         raise NotImplementedError
 
 
 class ReactiveEnv(Env):
-    """Environment that applies transformations to the code in each step."""
+    """Environment that applies transformations to the code in each step.
+
+    Attributes:
+        rewards_record: Record of intermediate rewards.
+    """
 
     rewards_record: list[float]
-    """Record of intermediate rewards"""
 
     def reset(self, benchs, bench_idx=None):
         self.rewards_record = []
@@ -283,17 +316,8 @@ class ReactiveEnv(Env):
     def step(self, state, action):
         next_state = super().step(state, action)
 
-        if next_state.failed:
-            seq_str = '\n// '.join([str(list(map(str, op_seq))) for op_seq in state.transformation_history])
-            with open(os.path.join(FileLogger().run_dir, "errors.mlir"), "a") as f:
-                f.write(f"// {self.benchmark_data.bench_name}\n")
-                f.write(f"// Action: {repr(action)}\n")
-                f.write(f"// {seq_str}\n")
-                f.write(self.benchmark_data.code)
-                f.write("\n// -----\n")
-
         # In a reactive env we know for sure if the action is
-        # successful. However we don't know that in a predictive
+        # successful. However we don't know this in a predictive
         # env, that's why we use `state.failed` only here
         self.rewards_record.append(self._action_reward(False) if next_state.failed else 0.0)
 
@@ -302,10 +326,11 @@ class ReactiveEnv(Env):
     def _update_state_infos(self, state, action):
         super()._update_state_infos(state, action)
 
-        new_transformed_code = action.apply(self.benchmark_data.code)
+        bench_module = Module.parse(self.benchmark_data.code, Context())
+        action.apply(bench_module)
         self.benchmark_data = extract_bench_features_from_code(
             self.benchmark_data.bench_name,
-            new_transformed_code,
+            str(bench_module),
             self.benchmark_data.root_exec_time,
             self.benchmark_data.tag_counter,
         )
@@ -320,7 +345,8 @@ class ReactiveEnv(Env):
         state.producer_operand_idx = new_state.producer_operand_idx
 
     def _apply_sequence(self, seq):
-        return self.benchmark_data.code, self.rewards_record
+        bench_module = Module.parse(self.benchmark_data.code, Context())
+        return bench_module, self.rewards_record
 
 
 class PredictiveEnv(Env):
@@ -338,7 +364,7 @@ class PredictiveEnv(Env):
 
     def _apply_sequence(self, seq):
         rewards: list[float] = []
-        transformed_code = self.benchmark_data.code
+        bench_module = Module.parse(self.benchmark_data.code, Context())
         for op_seq in reversed(seq):
             op_seq_already_failed = False
             for action in op_seq:
@@ -352,7 +378,7 @@ class PredictiveEnv(Env):
                 # Attempt to apply the transformation to the code
                 # - If the transformation fails: punish the agent, reset the code, and mark the operation as done
                 try:
-                    new_transformed_code = action.apply(transformed_code)
+                    action.apply(bench_module)
                 except Exception as e:
                     seq_str = '\n'.join([str(list(map(str, op_seq))) for op_seq in seq])
                     print_error(
@@ -366,9 +392,6 @@ class PredictiveEnv(Env):
                     op_seq_already_failed = True
                     continue
 
-                # Update transformed code
-                transformed_code = new_transformed_code
-
                 rewards.extend([0.0] * rewards_count)
 
-        return transformed_code, rewards
+        return bench_module, rewards

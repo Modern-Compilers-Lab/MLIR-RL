@@ -1,9 +1,16 @@
+"""Observation encoding for operation state representation.
+
+This module provides classes for encoding operation features into observation tensors
+used by the RL policy and value networks. It includes components for operation features,
+producer features, action history, action masks, and loop counts.
+"""
+
 from rl_autoschedular.actions import ActionSpace
 from rl_autoschedular.state import OperationState, OperationType, IteratorType, OperationFeatures
+from utils.config import Config
 import torch
 import math
 
-from utils.config import Config
 
 L = Config().max_num_loops
 LSD = Config().max_num_load_store_dim
@@ -11,18 +18,35 @@ LS = Config().max_num_stores_loads
 
 
 class ObservationPart:
+    """Abstract base class for observation parts."""
     @classmethod
     def size(cls) -> int:
+        """Get the size of this observation part.
+
+        Returns:
+            The size of the observation part.
+        """
         raise NotImplementedError
 
     @classmethod
     def from_state(cls, state: OperationState) -> torch.Tensor:
-        """Create the observation part from the current state."""
+        """Create the observation part from the current state.
+
+        Args:
+            state: The current operation state.
+
+        Returns:
+            The observation part tensor.
+        """
         raise NotImplementedError
 
 
 class OpFeatures(ObservationPart):
-    """Class representing operation features in the observation"""
+    """Class representing operation features in the observation
+
+    Attributes:
+        arith_ops: List of supported arithmetic operations
+    """
 
     arith_ops = ['+', '-', '*', '/', 'exp']
 
@@ -36,6 +60,14 @@ class OpFeatures(ObservationPart):
 
     @classmethod
     def _from_features(cls, op_features: OperationFeatures) -> torch.Tensor:
+        """Create the observation part from the operation features.
+
+        Args:
+            op_features: The operation features.
+
+        Returns:
+            The observation part tensor.
+        """
         indices_dim = {nested_loop.arg: i for i, nested_loop in enumerate(op_features.nested_loops)}
 
         # Operation type
@@ -113,15 +145,17 @@ class OpFeatures(ObservationPart):
     @staticmethod
     def __formula_str_to_list(formula: str) -> list[tuple[str, int]]:
         """Turns assignement formula to a list of (index, factor)
+
         Example:
-            formula = "%x1 - %x2 + %x3 * 5 - %x5 * 3"
-            return [('%x1', 1), ('%x2', -1), ('%x3', 5), ('%x5', -3)]
+            formula: `"%x1 - %x2 + %x3 * 5 - %x5 * 3"`
+
+            returns: `[('%x1', 1), ('%x2', -1), ('%x3', 5), ('%x5', -3)]`
 
         Args:
-            formula (str): the formula as a string input
+            formula: the formula as a string input
 
         Returns:
-            list: list of (index, factor) pairs
+            list of (index, factor) pairs
         """
         formula = formula + ' +'
         terms = formula.split(' ')
@@ -151,6 +185,7 @@ class OpFeatures(ObservationPart):
 
 
 class ProducerOpFeatures(OpFeatures):
+    """Class representing producer operation features in the observation"""
     @classmethod
     def from_state(cls, state: OperationState) -> torch.Tensor:
         if state.producer_features:
@@ -196,7 +231,11 @@ class NumLoops(ObservationPart):
 
 
 class Observation:
-    """Class to manage creation and use of observations"""
+    """Class to manage creation and use of observations
+
+    Attributes:
+        parts: List of observation parts
+    """
 
     parts: list[type[ObservationPart]] = [
         OpFeatures,
@@ -208,7 +247,11 @@ class Observation:
 
     @classmethod
     def cumulative_sizes(cls) -> list[int]:
-        """Get cumulative sizes of all observation parts."""
+        """Get cumulative sizes of all observation parts.
+
+        Returns:
+            List of cumulative sizes of all observation parts.
+        """
         sizes = [0]
         for part in cls.parts:
             sizes.append(sizes[-1] + part.size())
@@ -216,12 +259,29 @@ class Observation:
 
     @classmethod
     def part_number(cls, part: type[ObservationPart]) -> int:
-        """Get the index of a part in the observation."""
+        """Get the index of a part in the observation.
+
+        Args:
+            part: The part to get the index of.
+
+        Returns:
+            The index of the part in the observations.
+        """
         return cls.parts.index(part)
 
     @classmethod
     def get_part(cls, obs: torch.Tensor, part: type[ObservationPart], squeeze: bool = True) -> torch.Tensor:
-        """Get a specific part of the observation."""
+        """Get a specific part of the observation.
+
+        Args:
+            obs: The observation tensor.
+            part: The part to get.
+            squeeze: Whether to squeeze the part if it has a size of 1.
+                i.e return [batch_size] instead of [batch_size, 1]
+
+        Returns:
+            The tensor representing the part.
+        """
         part_idx = cls.part_number(part)
         cum_sizes = cls.cumulative_sizes()
         start = cum_sizes[part_idx]
@@ -232,16 +292,38 @@ class Observation:
 
     @classmethod
     def get_parts(cls, obs: torch.Tensor, *parts: type[ObservationPart]) -> torch.Tensor:
-        """Get multiple parts of the observation in a single tensor."""
+        """Get multiple parts of the observation in a single tensor.
+
+        Args:
+            obs: The observation tensor.
+            *parts: The parts to get.
+
+        Returns:
+            The tensor representing the parts.
+        """
         return torch.cat([cls.get_part(obs, part, False) for part in parts], dim=1)
 
     @classmethod
     def from_state(cls, state: OperationState) -> torch.Tensor:
-        """Create the full observation from the current state."""
+        """Create the full observation from the current state.
+
+        Args:
+            state: The current operation state.
+
+        Returns:
+            The full observation tensor.
+        """
         obs_parts = [part.from_state(state) for part in cls.parts]
         return torch.cat(obs_parts).unsqueeze(0)
 
     @classmethod
     def from_states(cls, states: list[OperationState]) -> torch.Tensor:
-        """Create the full observation for all the states."""
+        """Create the full observation for all the states.
+
+        Args:
+            states: The list of operation states.
+
+        Returns:
+            The full observation tensor. States concatenated along the first dimension.
+        """
         return torch.cat([cls.from_state(s) for s in states])

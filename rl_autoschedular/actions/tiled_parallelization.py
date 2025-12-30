@@ -1,8 +1,15 @@
+"""Tiled parallelization action for MLIR loop transformations.
+
+This module implements the tiled parallelization transformation action, which applies
+tiling with parallelization using forall constructs.
+"""
+
 from typing import Optional
 from .array_packing import ArrayPacking
 from .tiling import Tiling
 from rl_autoschedular.transforms import transform_tile, transform_TP
 from rl_autoschedular.state import OperationState, IteratorType
+from mlir._mlir_libs._mlir.ir import Module  # type: ignore
 
 
 class TiledParallelization(Tiling):
@@ -44,6 +51,6 @@ class TiledParallelization(Tiling):
             state.operation_features.pre_actions + state.current_history
         )
 
-    def _apply_ready(self, code: str):
-        p_code = transform_TP(code, self.operation_tag, self.parallel_params)
-        return transform_tile(p_code, self.operation_tag, self.tiling_params)
+    def _apply_ready(self, module: Module):
+        transform_TP(module, self.operation_tag, self.parallel_params)
+        transform_tile(module, self.operation_tag, self.tiling_params)

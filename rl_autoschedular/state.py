@@ -1,3 +1,10 @@
+"""State representation and feature extraction for MLIR operations.
+
+This module provides data structures for representing benchmark and operation states,
+including features like loops, memory accesses, and operation types. It also provides
+functionality for extracting these features from MLIR AST using the AstDumper tool.
+"""
+
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 from enum import Enum
@@ -13,6 +20,16 @@ if TYPE_CHECKING:
 
 
 class OperationType(Enum):
+    """Enumeration of operation types for MLIR operations.
+
+    Attributes:
+        Generic: Generic operation type.
+        Matmul: Matrix multiplication operation type.
+        Conv: Convolutional operation type.
+        Pooling: Pooling operation type.
+        Add: Add operation type.
+        unknown: Unknown operation type.
+    """
     Generic = 'generic'
     Matmul = 'matmul'
     Conv = 'conv'
@@ -23,55 +40,77 @@ class OperationType(Enum):
 
 
 class IteratorType(Enum):
+    """Enumeration of iterator types for loop dimensions.
+
+    Attributes:
+        Parallel: Parallel iterator type.
+        Reduction: Reduction iterator type.
+    """
     Parallel = 'parallel'
     Reduction = 'reduction'
 
 
 @dataclass
 class NestedLoopFeatures:
-    """Dataclass to store the nested loops features data."""
-    arg: str
-    """The argument representing the loop iterator."""
-    lower_bound: int
-    """The lower bound of the loop."""
-    upper_bound: int
-    """The upper bound of the loop."""
-    step: int
-    """The loop step."""
-    iterator_type: IteratorType
-    """The type of the loop iterator."""
+    """Dataclass to store the nested loops features data.
 
-    def copy(self):
-        """Copy the current NestedLoopFeatures object."""
+    Attributes:
+        arg: The argument representing the loop iterator.
+        lower_bound: The lower bound of the loop.
+        upper_bound: The upper bound of the loop.
+        step: The loop step.
+        iterator_type: The type of the loop iterator.
+    """
+
+    arg: str
+    lower_bound: int
+    upper_bound: int
+    step: int
+    iterator_type: IteratorType
+
+    def copy(self) -> 'NestedLoopFeatures':
+        """Copy the current [NestedLoopFeatures][..] object.
+
+        Returns:
+            The copy.
+        """
         return NestedLoopFeatures(self.arg, self.lower_bound, self.upper_bound, self.step, self.iterator_type)
 
 
 @dataclass
 class OperationFeatures:
-    """Dataclass to store the operation features data."""
-    operation_name: str
-    """The name of the mlir operation."""
-    operation_type: OperationType
-    """The type of the operation."""
-    op_count: dict[str, int]
-    """Number of arithmetic operations in the operation."""
-    load_data: list[list[str]]
-    """List of load accesses where each load is represented by the list of access arguments."""
-    store_data: list[list[str]]
-    """List of store accesses where each store is represented by the list of access arguments."""
-    nested_loops: list[NestedLoopFeatures]
-    """List of nested loops where each loop is represented by the NestedLoopFeatures dataclass."""
-    producers: list[tuple[str, int]]
-    """List of tags of operations that are consumed by the current operation along with their operand indices"""
-    consumers: list[tuple[str, int]]
-    """List of tags of operations that consume the current operation"""
-    vectorizable: bool
-    """Flag to indicate if the operation is vectorizable."""
-    pre_actions: list['Action']
-    """List actions that are already applied the current operatiom"""
+    """Dataclass to store the operation features data.
 
-    def copy(self):
-        """Copy the current OperationFeatures object."""
+    Attributes:
+        operation_name: The name of the mlir operation.
+        operation_type: The type of the operation.
+        op_count: Number of arithmetic operations in the operation.
+        load_data: List of load accesses where each load is represented by the list of access arguments.
+        store_data: List of store accesses where each store is represented by the list of access arguments.
+        nested_loops: List of nested loops where each loop is represented by the [NestedLoopFeatures][..NestedLoopFeatures] dataclass.
+        producers: List of tags of operations that are consumed by the current operation along with their operand indices.
+        consumers: List of tags of operations that consume the current operation.
+        vectorizable: Flag to indicate if the operation is vectorizable.
+        pre_actions: List actions that are already applied the current operatiom.
+    """
+
+    operation_name: str
+    operation_type: OperationType
+    op_count: dict[str, int]
+    load_data: list[list[str]]
+    store_data: list[list[str]]
+    nested_loops: list[NestedLoopFeatures]
+    producers: list[tuple[str, int]]
+    consumers: list[tuple[str, int]]
+    vectorizable: bool
+    pre_actions: list['Action']
+
+    def copy(self) -> 'OperationFeatures':
+        """Copy the current [OperationFeatures][..] object.
+
+        Returns:
+            The copy.
+        """
         return OperationFeatures(
             self.operation_name,
             self.operation_type,
@@ -88,22 +127,30 @@ class OperationFeatures:
 
 @dataclass
 class BenchmarkFeatures:
-    """Dataclass to store the benchmark features data."""
-    bench_name: str
-    """The benchmark's name."""
-    code: str
-    """The MLIR code of the benchmark."""
-    operation_tags: list[str]
-    """List of operation tags."""
-    operations: dict[str, OperationFeatures]
-    """List of operations where each operation is represented by the OperationFeatures dataclass."""
-    root_exec_time: int
-    """Execution time of the benchmark in nanoseconds without any transformation."""
-    tag_counter: int
-    """A counter to generate unique tags"""
+    """Dataclass to store the benchmark features data.
 
-    def copy(self):
-        """Copy the current BenchmarkFeatures object."""
+    Attributes:
+        bench_name: The name of the benchmark.
+        code: The MLIR code of the benchmark.
+        operation_tags: List of operation tags.
+        operations: List of operations where each operation is represented by the [OperationFeatures][..OperationFeatures] dataclass.
+        root_exec_time: Execution time of the benchmark in nanoseconds without any transformation.
+        tag_counter: A counter to generate unique tags.
+    """
+
+    bench_name: str
+    code: str
+    operation_tags: list[str]
+    operations: dict[str, OperationFeatures]
+    root_exec_time: int
+    tag_counter: int
+
+    def copy(self) -> 'BenchmarkFeatures':
+        """Copy the current [BenchmarkFeatures][..] object.
+
+        Returns:
+            The copy.
+        """
         return BenchmarkFeatures(
             self.bench_name,
             self.code,
@@ -116,46 +163,80 @@ class BenchmarkFeatures:
 
 @dataclass
 class OperationState:
+    """Dataclass to store the operation state data.
+
+    Attributes:
+        bench_idx: The index of the benchmark.
+        bench_name: The name of the benchmark.
+        operation_tag: The tag of the operation.
+        original_operation_features: The features of the operation that will be kept always unchanged.
+        operation_features: The features of the operation.
+        producer_tag: The tag of the selected producer.
+        producer_operand_idx: The index of the producer's operand.
+        producer_features: The features of the selected producer.
+        transformation_history: List of transformations with their parameters applied to the operation.
+        terminal: Flag to indicate if the state is terminal.
+        failed: Flag to indicate if the state ended in a failed action.
+    """
+
     bench_idx: int
-    """The benchmark's index."""
     bench_name: str
-    """The benchmark's name."""
     operation_tag: str
-    """Tag used to identify the operation in the MLIR code."""
     original_operation_features: OperationFeatures
-    """Features of the operation that will be kept always unchanged."""
     operation_features: OperationFeatures
-    """Features of the operation."""
     producer_tag: Optional[str]
-    """Tag that identifies the selected producer"""
     producer_operand_idx: Optional[int]
-    """The index of the producer's operand"""
     producer_features: Optional[OperationFeatures]
-    """Features of the selected producer"""
     transformation_history: list[list['Action']] = field(default_factory=lambda: [[]])
-    """List of transformations with their parameters applied to the operation."""
     terminal: bool = False
-    """Flag that determines if the state is terminal"""
     failed: bool = False
-    """Flag that determines if the state ended in a failed action"""
 
     @property
-    def current_history(self):
+    def current_history(self) -> list['Action']:
+        """Get the transformation sequence of the current operation being optimized.
+
+        Returns:
+            The transformation sequence.
+        """
         return self.transformation_history[0]
 
     @property
-    def step_count(self):
+    def step_count(self) -> int:
+        """Get the number of steps in the current transformation sequence.
+
+        Returns:
+            The number of steps.
+        """
         return len(self.current_history)
 
     @property
-    def latest_action(self):
+    def latest_action(self) -> Optional['Action']:
+        """Get the latest action in the current transformation sequence.
+
+        Returns:
+            The latest action.
+        """
         return self.current_history[-1] if self.current_history else None
 
     @property
-    def has_incomplete_action(self):
+    def has_incomplete_action(self) -> bool:
+        """Check if the latest action is incomplete.
+
+        Returns:
+            True if the latest action is incomplete, False otherwise.
+        """
         return (not self.latest_action.ready) if self.latest_action else False
 
     def record_action(self, action: 'Action'):
+        """Record an action in the current transformation sequence.
+
+        Note:
+            If the latest action is incomplete, it will be replaced by the new action,
+            and all the past incomplete actions will be kept in `sub_actions`.
+
+        Args:
+            action: The action to record.
+        """
         if self.has_incomplete_action:
             # Case where the last action should be replaced
             action.sub_actions = self.latest_action.sub_actions + [self.latest_action]
@@ -163,8 +244,12 @@ class OperationState:
         else:
             self.current_history.append(action)
 
-    def copy(self):
-        """Copy the current OperationState object."""
+    def copy(self) -> 'OperationState':
+        """Copy the current [OperationState][..] object.
+
+        Returns:
+            The copy.
+        """
         return OperationState(
             self.bench_idx,
             self.bench_name,
@@ -180,17 +265,17 @@ class OperationState:
         )
 
 
-def extract_bench_features_from_code(bench_name: str, code: str, root_execution_time: int, previous_op_count: Optional[int] = None):
+def extract_bench_features_from_code(bench_name: str, code: str, root_execution_time: int, previous_op_count: Optional[int] = None) -> BenchmarkFeatures:
     """Extract benchmark features from the given code.
 
     Args:
-        bench_name (str): the benchmark name
-        code (str): the code to extract features from
-        root_execution_time (int): the root execution time
-        execution_time (int): the execution time
+        bench_name: the benchmark name
+        code: the code to extract features from
+        root_execution_time: the root execution time
+        previous_op_count: the previous operation count (if any)
 
     Returns:
-        BenchmarkFeatures: the extracted benchmark features
+        the extracted benchmark features
     """
     try:
         result = subprocess.run(
@@ -207,17 +292,17 @@ def extract_bench_features_from_code(bench_name: str, code: str, root_execution_
     return __extract_bench_features_from_ast_result(bench_name, raw_ast_info, root_execution_time)
 
 
-def extract_bench_features_from_file(bench_name: str, file_path: str, root_execution_time: int, previous_op_count: Optional[int] = None):
+def extract_bench_features_from_file(bench_name: str, file_path: str, root_execution_time: int, previous_op_count: Optional[int] = None) -> BenchmarkFeatures:
     """Extract benchmark features from the code in the file.
 
     Args:
-        bench_name (str): the benchmark name
-        file_path (str): the file path
-        root_execution_time (int): the root execution time
-        execution_time (int): the execution time
+        bench_name: the benchmark name
+        file_path: the file path
+        root_execution_time: the root execution time
+        previous_op_count: the previous operation count (if any)
 
     Returns:
-        BenchmarkFeatures: the extracted benchmark features
+        the extracted benchmark features
     """
     try:
         result = subprocess.run(
@@ -233,17 +318,16 @@ def extract_bench_features_from_file(bench_name: str, file_path: str, root_execu
     return __extract_bench_features_from_ast_result(bench_name, raw_ast_info, root_execution_time)
 
 
-def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str, root_execution_time: int):
+def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str, root_execution_time: int) -> BenchmarkFeatures:
     """Extracts benchmark features from the code's AST result and execution time.
 
     Args:
-        bench_name (str): the benchmark name
-        raw_ast_info (str): the raw AST information
-        root_execution_time (int): the root execution time
-        execution_time (int): the execution time
+        bench_name: the benchmark name
+        raw_ast_info: the raw AST information
+        root_execution_time: the root execution time
 
     Returns:
-        BenchmarkFeatures: extracted benchmark features
+        extracted benchmark features
     """
     cfg = Config()
 
@@ -369,14 +453,14 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
     )
 
 
-def __get_operation_type(operation_name: str):
+def __get_operation_type(operation_name: str) -> OperationType:
     """Get the operation type from the operation name.
 
     Args:
-        operation_name (str): The operation name.
+        operation_name: The operation name.
 
     Returns:
-        Optional[OperationType]: The operation type or None if not found.
+        The operation type or None if not found.
     """
     for operation_type in OperationType:
         if operation_type.value and operation_type.value in operation_name:

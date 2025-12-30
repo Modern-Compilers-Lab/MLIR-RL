@@ -1,3 +1,11 @@
+"""Neural network models for MLIR RL policy and value estimation.
+
+This module implements the deep RL components including the policy model,
+value model, and LSTM-based producer-consumer embedding. The policy model outputs action
+distributions for different transformation types, while the value model estimates
+state values for advantage computation.
+"""
+
 import torch
 import torch.nn as nn
 from torch.distributions import Distribution
@@ -11,7 +19,16 @@ ACTIVATION = nn.ReLU
 
 
 class HiearchyModel(nn.Module):
-    """Hierarchical reinforcement learning model for MLIR code optimization."""
+    """Hierarchical reinforcement learning model for MLIR code optimization.
+
+    Attributes:
+        policy_model: The policy model.
+        value_model: The value model.
+    """
+
+    policy_model: 'PolicyModel'
+    value_model: 'ValueModel'
+
     def __init__(self):
         """Initialize the model."""
         super(HiearchyModel, self).__init__()
@@ -23,14 +40,16 @@ class HiearchyModel(nn.Module):
         return super().__call__(obs, actions_index)
 
     def forward(self, obs: torch.Tensor, actions_index: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Forward pass of the model.
+        """Forward pass of the hierarchical model.
 
         Args:
-            obs (torch.Tensor): The input tensor.
-            actions_index (torch.Tensor): The list of actions.
+            obs: The input tensor.
+            actions_index: The indices of actions.
 
         Returns:
-            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: The logits of the transformations, parallelizations, tilings, and interchanges.
+            The log probabilities of actions.
+            Values.
+            Entropies.
         """
         actions_log_p, entropies = ActionSpace.distributions_stats(self.policy_model(obs), actions_index)
 
@@ -42,14 +61,17 @@ class HiearchyModel(nn.Module):
         """Sample an action from the model.
 
         Args:
-            obs (torch.Tensor): The input tensor.
-            greedy (bool): Whether to sample greedily.
-            eps (Optional[float]): Epsilon value for exploration. Defaults to None.
+            obs: The input tensor.
+            greedy: Whether to sample greedily.
+            eps: Epsilon value for exploration. Defaults to None.
+
+        Note:
+            If `greedy` is True, `eps` must be None.
 
         Returns:
-            torch.Tensor: Sampled actions index.
-            torch.Tensor: actions log probability.
-            torch.Tensor: resulting entropy.
+            Sampled actions index.
+            Actions log probability.
+            Resulting entropy.
         """
         assert not greedy or eps is None, 'Cannot be greedy and explore at the same time.'
 
@@ -74,7 +96,16 @@ class HiearchyModel(nn.Module):
 
 
 class ValueModel(nn.Module):
-    """Value model for MLIR code optimization."""
+    """Value model for MLIR code optimization.
+
+    Attributes:
+        lstm: The LSTM-based producer-consumer embedding.
+        network: The value network (backbone + value output).
+    """
+
+    lstm: 'LSTMEmbedding'
+    network: nn.Sequential
+
     def __init__(self):
         """Initialize the model."""
         super(ValueModel, self).__init__()
@@ -95,13 +126,13 @@ class ValueModel(nn.Module):
         return super().__call__(obs)
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
-        """Forward pass of the model.
+        """Forward pass of the value model.
 
         Args:
-            obs (torch.Tensor): The input tensor.
+            obs: The input tensor.
 
         Returns:
-            torch.Tensor: The value tensor.
+            The value tensor.
         """
         return self.network(self.lstm(obs)).squeeze(-1)
 
@@ -109,12 +140,12 @@ class ValueModel(nn.Module):
         """Calculate the value loss.
 
         Args:
-            new_values (torch.Tensor): The new value tensor.
-            values (torch.Tensor): The value tensor.
-            returns (torch.Tensor): The returns tensor.
+            new_values: The current value tensor.
+            values: The old value tensor (for clipping).
+            returns: The returns tensor.
 
         Returns:
-            torch.Tensor: The value loss.
+            The value loss.
         """
         if Config().value_clip:
             vclip = values + torch.clamp(new_values - values, -0.2, 0.2)
@@ -125,7 +156,21 @@ class ValueModel(nn.Module):
 
 
 class PolicyModel(nn.Module):
-    """Policy model for MLIR code optimization."""
+    """Policy model for MLIR code optimization.
+
+    Attributes:
+        lstm: The LSTM-based producer-consumer embedding.
+        backbone: The backbone of the policy model.
+        heads: The hierarchical outputs of the policy model
+            (tranformation selection + params selection).
+        log_std: The log standard deviation parameter (in case of continuous interchange).
+    """
+
+    lstm: 'LSTMEmbedding'
+    backbone: nn.Sequential
+    heads: nn.ModuleList
+    log_std: nn.Parameter
+
     def __init__(self):
         """Initialize the model."""
         super(PolicyModel, self).__init__()
@@ -159,13 +204,13 @@ class PolicyModel(nn.Module):
         return super().__call__(obs)
 
     def forward(self, obs: torch.Tensor) -> list[Optional[Distribution]]:
-        """Forward pass of the model.
+        """Forward pass of the policy model.
 
         Args:
-            obs (torch.Tensor): The input tensor.
+            obs: The input tensor.
 
         Returns:
-            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: The logits of the transformations, parallelizations, tilings, and interchanges.
+            The distributions for each action.
         """
         embedded = self.backbone(self.lstm(obs))
         actions_logits = [head(embedded) if head else None for head in self.heads]
@@ -176,15 +221,15 @@ class PolicyModel(nn.Module):
         """Calculate the policy loss.
 
         Args:
-            new_actions_log_p (torch.Tensor): The log probabilities of the new actions.
-            actions_bev_log_p (torch.Tensor): The log probabilities of the actions under the behavior policy.
-            off_policy_rates (torch.Tensor): The rate between the old policy and the behavioral (mu) policy.
-            advantages (torch.Tensor): The advantages of the actions.
-            clip_range (float): The clipping range for the policy loss.
+            actions_log_p: The log probabilities of the new actions.
+            actions_bev_log_p: The log probabilities of the actions under the behavior policy.
+            off_policy_rates: The rate between the old policy and the behavioral (mu) policy.
+            advantages: The advantages of the actions.
+            clip_range: The clipping range for the policy loss.
 
         Returns:
-            torch.Tensor: The policy loss.
-            float: The ratio clip fraction (for logging purposes)
+            The policy loss.
+            The ratio clip fraction (for logging purposes)
         """
         ratios = torch.exp(torch.clamp(actions_log_p - actions_bev_log_p, -80.0, 80.0))
         surr1 = ratios * advantages
@@ -194,7 +239,23 @@ class PolicyModel(nn.Module):
 
 
 class LSTMEmbedding(nn.Module):
+    """LSTM-based embedding layer for producer-consumer encoding.
+
+    Encodes operation features of both the consumer and producre
+    into a dense embedding using LSTM layers.
+
+    Attributes:
+        output_size: The output size of the embedding.
+        embedding: The embedding layer.
+        lstm: The LSTM layer.
+    """
+
+    output_size: int
+    embedding: nn.Sequential
+    lstm: nn.LSTM
+
     def __init__(self):
+        """Initialize the LSTM embedding layer."""
         super(LSTMEmbedding, self).__init__()
 
         embedding_size = 411
@@ -216,6 +277,14 @@ class LSTMEmbedding(nn.Module):
         return super().__call__(obs)
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
+        """Forward pass of the LSTM embedding.
+
+        Args:
+            obs: The input tensor.
+
+        Returns:
+            The embedded tensor.
+        """
         consumer_feats = Observation.get_part(obs, OpFeatures)
         producer_feats = Observation.get_part(obs, ProducerOpFeatures)
 

@@ -1,24 +1,30 @@
+"""MLIR transformation passes for loop optimization.
+
+This module provides functions for applying various loop transformation passes to MLIR code,
+including tiling, interchange, parallelization, vectorization, and fusion. It interfaces
+with the MLIR transform dialect for specifying and applying transformations.
+"""
+
 import os
 import subprocess
-from mlir.ir import Context, Module
+from mlir._mlir_libs._mlir.ir import Module  # type: ignore
 from mlir.dialects.transform import interpreter
 from utils.bindings_process import BindingsProcess
 
 
-def transform_TP(code: str, operation_tag: str, tiling_sizes: list[int]):
-    """Apply the tiling and parallelization transformation to the specified operation in the given code.
+def transform_TP(module: Module, operation_tag: str, tiling_sizes: list[int]):
+    """Apply tiling and parallelization transformation to an operation.
+
+    Tiles loops using forall constructs for parallelization.
 
     Args:
-        code (str): The code to apply the transformation to.
-        operation_tag (str): The tag of the operation to apply the transformation to.
-        tiling_sizes (list[int]): The tiling size to apply.
-
-    Returns:
-        str: The code after applying the transformation.
+        module: The MLIR module to transform.
+        operation_tag: The tag of the operation to transform.
+        tiling_sizes: List of tiling factors for each loop.
     """
     # If tiling sizes are all zeros, means no tiling is needed
     if all([a == 0 for a in tiling_sizes]):
-        return code
+        return
 
     # Add full transform dialect code into the main code
     transform_code = (
@@ -31,23 +37,20 @@ def transform_TP(code: str, operation_tag: str, tiling_sizes: list[int]):
         f'}}'
     )
 
-    return __run_transform_code_wrapper(code, transform_code)
+    __run_transform_code_wrapper(module, transform_code)
 
 
-def transform_tile(code: str, operation_tag: str, tiling_sizes: list[int]):
-    """Apply the tiling transformation to the specified operation in the given code.
+def transform_tile(module: Module, operation_tag: str, tiling_sizes: list[int]):
+    """Apply tiling transformation to an operation using for loops.
 
     Args:
-        code (str): The code to apply the transformation to.
-        operation_tag (str): The tag of the operation to apply the transformation to.
-        tiling_sizes (list[int]): The tiling size to apply.
-
-    Returns:
-        str: The code after applying the transformation.
+        module: The MLIR module to transform.
+        operation_tag: The tag of the operation to transform.
+        tiling_sizes: List of tiling factors for each loop.
     """
     # If tiling sizes are all zeros, means no tiling is needed
     if all([a == 0 for a in tiling_sizes]):
-        return code
+        return
 
     n_loops = sum([s != 0 for s in tiling_sizes])
     r = ', '.join(['!transform.any_op'] * n_loops)
@@ -63,23 +66,20 @@ def transform_tile(code: str, operation_tag: str, tiling_sizes: list[int]):
         f'}}\n'
     )
 
-    return __run_transform_code_wrapper(code, transform_code)
+    __run_transform_code_wrapper(module, transform_code)
 
 
-def transform_interchange(code: str, operation_tag: str, interchange_list: list[int]):
-    """Apply the interchange transformation to the specified operation in the given code.
+def transform_interchange(module: Module, operation_tag: str, interchange_list: list[int]):
+    """Apply loop interchange transformation to an operation.
 
     Args:
-        code (str): The code to apply the transformation to.
-        operation_tag (str): The tag of the operation to apply the transformation to.
-        interchange_list (list[int]): The interchange list to apply.
-
-    Returns:
-        str: The code after applying the transformation.
+        module: The MLIR module to transform.
+        operation_tag: The tag of the operation to transform.
+        interchange_list: Permutation of loop indices defining the new loop order.
     """
     # If the permutation list is same as the identity permutation, means no interchange is needed
     if interchange_list == list(range(len(interchange_list))):
-        return code
+        return
 
     transform_code = (
         f'module attributes {{transform.with_named_sequence}} {{\n'
@@ -94,147 +94,15 @@ def transform_interchange(code: str, operation_tag: str, interchange_list: list[
         f'}}\n'
     )
 
-    return __run_transform_code_wrapper(code, transform_code)
+    __run_transform_code_wrapper(module, transform_code)
 
 
-def transform_vectorize_img2col(code: str, operation_tag: str):
-    """Apply the vectorization transformation with img2col to the specified operation in the given code.
-
-    Args:
-        code (str): The code to apply the transformation to.
-        operation_tag (str): The tag of the operation to apply the transformation to.
-
-    Returns:
-        str: The code after applying the transformation.
-    """
-    transform_code = f"""
-module attributes {{transform.with_named_sequence}} {{
-transform.named_sequence @__transform_main(%variant_op: !transform.any_op {{transform.readonly}})
-{{
-
-  // %conv_gen_2 = transform.structured.match attributes{{tag = "{operation_tag}"}} in %variant_op : (!transform.any_op) -> !transform.any_op
-  // %forall_op = transform.get_parent_op %conv_gen_2: (!transform.any_op) -> !transform.any_op
-
-  %forall_op = transform.structured.match ops{{["scf.forall"]}}  in %variant_op : (!transform.any_op) -> !transform.any_op
-
-
-
-  %producer = transform.structured.match attributes{{tag = "img2col_producer"}} in %variant_op : (!transform.any_op) -> !transform.any_op
-  transform.structured.fuse_into_containing_op %producer into %forall_op : (!transform.any_op, !transform.any_op) -> (!transform.any_op, !transform.any_op)
-
-  %fb = transform.structured.match ops{{["func.func"]}} in %variant_op : (!transform.any_op) -> !transform.any_op
-  transform.apply_patterns to %fb {{
-    transform.apply_patterns.canonicalization
-  }} : !transform.any_op
-  transform.apply_cse to %fb : !transform.any_op
-
-
-  %original_fill = transform.structured.match ops{{["linalg.fill"]}} in %variant_op : (!transform.any_op) -> !transform.any_op
-  transform.structured.fuse_into_containing_op %original_fill into %forall_op : (!transform.any_op, !transform.any_op) -> (!transform.any_op, !transform.any_op)
-
-  %fb1 = transform.structured.match ops{{["func.func"]}} in %variant_op : (!transform.any_op) -> !transform.any_op
-  transform.apply_patterns to %fb1 {{
-    transform.apply_patterns.canonicalization
-  }} : !transform.any_op
-  transform.apply_cse to %fb1 : !transform.any_op
-
-
-
-   %func = transform.structured.match ops{{["func.func"]}} in %variant_op
-   : (!transform.any_op) -> !transform.any_op
-  %func_0 = transform.structured.vectorize_children_and_apply_patterns %func {{vectorize_padding}}
-    : (!transform.any_op) -> (!transform.any_op)
-
-       // Step 4. Vector backend
-  // ======================================================
-  %f = transform.structured.match ops{{["func.func"]}} in %variant_op
-    : (!transform.any_op) -> !transform.any_op
-
-  transform.apply_patterns to %f {{
-    transform.apply_patterns.vector.lower_contraction lowering_strategy = "outerproduct"
-    transform.apply_patterns.vector.transfer_permutation_patterns
-    transform.apply_patterns.vector.lower_multi_reduction lowering_strategy = "innerparallel"
-    transform.apply_patterns.vector.split_transfer_full_partial split_transfer_strategy = "vector-transfer"
-    transform.apply_patterns.vector.transfer_to_scf max_transfer_rank = 1 full_unroll = true
-    transform.apply_patterns.vector.lower_transfer max_transfer_rank = 1
-    transform.apply_patterns.vector.lower_shape_cast
-    transform.apply_patterns.vector.lower_transpose lowering_strategy = "shuffle_1d"
-    transform.apply_patterns.canonicalization
-  }} : !transform.any_op
-
-
-
-  transform.yield
-}}
-}}
-"""
-
-    return __run_transform_code_wrapper(code, transform_code)
-
-
-def transform_vectorize_children(code: str):
-    """Apply the vectorization transformation to the specified operation in the given code.
+def transform_vectorize(module: Module, operation_tag: str):
+    """Apply vectorization transformation to an operation.
 
     Args:
-        code (str): The code to apply the transformation to.
-        operation_tag (str): The tag of the operation to apply the transformation to.
-
-    Returns:
-        str: The code after applying the transformation.
-    """
-    transform_code = """
-    module attributes {transform.with_named_sequence} {
-        transform.named_sequence @__transform_main(%variant_op: !transform.any_op {transform.readonly})
-        {
-            %forall_op = transform.structured.match ops{["scf.forall"]}  in %variant_op : (!transform.any_op) -> !transform.any_op
-
-            %original_fill = transform.structured.match ops{["linalg.fill"]} in %variant_op : (!transform.any_op) -> !transform.any_op
-            transform.structured.fuse_into_containing_op %original_fill into %forall_op : (!transform.any_op, !transform.any_op) -> (!transform.any_op, !transform.any_op)
-
-            %func = transform.structured.match ops{["func.func"]} in %variant_op: (!transform.any_op) -> !transform.any_op
-            %func_0 = transform.structured.vectorize_children_and_apply_patterns %func {vectorize_padding}: (!transform.any_op) -> (!transform.any_op)
-
-            transform.yield
-        }
-    }"""
-
-    return __run_transform_code_wrapper(code, transform_code)
-
-
-def transform_vectorize_with_vectorizer(code: str, operation_tag: str):
-    """Apply the vectorization transformation with vectorizer to the specified operation in the given code.
-
-    Args:
-        code (str): The code to apply the transformation to.
-        operation_tag (str): The tag of the operation to apply the transformation to.
-
-    Returns:
-        str: The code after applying the transformation.
-    """
-    try:
-        vect_code_process = subprocess.run(
-            [os.getenv("VECTORIZER_BIN_PATH", ''), '-', operation_tag],
-            input=code,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        vect_code = vect_code_process.stdout
-    except subprocess.CalledProcessError as e:
-        raise Exception(e.stderr)
-
-    return vect_code
-
-
-def transform_vectorize(code: str, operation_tag: str):
-    """Apply the vectorization transformation with vectorizer to the specified operation in the given code.
-
-    Args:
-        code (str): The code to apply the transformation to.
-        operation_tag (str): The tag of the operation to apply the transformation to.
-
-    Returns:
-        str: The code after applying the transformation.
+        module: The MLIR module to transform.
+        operation_tag: The tag of the operation to transform.
     """
     transform_code = f"""
     module attributes {{transform.with_named_sequence}} {{
@@ -245,18 +113,15 @@ def transform_vectorize(code: str, operation_tag: str):
         }}
     }}"""
 
-    return __run_transform_code_wrapper(code, transform_code)
+    __run_transform_code_wrapper(module, transform_code)
 
 
-def transform_img2col(code: str, operation_tag: str):
-    """Apply the img2col transformation to the specified operation in the given code.
+def transform_img2col(module: Module, operation_tag: str):
+    """Apply img2col transformation to convert convolution to matrix multiplication.
 
     Args:
-        code (str): The code to apply the transformation to.
-        operation_tag (str): The tag of the operation to apply the transformation to.
-
-    Returns:
-        str: The code after applying the transformation.
+        module: The MLIR module to transform.
+        operation_tag: The tag of the convolution operation to transform.
     """
     transform_code = f"""
 module attributes {{transform.with_named_sequence}} {{
@@ -274,26 +139,24 @@ module attributes {{transform.with_named_sequence}} {{
     # %a_tag = transform.param.constant "{operation_tag}_img2col" -> !transform.any_param
     # transform.annotate %a "tag" = %a_tag : !transform.any_op, !transform.any_param
 
-    return __run_transform_code_wrapper(code, transform_code)
+    __run_transform_code_wrapper(module, transform_code)
 
 
-def transform_TF(code: str, consumer_tag: str, producer_tag: str, new_producer_tag: str, tiling_sizes: list[int]):
-    """Apply the tiling and fusion transformation to the specified operation in the given code.
+def transform_TF(module: Module, consumer_tag: str, producer_tag: str, new_producer_tag: str, tiling_sizes: list[int]):
+    """Apply tiling and fusion transformation to consumer and producer operations.
+
+    Tiles the consumer with parallelization and fuses the producer into the tiled loops.
 
     Args:
-        code (str): The code to apply the transformation to.
-        consumer_tag (str): The tag of the operation to apply the transformation to.
-        producer_tag (str): the tag of the producer to fuse with
-        new_producer_tag (str): the tag to assign to the producer after fusion.
-        tiling_sizes (list[int]): The tiling size to apply.
-        parallel_sizes (list[int]): The parallel size to apply.
-
-    Returns:
-        str: The code after applying the transformation.
+        module: The MLIR module to transform.
+        consumer_tag: The tag of the consumer operation.
+        producer_tag: The tag of the producer operation to fuse.
+        new_producer_tag: The tag to assign to the fused producer.
+        tiling_sizes: List of tiling factors for consumer loops.
     """
     # If parallel sizes are all zeros, means no fusion will be done
     if all([a == 0 for a in tiling_sizes]):
-        return code
+        return
 
     transform_code = (
         f'\nmodule attributes {{transform.with_named_sequence}} {{\n'
@@ -309,18 +172,15 @@ def transform_TF(code: str, consumer_tag: str, producer_tag: str, new_producer_t
     # f'    %fused_tag = transform.param.constant "{new_producer_tag}" -> !transform.any_param\n'
     # f'    transform.annotate %fused "tag" = %fused_tag : !transform.any_op, !transform.any_param\n'
 
-    return __run_transform_code_wrapper(code, transform_code)
+    __run_transform_code_wrapper(module, transform_code)
 
 
-def transform_decompose(code: str, operation_tag: str):
-    """Apply the decomposition transformation to the specified operation in the given code.
+def transform_decompose(module: Module, operation_tag: str):
+    """Apply decomposition transformation to an operation.
 
     Args:
-        code (str): The code to apply the transformation to.
-        operation_tag (str): The tag of the operation to apply the transformation to.
-
-    Returns:
-        str: The code after applying the transformation.
+        module: The MLIR module to transform.
+        operation_tag: The tag of the operation to decompose.
     """
     transform_code = f"""
     module attributes {{transform.with_named_sequence}} {{
@@ -333,18 +193,15 @@ def transform_decompose(code: str, operation_tag: str):
         }}
     }}"""
 
-    return __run_transform_code_wrapper(code, transform_code)
+    __run_transform_code_wrapper(module, transform_code)
 
 
-def transform_transpose_conv_2d(code: str, operation_tag: str):
-    """Apply the Conv2D transpose transformation to the specified operation in the given code.
+def transform_transpose_conv_2d(module: Module, operation_tag: str):
+    """Apply transposed convolution transformation to an operation.
 
     Args:
-        code (str): The code to apply the transformation to.
-        operation_tag (str): The tag of the operation to apply the transformation to.
-
-    Returns:
-        str: The code after applying the transformation.
+        module: The MLIR module to transform.
+        operation_tag: The tag of the convolution operation to transform.
     """
     transform_code = f"""
     module attributes {{transform.with_named_sequence}} {{
@@ -357,18 +214,17 @@ def transform_transpose_conv_2d(code: str, operation_tag: str):
         }}
     }}"""
 
-    return __run_transform_code_wrapper(code, transform_code)
+    __run_transform_code_wrapper(module, transform_code)
 
 
-def transform_bufferize_and_lower_v(code: str):
-    """Apply the vectorization transformation with vectorizer to the specified operation in the given code.
+def transform_bufferize_and_lower_v(module: Module):
+    """Apply bufferization and lowering transformations for vectorized execution.
+
+    Applies a comprehensive series of transformations including bufferization,
+    vectorization, and lowering to prepare code for execution.
 
     Args:
-        code (str): The code to apply the transformation to.
-        operation_tag (str): The tag of the operation to apply the transformation to.
-
-    Returns:
-        str: The code after applying the transformation.
+        module: The MLIR module to transform.
     """
     transform_code = """
     module attributes {transform.with_named_sequence} {
@@ -408,24 +264,23 @@ def transform_bufferize_and_lower_v(code: str):
         }
     }"""
 
-    return __run_transform_code_wrapper(code, transform_code)
+    __run_transform_code_wrapper(module, transform_code)
 
 
-def transform_pre_vec(code: str, operation_tag: str):
-    """Eliminate accesses with the constant 1 by adding subviews
-    which enables more vectorization.
+def transform_pre_vec(module: Module, operation_tag: str):
+    """Apply pre-vectorization transformation to eliminate unit-stride accesses.
+
+    Eliminates accesses with constant 1 stride by adding subviews, which enables
+    better vectorization opportunities.
 
     Args:
-        code (str): The code to apply the transformation to.
-        operation_tag (str): The tag of the operation to apply the transformation to.
-
-    Returns:
-        str: The code after applying the transformation.
+        module: The MLIR module to transform.
+        operation_tag: The tag of the operation to transform.
     """
     try:
         code_process = subprocess.run(
             [os.getenv("PRE_VEC_BIN_PATH", ''), '-', operation_tag],
-            input=code,
+            input=str(module),
             capture_output=True,
             text=True,
             check=True,
@@ -434,23 +289,22 @@ def transform_pre_vec(code: str, operation_tag: str):
     except subprocess.CalledProcessError as e:
         raise Exception(e.stderr)
 
-    return code
+    new_module = Module.parse(code, module.context)
+
+    move_module(new_module, module)
 
 
-def transform_pack(code: str, operation_tag: str, tiling_sizes: list[int]):
+def transform_pack(module: Module, operation_tag: str, tiling_sizes: list[int]):
     """Apply array packing transformation to the specified operation in the given code.
 
     Args:
-        code (str): The code to apply the transformation to.
-        operation_tag (str): The tag of the operation to apply the transformation to.
-        tiling_sizes (list[int]): The tiling size to apply.
-
-    Returns:
-        str: The code after applying the transformation.
+        module: The MLIR module to transform.
+        operation_tag: The tag of the operation to transform.
+        tiling_sizes: List of tiling factors for each loop.
     """
     # If tiling sizes are all zeros, means no tiling is needed
     if all([a == 0 for a in tiling_sizes]):
-        return code
+        return
 
     transform_code = (
         f'\nmodule attributes {{transform.with_named_sequence}} {{\n'
@@ -468,17 +322,38 @@ def transform_pack(code: str, operation_tag: str, tiling_sizes: list[int]):
         f'}}'
     )
 
-    return __run_transform_code_wrapper(code, transform_code)
+    __run_transform_code_wrapper(module, transform_code)
 
 
-def __run_transform_code_wrapper(code: str, transform_code: str):
-    return BindingsProcess.call(__run_transform_code, code, transform_code, timeout=60)
+def move_module(source: Module, destination: Module):
+    """Copy all operations from source module to destination module.
+
+    Args:
+        source: The source MLIR module.
+        destination: The destination MLIR module where operations will be copied.
+    """
+    for op in destination.body.operations:
+        op.erase()
+    for op in source.body.operations:
+        destination.body.append(op.clone())
 
 
-def __run_transform_code(code: str, transform_code: str):
-    with Context():
-        module = Module.parse(code)
-        t_module = Module.parse(transform_code)
+def __run_transform_code_wrapper(module: Module, transform_code: str):
+    """Wrapper for running transform code with timeout support.
+
+    Args:
+        module: The MLIR module to transform.
+        transform_code: The MLIR transform dialect code.
+    """
+    BindingsProcess.call(__run_transform_code, module, transform_code, timeout=60)
+
+
+def __run_transform_code(module: Module, transform_code: str):
+    """Parse and apply MLIR transform dialect code to a module.
+
+    Args:
+        module: The MLIR module to transform.
+        transform_code: The MLIR transform dialect code.
+    """
+    t_module = Module.parse(transform_code, module.context)
     interpreter.apply_named_sequence(module, t_module.body.operations[0], t_module)
-
-    return str(module)

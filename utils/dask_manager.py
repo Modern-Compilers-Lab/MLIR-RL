@@ -1,10 +1,14 @@
+"""Distributed computation management using Dask.
+
+This module handles distributed parallel execution of benchmark evaluations
+across multiple worker nodes. It provides abstractions for mapping functions
+across data in a distributed manner with resource management.
+"""
+
 import os
 import subprocess
 from time import sleep, time
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Optional, TypeVar
-
-from dask.distributed import Client, Future, as_completed
-from dask_jobqueue import SLURMCluster
 
 from .file_logger import FileLogger
 from .singleton import Singleton
@@ -13,7 +17,7 @@ from .bindings_process import ENABLED as BP_ENABLED
 
 if TYPE_CHECKING:
     from rl_autoschedular.benchmarks import Benchmarks
-    from dask_jobqueue.slurm import SLURMJob
+    from distributed import Future
 
 ENABLED = int(os.getenv('DASK_NODES', '0')) > 0
 T = TypeVar('T')
@@ -21,13 +25,18 @@ obj_T = TypeVar('obj_T')
 
 
 class DaskManager(metaclass=Singleton):
+    """DaskManager class for distributed parallel execution."""
 
     def __init__(self):
         if not ENABLED:
             return
 
+        from dask_jobqueue import SLURMCluster
+        from distributed import Client
+
         enable_dashboard = True
         dask_reservation = os.getenv('DASK_RESERVATION')
+        dask_conda_env = os.getenv('CONDA_ENV')
         cluster = SLURMCluster(
             job_name='dask',
             queue='compute',
@@ -46,7 +55,7 @@ class DaskManager(metaclass=Singleton):
             job_script_prologue=[
                 'module load miniconda-nobashrc',
                 'eval "$(conda shell.bash hook)"',
-                f'conda activate {os.getenv("CONDA_ENV")}',
+                f'conda activate {dask_conda_env}' if dask_conda_env else '',
                 'export OMP_NUM_THREADS=12',
                 'export DASK_DISTRIBUTED__WORKER__DAEMON=False' if BP_ENABLED else '',
             ],
@@ -69,16 +78,18 @@ class DaskManager(metaclass=Singleton):
 
         self.batch_timeout = 300
         self.persistent_funcs: dict[str, Callable[[], Any]] = {}
-        self.persistent_futures: dict[str, Future] = {}
+        self.persistent_futures: dict[str, 'Future'] = {}
 
     @property
     def workers_names(self) -> list[str]:
+        """List of available worker names."""
         if not ENABLED:
             return []
         return list(self.cluster.workers.keys())
 
     @property
     def num_workers(self) -> int:
+        """Number of available workers."""
         if not ENABLED:
             return 0
         return len(self.cluster.workers)
@@ -92,14 +103,32 @@ class DaskManager(metaclass=Singleton):
         training: bool,
         obj_str: Callable[[obj_T], str] = lambda o: str(o)
     ) -> list[Optional[T]]:
+        """Map a function across objects in a distributed manner.
+
+        Args:
+            func: The function to apply to each object.
+            objs: The objects to apply the function to.
+            benchs: The benchmark suite to use.
+            main_exec_data: The main execution data (if available).
+            training: Whether the mapping is for training. if True,
+                the function will be executed with a timeout and the
+                training benchmarks will be used instead of evaluation.
+            obj_str: A function to convert each object to a string for logging.
+
+        Returns:
+            A list of the results of the function applied to each object.
+        """
+
         if not ENABLED or self.num_workers == 0:
             return [func(o, FileLogger().exec_data_file, benchs, main_exec_data) for o in objs]
+
+        from distributed import as_completed
 
         # Prepare objs for submission
         objs_count = len(objs)
         ordered_objs = list(zip(range(objs_count), objs))
         results: list[Optional[T]] = [None] * objs_count
-        future_to_worker: dict[Future, str] = {}
+        future_to_worker: dict['Future', str] = {}
 
         # Submit first objs to each worker
         initial_objs_count = min(objs_count, self.num_workers)
@@ -112,7 +141,7 @@ class DaskManager(metaclass=Singleton):
         ac = as_completed(future_to_worker.keys(), with_results=True, timeout=self.batch_timeout if training else None)
         try:
             for future, indexed_result in ac:
-                future: Future
+                future: 'Future'
                 indexed_result: tuple[int, T]
 
                 idx, result = indexed_result
@@ -148,7 +177,18 @@ class DaskManager(metaclass=Singleton):
 
         return results
 
-    def run_and_register_to_workers(self, func: Callable[[], T]):
+    def run_and_register_to_workers(self, func: Callable[[], T]) -> T:
+        """Run a function both locally and on the workers.
+        The result will be registered to all workers, and
+        returned by this function.
+
+        Args:
+            func: The function to run.
+
+        Returns:
+            The result of the function.
+        """
+
         if not ENABLED or self.num_workers == 0:
             return func()
 
@@ -162,7 +202,17 @@ class DaskManager(metaclass=Singleton):
 
         return func()
 
-    def __submit_persistent(self, key: str, worker: str):
+    def __submit_persistent(self, key: str, worker: str) -> 'Future':
+        """Submit a persistent function to a worker,
+        and keep track of its result (Future) for re-use.
+
+        Args:
+            key: The key of the function.
+            worker: The worker to submit the function to.
+
+        Returns:
+            The future of the function.
+        """
         assert key in self.persistent_funcs, f"Task {key} expected to be registered"
         func = self.persistent_funcs[key]
 
@@ -178,7 +228,17 @@ class DaskManager(metaclass=Singleton):
 
         return future
 
-    def __get_persistent(self, key: str, worker: str):
+    def __get_persistent(self, key: str, worker: str) -> 'Future':
+        """Get the result of a persistent function from a worker.
+
+        Args:
+            key: The key of the function.
+            worker: The worker to get the result from.
+
+        Returns:
+            The future that points to the result of the function.
+        """
+
         worker_key = f'{key}_{worker}'
         if worker_key in self.persistent_futures:
             return self.persistent_futures[worker_key]
@@ -189,7 +249,18 @@ class DaskManager(metaclass=Singleton):
 
         raise Exception(f"Unable to find or compute future {key}")
 
-    def __renew_persistent(self, key: str, worker: str):
+    def __renew_persistent(self, key: str, worker: str) -> 'Future':
+        """Recompute the result of a persistent function on a worker.
+        This should be called when a persistent result (Future) has
+        become invalid (due to a worker failure mostly).
+
+        Args:
+            key: The key of the function.
+            worker: The worker to renew the result on.
+
+        Returns:
+            The future that points to the result of the function.
+        """
         worker_key = f'{key}_{worker}'
         if worker_key in self.persistent_futures:
             del self.persistent_futures[worker_key]
@@ -197,6 +268,12 @@ class DaskManager(metaclass=Singleton):
         return self.__submit_persistent(key, worker)
 
     def __renew_worker_persistents(self, worker: str):
+        """Recompute all persistent functions on a worker.
+        This should be called when a worker has failed.
+
+        Args:
+            worker: The worker to renew the results on.
+        """
         for key in self.persistent_funcs:
             self.__renew_persistent(key, worker)
 
@@ -207,7 +284,21 @@ class DaskManager(metaclass=Singleton):
         obj: obj_T,
         worker: str,
         training: bool
-    ):
+    ) -> 'Future':
+        """Execute a function on an object, and submit it to a worker.
+
+        Args:
+            func: The function to execute.
+            idx: The index of the object (for tracking purposes).
+            obj: The object to execute the function on.
+            worker: The worker to submit the result to.
+            training: Whether the object is for training. if True,
+                the function will be executed with a timeout and the
+                training benchmarks will be used instead of evaluation.
+
+        Returns:
+            The future that points to the result of the function.
+        """
         # Add a wrapper to track state order
         def func_wrapper(idx: int, *args):
             return idx, func(*args)
@@ -227,6 +318,8 @@ class DaskManager(metaclass=Singleton):
 
     def __keep_only_running(self):
         """Keep only workers with running jobs"""
+        if TYPE_CHECKING:
+            from dask_jobqueue.slurm import SLURMJob
 
         # Wait for the cluster to submit the jobs
         async def _():
@@ -273,5 +366,6 @@ class DaskManager(metaclass=Singleton):
             self.cluster.sync(self.cluster.scale_down, non_running_workers)
 
     def close(self):
+        """Close the cluster and client."""
         self.client.close()
         self.cluster.close()

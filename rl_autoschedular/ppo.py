@@ -1,3 +1,10 @@
+"""Proximal Policy Optimization (PPO) training algorithm for MLIR RL.
+
+This module implements the core PPO training loop including trajectory collection,
+policy updates, value function updates, and benchmark evaluation. It manages the
+interaction between the RL environment and the neural network models.
+"""
+
 from datetime import timedelta
 from statistics import mean
 import torch
@@ -19,17 +26,16 @@ from time import time
 from typing import Optional, Union
 
 
-def collect_trajectory(data: Benchmarks, model: Model, step: int):
+def collect_trajectory(data: Benchmarks, model: Model, step: int) -> TrajectoryData:
     """Collect a trajectory using the model and the environment.
 
     Args:
-        model (MyModel): The model to use.
-        env (Env): The environment to use.
-        step (int): The current step of the main loop
-        tmp_exec_data_file (str): The path to the temporary execution data file.
+        data: The benchmarks dataset.
+        model: The model to use.
+        step: The current step of the main loop.
 
     Returns:
-        TrejectoryData: The collected trajectory.
+        The collected trajectory.
     """
     dm = DaskManager()
     fl = FileLogger()
@@ -42,7 +48,7 @@ def collect_trajectory(data: Benchmarks, model: Model, step: int):
         final_eps = 0.001
         eps = final_eps + (cfg.init_epsilon - final_eps) * (1 - ratio)
 
-    print_info(f"Trajectory collection using {dm.num_workers} workers...")
+    print_info(f"Collecting {cfg.bench_count} benchmarks using {dm.num_workers} workers...")
     traj_start = time()
 
     # Prepare benchmarks to explore
@@ -89,7 +95,7 @@ def collect_trajectory(data: Benchmarks, model: Model, step: int):
                         done = True
 
                 # Record available data
-                tcs[i].append((
+                tcs[i].append(
                     Observation.get_part(obs, NumLoops).long().item(),
                     action_index.unsqueeze(0),
                     obs,
@@ -97,7 +103,7 @@ def collect_trajectory(data: Benchmarks, model: Model, step: int):
                     action_bev_log_p.item(),
                     0.0,  # This will be filled after execution
                     done
-                ))
+                )
 
     traj_end_sampling = time()
 
@@ -158,15 +164,15 @@ def collect_trajectory(data: Benchmarks, model: Model, step: int):
 
 
 def ppo_update(trajectory: TrajectoryData, model: Model, optimizer: torch.optim.Optimizer):
-    """Update the model using PPO.
+    """Update the policy and value models using PPO algorithm.
+
+    Performs PPO training on the collected trajectory data by computing policy loss,
+    value loss, and entropy bonus, then updating model parameters via backpropagation.
 
     Args:
-        trajectory (TrajectoryData): The trajectory to use.
-        model (Model): The model to update.
-        optimizer (torch.optim.Optimizer): The optimizer to use.
-
-    Returns:
-        float: The average loss.
+        trajectory: The trajectory data collected from environment.
+        model: The model to update.
+        optimizer: The optimizer for model parameters.
     """
     fl = FileLogger()
     cfg = Config()
@@ -239,12 +245,15 @@ def ppo_update(trajectory: TrajectoryData, model: Model, optimizer: torch.optim.
 
 
 def value_update(trajectory: TrajectoryData, model: Model, optimizer: torch.optim.Optimizer):
-    """Update the value model using the trajectory.
+    """Update the value function model using trajectory data.
+
+    Trains the value model to predict state values by minimizing MSE loss between
+    predicted and computed returns.
 
     Args:
-        trajectory (Trajectory): The trajectory to use.
-        model (Model): The model to update.
-        optimizer (torch.optim.Optimizer): The optimizer to use.
+        trajectory: The trajectory data with returns computed.
+        model: The hierarchical model to update.
+        optimizer: The optimizer for value model parameters.
     """
     fl = FileLogger()
     cfg = Config()
@@ -288,13 +297,19 @@ def value_update(trajectory: TrajectoryData, model: Model, optimizer: torch.opti
     print_info(f"Value fit in {timedelta(seconds=value_end - value_start)}")
 
 
-def evaluate_benchmarks(model: Model, data: Benchmarks):
-    """Evaluate the benchmark using the model.
+def evaluate_benchmarks(model: Model, data: Benchmarks) -> tuple[dict[str, int], dict[str, float]]:
+    """Evaluate the model on all benchmarks and measure optimization results.
+
+    Runs the trained model in greedy mode on all benchmarks, applies optimizations,
+    and measures the resulting execution times and speedups.
 
     Args:
-        model (Model): The model to use.
-        env (Env): The environment to use.
-        tmp_exec_data_file (str): The path to the temporary execution data file.
+        model: The trained model to evaluate.
+        data: The benchmark dataset to evaluate on.
+
+    Returns:
+        Dictionary mapping benchmark names to execution times (in nanoseconds).
+        Dictionary mapping benchmark names to speedup factors.
     """
     dm = DaskManager()
     fl = FileLogger()
@@ -355,6 +370,8 @@ def evaluate_benchmarks(model: Model, data: Benchmarks):
     ]
     all_rewards, all_speedups, all_exec_times, _, _ = tuple(zip(*results))
     new_cache_data: dict[str, dict[str, int]] = {}
+    bench_execs: dict[str, int] = {}
+    bench_speedups: dict[str, float] = {}
     for state, rewards, speedup, exec_time in zip(states, all_rewards, all_speedups, all_exec_times):
         fl['eval/reward'].extend(rewards)
         fl['eval/cumulative_reward'].append(sum(rewards))
@@ -362,13 +379,22 @@ def evaluate_benchmarks(model: Model, data: Benchmarks):
         if exec_time is not None:
             fl[f'eval/exec_time/{state.bench_name}'].append(exec_time)
             fl[f'eval/speedup/{state.bench_name}'].append(speedup)
+            bench_execs[state.bench_name] = exec_time
+            bench_speedups[state.bench_name] = speedup
             cache_key = exe.get_code_cache_key(state.transformation_history)
             if state.bench_name not in new_cache_data:
                 new_cache_data[state.bench_name] = {}
             new_cache_data[state.bench_name][cache_key] = exec_time
 
+        print_success("\n--------------------", add_label=False)
         print_success("Bench:", state.bench_name, add_label=False)
-        print_info(state.transformation_history, add_label=False)
+        print_success("Transformations:", add_label=False)
+        for op_seq in state.transformation_history:
+            op_tag = op_seq[0].operation_tag
+            print_success(f"  - {op_tag}: {list(map(str, op_seq))}", add_label=False)
+        print_success("Speedup:", speedup, add_label=False)
+        print_success("Execution time:", exec_time, add_label=False)
+        print_success("--------------------\n", add_label=False)
 
     if len(all_speedups) > 0:
         fl['eval/average_speedup'].append(sum(all_speedups) / len(all_speedups))
@@ -377,8 +403,34 @@ def evaluate_benchmarks(model: Model, data: Benchmarks):
     eval_end = time()
     print_info(f"Evaluation time: {timedelta(seconds=eval_end - eval_start)}")
 
+    return bench_execs, bench_speedups
 
-def __execute_states(state: Union[OperationState, tuple[Env, OperationState]], exec_data_file: str, benchs: Benchmarks, main_exec_data: Optional[dict[str, dict[str, int]]]):
+
+def __execute_states(
+    state: Union[OperationState, tuple[Env, OperationState]],
+    exec_data_file: str,
+    benchs: Benchmarks,
+    main_exec_data: Optional[dict[str, dict[str, int]]]
+) -> tuple[list[float], float, Optional[int], bool, float]:
+    """Execute a benchmark with the transformation sequence stored in state.
+
+    Worker function for parallel execution. Initializes environment, applies transformations,
+    and measures execution results.
+
+    Args:
+        state: The operation state containing transformation history, or, a tuple
+            holding both the environment and the operation state.
+        exec_data_file: Path to the execution cache file.
+        benchs: The benchmark dataset.
+        main_exec_data: Pre-computed execution data.
+
+    Returns:
+        List of rewards for each action in the sequence.
+        Speedup factor (ratio of original to optimized time).
+        Execution time in nanoseconds (None if execution failed).
+        Cache miss flag (False if result was found in cache).
+        Worker execution time in seconds.
+    """
     Execution(exec_data_file, main_exec_data)
     if isinstance(state, tuple):
         env, state = state

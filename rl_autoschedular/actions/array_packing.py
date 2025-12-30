@@ -1,8 +1,9 @@
 from typing import Optional
-from rl_autoschedular.actions.tiling import Tiling
+from .tiling import Tiling
 from rl_autoschedular.state import OperationFeatures, OperationState
-from rl_autoschedular.transforms import transform_pack
+from rl_autoschedular.transforms import move_module, transform_pack
 from utils.config import Config
+from mlir._mlir_libs._mlir.ir import Module  # type: ignore
 
 
 class ArrayPacking(Tiling):
@@ -26,14 +27,15 @@ class ArrayPacking(Tiling):
     def is_allowed(cls, state):
         return (len(state.operation_features.nested_loops) * 2) <= Config().max_num_loops
 
-    def _apply_ready(self, code: str):
+    def _apply_ready(self, module: Module):
+        module_clone: Module = module.operation.clone()
         # Special case: In packing, failures can happen
         # due to MLIR's preconditions, so we can ignore them
         try:
-            return transform_pack(code, self.operation_tag, self.parameters)
+            transform_pack(module, self.operation_tag, self.parameters)
         except Exception:
             self.extras['packed'] = False
-            return code
+            move_module(module_clone, module)
 
     def update_features(self, operation_features: OperationFeatures):
         raise NotImplementedError

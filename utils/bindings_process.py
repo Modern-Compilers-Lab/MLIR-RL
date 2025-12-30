@@ -1,3 +1,10 @@
+"""Process management for safe execution of MLIR bindings with timeouts.
+
+This module provides utilities for executing code in isolated processes to prevent
+crashes from unstable C++ bindings. It enables timeout management and proper
+resource cleanup for MLIR operations.
+"""
+
 import multiprocessing
 from multiprocessing.connection import wait
 import os

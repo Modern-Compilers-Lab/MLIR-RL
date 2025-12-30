@@ -1,6 +1,16 @@
+"""Benchmark loading and management module.
+
+This module provides functionality for loading benchmark data
+and extracting features from benchmark code.
+It handles loading MLIR benchmark files, extracting operation features,
+and optionally applying img2col transformations
+for convolutional operations.
+"""
+
 from rl_autoschedular.state import BenchmarkFeatures, extract_bench_features_from_code, extract_bench_features_from_file
 from rl_autoschedular.transforms import transform_img2col
 from utils.config import Config
+from mlir._mlir_libs._mlir.ir import Context, Module  # type: ignore
 import json
 from tqdm import tqdm
 import os
@@ -9,7 +19,11 @@ from utils.log import print_error
 
 
 class Benchmarks:
-    """A class that holds benchmarks data"""
+    """A class that holds benchmarks data
+
+    Attributes:
+        data: The list containing features of loaded benchmarks
+    """
 
     data: list[BenchmarkFeatures]
 
@@ -17,7 +31,7 @@ class Benchmarks:
         """Load benchmarks
 
         Args:
-            is_training (bool): Whether to load train or evaluation set
+            is_training: Whether to load train or evaluation set
         """
         cfg = Config()
         # Load benchmark names and execution times from json file
@@ -37,12 +51,12 @@ class Benchmarks:
             benchmark_data = extract_bench_features_from_file(bench_name, bench_file, root_exec_time)
             if os.getenv("DISABLE_IMG2COL", "0") != "1" and bench_name.startswith('conv_2d_'):
                 modified = False
-                bench_code = benchmark_data.code
+                bench_module = Module.parse(benchmark_data.code, Context())
                 for op_tag in benchmark_data.operation_tags:
                     if 'conv_2d' not in benchmark_data.operations[op_tag].operation_name:
                         continue
                     try:
-                        bench_code = transform_img2col(bench_code, op_tag)
+                        transform_img2col(bench_module, op_tag)
                     except Exception as e:
                         print_error(f"Filed to apply img2col on {bench_name}[{op_tag}] with error: {e}")
                     else:
@@ -50,14 +64,27 @@ class Benchmarks:
                 if modified:
                     benchmark_data = extract_bench_features_from_code(
                         bench_name,
-                        bench_code,
+                        str(bench_module),
                         root_exec_time,
                         benchmark_data.tag_counter
                     )
             self.data.append(benchmark_data)
 
-    def __len__(self):
+    def __len__(self) -> int:
+        """Get the number of benchmarks loaded.
+
+        Returns:
+            The total number of benchmarks.
+        """
         return len(self.data)
 
-    def __getitem__(self, idx: int):
+    def __getitem__(self, idx: int) -> BenchmarkFeatures:
+        """Get a benchmark by index.
+
+        Args:
+            idx: The index of the benchmark to retrieve.
+
+        Returns:
+            The benchmark features at the specified index.
+        """
         return self.data[idx]

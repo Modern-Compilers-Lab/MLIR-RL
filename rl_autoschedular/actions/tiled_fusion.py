@@ -1,3 +1,9 @@
+"""Tiled fusion action for MLIR loop transformations.
+
+This module implements the tiled fusion transformation action, which applies
+tiling and fusion of producer-consumer operations.
+"""
+
 from utils.log import print_alert
 from .tiled_parallelization import TiledParallelization
 from rl_autoschedular.transforms import transform_TF, transform_tile
@@ -101,15 +107,15 @@ class TiledFusion(TiledParallelization):
 
         return has_producers and super().is_allowed(state)
 
-    def _apply_ready(self, code):
-        f_code = transform_TF(
-            code,
+    def _apply_ready(self, module):
+        transform_TF(
+            module,
             self.consumer_tag,
             self.producer_tag,
             self.new_producer_tag,
             self.parallel_params,
         )
-        return transform_tile(f_code, self.operation_tag, self.tiling_params)
+        transform_tile(module, self.operation_tag, self.tiling_params)
 
     def update_features(self, operation_features: OperationFeatures):
         if not self.producer_feats_updated:

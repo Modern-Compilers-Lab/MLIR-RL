@@ -1,3 +1,10 @@
+"""GPU resource management and memory occupancy utilities.
+
+This module provides utilities for managing GPU resources during training,
+including methods to reserve GPU memory and ensure consistent GPU availability
+for model training.
+"""
+
 from contextlib import contextmanager
 import multiprocessing
 from typing import TYPE_CHECKING

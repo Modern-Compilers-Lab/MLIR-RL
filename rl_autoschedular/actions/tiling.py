@@ -1,3 +1,9 @@
+"""Tiling action for MLIR loop transformations.
+
+This module implements the tiling transformation action, which applies loop tiling
+to operations with configurable tile sizes.
+"""
+
 from rl_autoschedular.state import OperationState
 from rl_autoschedular.transforms import transform_tile
 from typing import Optional
@@ -107,8 +113,8 @@ class Tiling(Action):
 
         return index
 
-    def _apply_ready(self, code):
-        return transform_tile(code, self.operation_tag, self.parameters)
+    def _apply_ready(self, module):
+        transform_tile(module, self.operation_tag, self.parameters)
 
     def update_features(self, operation_features):
         # A tiled operation loses its producers outside the tiling loop
@@ -127,10 +133,10 @@ class Tiling(Action):
         """Get the number of tiling candidates for a given loop upper bound.
 
         Args:
-            ub (int): The loop upper bound.
+            ub: The loop upper bound.
 
         Returns:
-            int: The number of candidates.
+            The number of candidates.
         """
         for i in range(Config().num_tile_sizes):
             ts = 2 ** i

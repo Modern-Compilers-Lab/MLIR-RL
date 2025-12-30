@@ -1,3 +1,9 @@
+"""No transformation action for MLIR loop transformations.
+
+This module implements the no transformation action, which terminates the
+transformation sequence without applying any changes.
+"""
+
 from typing import Optional
 from rl_autoschedular.state import OperationState
 from .base import Action
@@ -16,5 +22,5 @@ class NoTransformation(Action):
     def __init__(self, state: Optional[OperationState] = None, /, **extras):
         super().__init__(state, **extras)
 
-    def _apply_ready(self, code):
-        return code
+    def _apply_ready(self, module):
+        return module

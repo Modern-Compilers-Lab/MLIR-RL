@@ -1,10 +1,17 @@
+"""Vectorization action for MLIR loop transformations.
+
+This module implements the vectorization transformation action, which applies
+vectorization to operations and handles preprocessing steps like transpose and decompose.
+"""
+
 from utils.config import Config
 from .base import Action
 from rl_autoschedular.transforms import (
-    transform_pre_vec, transform_vectorize, transform_tile,
+    move_module, transform_pre_vec, transform_vectorize, transform_tile,
     transform_decompose, transform_transpose_conv_2d
 )
 from rl_autoschedular.state import OperationFeatures, OperationState, OperationType
+from mlir._mlir_libs._mlir.ir import Module  # type: ignore
 from typing import Callable, Optional
 
 
@@ -18,7 +25,7 @@ class Vectorization(Action):
     terminal = True
 
     # --- extras ---
-    preprocessing: list[Callable[[str], str]]
+    preprocessing: list[Callable[[Module], None]]
 
     def __init__(
         self,
@@ -58,11 +65,11 @@ class Vectorization(Action):
 
         self.preprocessing = []
         if requires_transpose:
-            self.preprocessing.append(lambda c: transform_transpose_conv_2d(c, self.operation_tag))
+            self.preprocessing.append(lambda m: transform_transpose_conv_2d(m, self.operation_tag))
         if requires_decompose:
-            self.preprocessing.append(lambda c: transform_tile(c, self.operation_tag, decompose_tile_sizes))
-            self.preprocessing.append(lambda c: transform_decompose(c, self.operation_tag))
-        self.preprocessing.append(lambda c: transform_pre_vec(c, self.operation_tag))
+            self.preprocessing.append(lambda m: transform_tile(m, self.operation_tag, decompose_tile_sizes))
+            self.preprocessing.append(lambda m: transform_decompose(m, self.operation_tag))
+        self.preprocessing.append(lambda m: transform_pre_vec(m, self.operation_tag))
 
     def __str__(self):
         return f"{self.symbol}({self.extras['vectorized']})"
@@ -74,18 +81,17 @@ class Vectorization(Action):
             op_iter_space *= nested_loop.upper_bound
         return op_iter_space <= Config().vect_size_limit
 
-    def _apply_ready(self, code):
-        original_code = code
-
+    def _apply_ready(self, module):
+        module_clone: Module = module.operation.clone()
         # Special case: In vectorization failures can happen
         # due to MLIR's preconditions, so we can ignore them
         try:
             for pre in self.preprocessing:
-                code = pre(code)
-            return transform_vectorize(code, self.operation_tag)
+                pre(module)
+            transform_vectorize(module, self.operation_tag)
         except Exception:
             self.extras['vectorized'] = False
-            return original_code
+            move_module(module_clone, module)
 
     @classmethod
     def __requires_transpose(cls, operation_features: OperationFeatures) -> bool:
