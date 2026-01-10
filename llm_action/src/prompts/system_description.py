@@ -1,4 +1,4 @@
-# 1333 Tokens
+# 2051 Tokens
 
 def get_system_purpose() -> str:
     return f"""## 1. Purpose of the System
@@ -54,6 +54,7 @@ Responsibility:
   * a parameterized Python action,
   * embedding MLIR Transform dialect code where needed.
 - Define the action as a **contract**, not a script.
+- Consult MLIR documentation when needed for correct dialect usage.
 
 Each Action Must Define:
 - **Parameters**: tunable knobs exposed to the RL agent.
@@ -142,6 +143,52 @@ All agents:
 Violating layer boundaries (e.g., Layer-1 writing transform code) is considered incorrect behavior.
 """
 
+def get_system_targets_and_assumptions() -> str:
+    return """## 6. Targets and Assumptions
+
+### Compiler Target
+- The target compiler infrastructure is **MLIR**.
+- Transformations primarily operate on structured MLIR (e.g., `linalg.*`, `scf.*`, `affine.*`) and their progressively lowered forms.
+- MLIR Transform dialect is the primary mechanism for expressing and applying transformations in Layer 2.
+
+### Hardware Target (This Machine / Default Target)
+- Primary target: **HPC-class CPU** — specifically **Intel Xeon E5-2680 v4 (Broadwell-class)**.
+- Topology:
+  * **28 physical cores** (2 sockets x 14 cores), **2 NUMA nodes**.
+  * **No SMT / Hyper-threading disabled** (threads per core = 1).
+- SIMD / ISA capabilities:
+  * **AVX2 + FMA available**.
+  * **No AVX-512** (do not assume AVX-512 vector widths, masks, or AVX-512-specific lowering).
+  * Practical vector lane guidance:
+    - FP32: typically 8 lanes per vector (256-bit)
+    - FP64: typically 4 lanes per vector (256-bit)
+- Cache hierarchy characteristics:
+  * L1d ~32KB per core, L2 ~256KB per core, shared L3 per socket (~tens of MB).
+- Optimization emphasis for this hardware:
+  * **cache-aware tiling** (L1/L2-friendly) and **SIMD vectorization** (AVX2-level),
+  * **coarse-grain parallelism** over outer loops (avoid oversubscription),
+  * **NUMA awareness** for large tensors and multi-socket scaling,
+  * caution with overly aggressive fusion/unrolling due to **register pressure** and potential spills.
+
+### Workload Domain
+- Primary workload domain: **machine-learning kernels** on CPUs, especially:
+  * matrix multiplication / tensor contractions,
+  * convolution (common layouts such as NCHW/FCHW and variants),
+  * attention-family kernels (QKV projections, softmax, attention matmul patterns),
+  * other loop-nest-dominated linear algebra kernels.
+- Workloads are typically compute-intensive and dominated by regular loop nests; performance is sensitive to tiling, fusion, vectorization, and memory layout.
+
+### Non-Goals (by Default)
+- GPU-specific optimizations (warps/blocks/shared memory) are **out of scope**.
+- Irregular control-heavy code is not a primary focus.
+- Algorithmic changes that alter numerical meaning are not considered.
+
+### Guidance for All Agents
+- Prefer transformations commonly used in high-performance CPU ML and linear algebra libraries.
+- Assume correctness means preserving program semantics and numerical equivalence.
+- When uncertain, prefer robust, general-purpose CPU optimizations over fragile, microarchitecture-specific tricks.
+"""
+
 def get_system_description_prompt() -> str:
     return f"""# Global System Description — MLIR-RL Automatic Action Synthesis Framework
 
@@ -150,7 +197,7 @@ def get_system_description_prompt() -> str:
 {get_system_design_principles()}
 {get_system_relation_rl()}
 {get_system_expected_behavior()}
-"""
+{get_system_targets_and_assumptions()}"""
 
 if __name__ == "__main__":
     print(get_system_description_prompt())
