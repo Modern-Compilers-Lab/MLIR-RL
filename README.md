@@ -88,3 +88,7 @@ The following list describes every required setting in a configuration file.
 - `json_file (str)`: Path to the JSON file containing the benchmarks code and features if data format is set to "json". Otherwise, it should contain original execution times for every benchmark in the benchmark folder.
 - `tags (list[str])`: List of tags to add to the neptune experiment.
 - `logging (bool)`: Flag to enable logging to neptune.
+#### 3. Environment Variables
+export PATH=/scratch/kb5213/resources/llvm-project/build/bin:$PATH
+export PYTHONPATH=/scratch/kb5213/resources/llvm-project/build/tools/mlir/python_packages/mlir_core:$PYTHONPATH
+export MLIR_SHARED_LIBS=/scratch/kb5213/resources/llvm-project/build/lib/libomp.so,/scratch/kb5213/resources/llvm-project/build/lib/libmlir_c_runner_utils.so,/scratch/kb5213/resources/llvm-project/build/lib/libmlir_runner_utils.so
