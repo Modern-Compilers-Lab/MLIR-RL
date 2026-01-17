@@ -1,0 +1,12 @@
+{
+    "name": "Tiling",
+    "description": "Partition loop nests into rectangular tiles to fit intermediate results in cache (L1/L2), improving data reuse and compute intensity. Tile sizes are specified as a list of positive integers or zeros; zero means no tiling for that dimension.",
+    "parameters": [
+        {
+            "name": "tile_sizes",
+            "description": "List of tile sizes (one per loop dimension). A size of 0 means no tiling for that dimension. All-zero lists are invalid (no-op). Example: [32, 32, 32] for 3D tiling.",
+            "type": "list[int]",
+            "values": null
+        }
+    ]
+}

@@ -1,0 +1,12 @@
+{
+    "name": "Tiling",
+    "description": "Partition loop nests into smaller rectangular blocks to improve cache locality and reduce memory pressure. Each tile fits intermediate results within L1/L2 cache, enabling more efficient reuse and computation.",
+    "parameters": [
+        {
+            "name": "tile_sizes",
+            "description": "List of tile sizes for each loop dimension. Position 0 tiles the outermost loop, position 1 the next, etc. A value of 0 means 'do not tile this loop'. At least one non-zero value must be present.",
+            "type": "list[int]",
+            "values": null
+        }
+    ]
+}

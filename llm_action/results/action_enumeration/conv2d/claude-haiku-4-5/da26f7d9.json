@@ -1,0 +1,70 @@
+{
+    "intents": [
+        {
+            "name": "Cache Locality and Memory Reuse",
+            "description": "Restructure iteration spaces to maximize temporal and spatial reuse of data within L1/L2 caches, reducing memory bandwidth pressure and latency.",
+            "rationale": "On the target Broadwell CPU with 32KB L1d and 256KB L2 per core, cache misses dominate cycle time for compute-intensive kernels. Tiling loop nests to fit working sets within cache hierarchy is essential for high performance. This intent focuses on blocking iterations to align with cache line sizes and hierarchy depth, enabling compiler optimizations that follow.",
+            "priority": "high",
+            "transformations": [
+                {
+                    "name": "Tiling",
+                    "description": "Partition loop nests into tiles (blocks) of fixed size to fit intermediate results and operands within cache levels.",
+                    "rationale": "Tiling reduces memory bandwidth by reusing loaded data across multiple iterations of inner loops. For matmul, tiling the I and K dimensions (or I, J, K in deeper nests) ensures the accumulator tile and operand tiles stay in L1/L2. For convolution, tiling spatial (H, W) and output channel (F) dimensions reduces repeated loads of filter and input patches.",
+                    "action_template": "Tiling(tile_sizes) OR Tiling(loop_band, tile_sizes)"
+                },
+                {
+                    "name": "Loop Interchange",
+                    "description": "Permute loop nesting order to regularize memory access patterns and improve stride locality.",
+                    "rationale": "Loop order affects how data is traversed in memory. For matmul, interchanging J and K loops can improve cache utilization by changing which operand is accessed with unit stride. For convolution, swapping spatial and channel loop order can align memory strides with cache line boundaries, reducing TLB and prefetch misses.",
+                    "action_template": "LoopInterchange(loop_band, permutation) OR LoopInterchangeSwap(adjacent_loops)"
+                },
+                {
+                    "name": "Packing and Data Layout Transformation",
+                    "description": "Reorganize tensor layouts or pre-pack data into cache-friendly formats (e.g., column-major or block-transposed) to regularize memory strides.",
+                    "rationale": "Row-major storage may incur poor stride patterns in inner loops (e.g., non-unit strides). Packing operands into transposed or blocked layouts ensures inner loops access data with unit stride, enabling hardware prefetchers and reducing cache conflicts. Critical for matmul B operand and convolution filter tensors.",
+                    "action_template": "Packing(target_operand, layout) OR LayoutTransformation(tensor_name, new_layout)"
+                }
+            ]
+        },
+        {
+            "name": "SIMD Vectorization",
+            "description": "Expose and exploit vectorizable loop nests to generate AVX2 SIMD code with 256-bit vector operations.",
+            "rationale": "Broadwell supports AVX2 (256-bit vectors), allowing 8-lane FP32 or 4-lane FP64 parallelism within a single core without threading. Vectorization of the innermost loop dimension can provide 4\u20138\u00d7 throughput gains. Matmul and convolution contain inner reduction and element-wise loops amenable to vectorization.",
+            "priority": "high",
+            "transformations": [
+                {
+                    "name": "Vectorization",
+                    "description": "Transform a scalar loop into vector operations, using SIMD instructions to process multiple elements per iteration.",
+                    "rationale": "Vectorizing the innermost non-reduction loop (or the reduction dimension itself via horizontal reduction) converts scalar FP64 operations into AVX2 vector ops. For matmul, vectorizing the K-reduction or the output M/N loops exploits SIMD. For convolution, vectorizing output spatial or channel loops reduces iteration count.",
+                    "action_template": "Vectorization(target_loop, vector_width) OR Vectorization(loop_band, vector_width)"
+                },
+                {
+                    "name": "Unrolling",
+                    "description": "Replicate loop body instructions to increase instruction-level parallelism and reduce loop overhead.",
+                    "rationale": "Unrolling exposes more independent operations to the CPU pipeline, improving ILP and masking memory latency. On Broadwell with deep out-of-order execution, unrolling inner loops by 2\u20134\u00d7 can improve throughput by overlapping memory operations with dependent computations. Combined with vectorization, unrolling amortizes loop control overhead.",
+                    "action_template": "Unrolling(target_loop, unroll_factor) OR Unrolling(loop_band, unroll_factor)"
+                }
+            ]
+        },
+        {
+            "name": "Parallelization and Work Distribution",
+            "description": "Expose parallelizable loop dimensions and distribute work across multiple cores to saturate 28-core Broadwell CPU.",
+            "rationale": "Broadwell has 28 physical cores on 2 NUMA sockets. Matmul and convolution expose outer loops (I/M for matmul rows, N for convolution batches, F for output filters) that are embarrassingly parallel with no cross-iteration dependencies. Explicit parallelization extracts multi-core speedup; NUMA-aware distribution reduces remote memory access on 2-socket system.",
+            "priority": "medium",
+            "transformations": [
+                {
+                    "name": "Parallelization",
+                    "description": "Annotate or distribute parallel-eligible loop bands across CPU cores using OpenMP or similar loop-level parallelism.",
+                    "rationale": "Outer loops in matmul (I dimension) and convolution (N and F dimensions) can execute independently. Explicit parallelization via OpenMP pragmas or MLIR affine.parallel allows the compiler to distribute iterations across cores, achieving near-linear speedup for memory-bandwidth-limited kernels.",
+                    "action_template": "Parallelization(loop_band, num_threads) OR ParallelizationAuto(loop_band)"
+                },
+                {
+                    "name": "Loop Fusion",
+                    "description": "Merge adjacent producer-consumer or element-wise operations to reduce temporary buffer materialization and improve data locality.",
+                    "rationale": "Convolution can be decomposed into im2col expansion followed by matmul, or expressed as nested loops. Fusing intermediate operations (e.g., im2col and matmul) eliminates materialized intermediate tensors, saving memory bandwidth and enabling producer-consumer fusion optimizations. Matmul followed by bias-add or activation can similarly be fused.",
+                    "action_template": "LoopFusion(producer_loop, consumer_loop) OR Fusion(operation_sequence)"
+                }
+            ]
+        }
+    ]
+}

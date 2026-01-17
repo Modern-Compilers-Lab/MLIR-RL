@@ -1,0 +1,18 @@
+{
+    "name": "tiling_cache_locality",
+    "description": "Tile loop nests to maximize temporal and spatial reuse within L1/L2 cache hierarchy. Partitions iteration spaces into fixed-size blocks to fit intermediate results and operands within cache capacity.",
+    "parameters": [
+        {
+            "name": "tile_sizes",
+            "description": "List of tile sizes for consecutive loops in the tiled operation. Each element corresponds to one loop level; 0 means no tiling for that level. For matmul, typically [tile_I, tile_J, tile_K]. For conv_2d, typically [tile_N, tile_C, tile_H, tile_W, tile_F, tile_KH, tile_KW] or a subset.",
+            "type": "list",
+            "values": null
+        },
+        {
+            "name": "operation_name",
+            "description": "Optional filter to target specific operation by name attribute (e.g., 'matmul', 'conv_2d'). If not provided, matches any tiling-eligible linalg operation.",
+            "type": "str",
+            "values": null
+        }
+    ]
+}

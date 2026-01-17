@@ -1,0 +1,22 @@
+{
+    "name": "UnrollingAction",
+    "description": "Replicate loop body a fixed number of times to reduce loop overhead and increase instruction-level parallelism. Exposes more independent operations for out-of-order execution.",
+    "parameters": [
+        {
+            "name": "unroll_factor",
+            "description": "Number of times to replicate the loop body. Typical values: 2, 4, 8. Higher values increase ILP but may increase register pressure.",
+            "type": "int",
+            "values": [
+                2,
+                4,
+                8
+            ]
+        },
+        {
+            "name": "target_loop_index",
+            "description": "Index of the target loop to unroll, counting from innermost (0) to outermost. Default: 0 (innermost).",
+            "type": "int",
+            "values": null
+        }
+    ]
+}

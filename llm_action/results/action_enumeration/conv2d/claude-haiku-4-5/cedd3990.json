@@ -1,0 +1,152 @@
+{
+    "intents": [
+        {
+            "name": "Cache Locality and Tiling",
+            "description": "Restructure iteration space to improve data reuse and cache efficiency by blocking computation into tile sizes that fit within L1/L2 cache hierarchy.",
+            "rationale": "On the target Broadwell CPU with 32KB L1d and 256KB L2 per core, tile-based blocking is critical for amortizing memory latency and bandwidth. Tiling reduces cache misses by ensuring that working sets fit in cache during tile computation, dramatically improving throughput for compute-bound kernels like matmul and convolution.",
+            "priority": "high",
+            "transformations": [
+                {
+                    "name": "Tile",
+                    "description": "Partition iteration space into rectangular blocks with parameterized tile sizes, creating nested loops with outer (tile) and inner (element-wise) dimensions.",
+                    "rationale": "Tiling is foundational for cache-aware optimization. It enables control over memory access patterns and data reuse, directly improving cache hit rates and reducing off-chip bandwidth pressure."
+                },
+                {
+                    "name": "Tile and Fuse",
+                    "description": "Combine tiling of related operations (e.g., producer-consumer pairs) into a single tile block to maximize data locality and eliminate intermediate materializations.",
+                    "rationale": "Fused tiles keep producer outputs in fast memory for immediate consumption by consumers, avoiding expensive write-back and read-back cycles. Critical for kernels with multiple dependent ops like multi-step convolution or chained matmuls."
+                },
+                {
+                    "name": "Loop Interchange",
+                    "description": "Reorder loop nesting to expose better memory stride patterns and enable more effective tiling or fusion.",
+                    "rationale": "Interchanging loops can transform irregular memory access patterns into contiguous or predictable strides, improving cache utilization and prefetcher effectiveness. Often necessary to align tiling dimensions with data layout."
+                },
+                {
+                    "name": "Padding and Alignment",
+                    "description": "Introduce explicit padding or reshape dimensions to align iteration bounds with tile sizes and improve memory alignment for vectorization.",
+                    "rationale": "Padding eliminates remainder loops and irregular boundary conditions, enabling uniform tiling and cleaner vectorization. Alignment improves memory access patterns and reduces cache line fragmentation."
+                }
+            ]
+        },
+        {
+            "name": "SIMD Vectorization and Parallelism",
+            "description": "Restructure innermost loops to expose vector-friendly iteration patterns and enable AVX2-level SIMD execution (8-lane FP32, 4-lane FP64).",
+            "rationale": "AVX2 SIMD execution is essential for CPU performance on numerical kernels. Vectorization exposes multiple independent operations per cycle, multiplying throughput. On the target hardware (no AVX-512), careful vectorization targeting 256-bit widths is necessary.",
+            "priority": "high",
+            "transformations": [
+                {
+                    "name": "Vectorize",
+                    "description": "Transform innermost loops into vector operations by grouping scalar iterations into SIMD vector lanes, leveraging contiguous memory access patterns.",
+                    "rationale": "Vectorization directly maps to CPU SIMD units (AVX2). For matmul and convolution, vectorizing the reduction or output dimension yields 4-8x throughput multipliers depending on data type and memory layout."
+                },
+                {
+                    "name": "Unroll and Jam",
+                    "description": "Unroll outer loop(s) by a factor and jam (fuse) the resulting bodies to create larger basic blocks amenable to instruction-level parallelism and vectorization.",
+                    "rationale": "Unroll-and-jam increases code density and creates larger operator windows for ILP and SIMD instruction scheduling. Reduces loop control overhead and enables better register reuse patterns."
+                },
+                {
+                    "name": "Packing and Data Layout Transformation",
+                    "description": "Reformat tensors into packed layouts (e.g., blocking for cache-friendly access) or transpose-like transformations to ensure vectorization is applied over memory-contiguous dimensions.",
+                    "rationale": "Packing eliminates irregular strided access and enables fully-contiguous vectorization. For matmul (e.g., linalg.matmul), packing the inner dimensions allows vectorization of the reduction loop. For convolution, packing spatial dimensions enables efficient SIMD over channels or spatial coordinates."
+                },
+                {
+                    "name": "Loop Peeling",
+                    "description": "Extract boundary iterations (where loop trip count is not a multiple of vector width) into a separate scalar remainder loop.",
+                    "rationale": "Peeling isolates irregular boundary cases, allowing the main loop to run at full vector width without masking overhead. Improves code quality and enables compiler to optimize the hot path."
+                }
+            ]
+        },
+        {
+            "name": "Parallelization and Work Distribution",
+            "description": "Distribute outer loop iterations across multiple threads to leverage the 28-core CPU while respecting NUMA locality and avoiding oversubscription.",
+            "rationale": "The target Broadwell CPU has 28 physical cores (2 NUMA nodes). Parallel loops over outer dimensions (batch, output spatial, or output channels) allow independent tile computation, yielding near-linear scaling when memory bandwidth is available and NUMA locality is preserved.",
+            "priority": "high",
+            "transformations": [
+                {
+                    "name": "Parallelize",
+                    "description": "Mark outer loops as parallel iterations that can be distributed across threads, with automatic or explicit scheduling strategy.",
+                    "rationale": "Parallelization directly utilizes multi-core CPU resources. For matmul, parallelizing the output row or column dimension is safe and non-trivial. For convolution, parallelizing batch or output spatial dimensions provides independent work units."
+                },
+                {
+                    "name": "NUMA-Aware Partitioning",
+                    "description": "Partition work such that each thread's tile accesses data from its local NUMA node, minimizing cross-socket traffic.",
+                    "rationale": "On 2-socket Broadwell, NUMA-aware partitioning can reduce memory latency and contention. Assigning contiguous tile ranges to threads and aligning data layout to socket boundaries improves scalability beyond single-socket saturation."
+                },
+                {
+                    "name": "Static vs. Dynamic Scheduling",
+                    "description": "Choose between static (predictable, low-overhead) and dynamic (load-balancing) thread scheduling for parallel loops.",
+                    "rationale": "Static scheduling avoids synchronization overhead for load-balanced workloads (typical for regular kernels like matmul/conv). Dynamic scheduling helps when tile costs vary (e.g., boundary tiles may be smaller)."
+                }
+            ]
+        },
+        {
+            "name": "Memory and Register Pressure Management",
+            "description": "Balance loop unrolling, tiling, and temporary buffer allocation to avoid register spills and excessive memory traffic.",
+            "rationale": "Over-aggressive unrolling or large tile dimensions can exceed the CPU register file (~16 general-purpose, many vector registers). Spills to stack or memory destroy performance. Careful parameter tuning ensures tight inner loops fit in fast registers.",
+            "priority": "medium",
+            "transformations": [
+                {
+                    "name": "Buffer Allocation and Scoping",
+                    "description": "Explicitly allocate temporary buffers (accumulators, packing buffers, permutation buffers) at appropriate scope to control lifetime and memory footprint.",
+                    "rationale": "Scoped buffer allocation reduces fragmentation and improves cache behavior. For matmul, allocating per-tile accumulators vs. full output matrix affects L1/L2 usage. For convolution, explicit im2col buffers can be tuned to fit cache."
+                },
+                {
+                    "name": "Unrolling Tuning",
+                    "description": "Tune loop unroll factors to balance ILP and register usage, avoiding excessive register pressure.",
+                    "rationale": "Unroll factors of 2-4 are often optimal; higher factors risk register spills. Tuning balances instruction-level parallelism against register availability."
+                },
+                {
+                    "name": "Tile Size Tuning",
+                    "description": "Adjust tile dimensions to fit working sets in L1/L2 cache while leaving room for other register allocations and compiler temporaries.",
+                    "rationale": "Tile sizes are interdependent with vectorization width, unroll factors, and temporary buffers. Empirical tuning ensures the full computation fits without spills."
+                }
+            ]
+        },
+        {
+            "name": "Operator Decomposition and Lowering",
+            "description": "Lower high-level operations (linalg.matmul, linalg.conv_2d_nchw_fchw) into explicit loop nests or specialized sub-kernels to enable fine-grained transformations.",
+            "rationale": "Linalg operations are abstractions; lowering to explicit loops or structure allows application of tiling, fusion, and vectorization at the loop level. Some kernels (e.g., convolution) may benefit from specialized lowerings like im2col or direct convolution, which expose different optimization opportunities.",
+            "priority": "medium",
+            "transformations": [
+                {
+                    "name": "Linalg to Loops",
+                    "description": "Decompose linalg.matmul and linalg.conv_2d_nchw_fchw into explicit affine or SCF loop nests with scalar operations.",
+                    "rationale": "Explicit loops enable loop-level optimizations (tiling, interchange, fusion) that high-level ops obscure. Necessary precursor for most other transformations."
+                },
+                {
+                    "name": "Image-to-Column (im2col) Lowering",
+                    "description": "For convolution, transform the spatial convolution operation into a matrix multiplication by reshaping/repacking the input image.",
+                    "rationale": "im2col converts convolution into matmul-like iteration structure, allowing reuse of matmul optimizations (tiling, packing) and exposing fine-grained loop control."
+                },
+                {
+                    "name": "Direct Convolution Specialization",
+                    "description": "Alternatively, lower convolution to specialized direct-kernel loops optimized for the specific kernel shape and strides.",
+                    "rationale": "Direct convolution may be preferable for small kernels or specific strides where im2col overhead outweighs benefits. Specialization exposes problem-specific optimization opportunities."
+                }
+            ]
+        },
+        {
+            "name": "Canonicalization and Simplification",
+            "description": "Apply compiler simplifications to remove redundancy, flatten loop structures, and eliminate dead operations, making downstream optimizations more effective.",
+            "rationale": "Canonicalization (e.g., affine simplification, dead code elimination, common subexpression elimination) reduces IR complexity and overhead. Simplified IR enables more precise analysis and transformation, improving overall compiler effectiveness.",
+            "priority": "low",
+            "transformations": [
+                {
+                    "name": "Dead Code Elimination",
+                    "description": "Remove unused computations and temporary values to reduce memory footprint and instruction count.",
+                    "rationale": "DCE simplifies the IR and reduces unnecessary work, improving both performance and compilation speed. Particularly relevant after fusion or packing transformations."
+                },
+                {
+                    "name": "Affine Simplification",
+                    "description": "Simplify affine expressions and loop bounds to canonical forms, removing redundant loop iterations and condition checks.",
+                    "rationale": "Affine simplification tightens loop bounds and reduces control-flow overhead, enabling better analysis and optimization by downstream passes."
+                },
+                {
+                    "name": "Loop Flattening and Coalescing",
+                    "description": "Merge nested loops into single flat loops where possible to reduce loop control overhead.",
+                    "rationale": "Flattened loops reduce control-flow overhead and improve prefetcher behavior by presenting a simpler iteration pattern to hardware."
+                }
+            ]
+        }
+    ]
+}

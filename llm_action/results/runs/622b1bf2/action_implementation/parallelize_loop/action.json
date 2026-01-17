@@ -1,0 +1,28 @@
+{
+    "name": "parallelize_loop",
+    "description": "Distribute independent loop iterations across multiple CPU cores using coarse-grain parallelism. Targets outer loops in structured operations (matmul, convolution) that are inherently parallelizable. Applies OpenMP-style loop parallelization via MLIR Transform dialect.",
+    "parameters": [
+        {
+            "name": "operation_tag",
+            "description": "Tag attribute value identifying the target operation (e.g., 'matmul', 'conv_2d'). Used to locate the operation to parallelize.",
+            "type": "string",
+            "values": null
+        },
+        {
+            "name": "loop_depth",
+            "description": "Depth of the loop nest to parallelize (0-indexed from outermost). Typically 0 or 1 for outer parallel loops.",
+            "type": "int",
+            "values": [
+                0,
+                1,
+                2
+            ]
+        },
+        {
+            "name": "num_threads",
+            "description": "Number of threads to use for parallelization. Should not exceed physical core count (28 for target machine). If 0, uses system default.",
+            "type": "int",
+            "values": null
+        }
+    ]
+}

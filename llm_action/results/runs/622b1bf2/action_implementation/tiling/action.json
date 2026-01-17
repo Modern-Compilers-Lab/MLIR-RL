@@ -1,0 +1,18 @@
+{
+    "name": "tiling",
+    "description": "Restructure loops into nested tile blocks to improve cache locality and data reuse by fitting computation within cache levels (L1/L2). Divides iteration space into smaller rectangular blocks.",
+    "parameters": [
+        {
+            "name": "tile_sizes",
+            "description": "Vector of tile sizes for each loop dimension. A value of 0 means no tiling for that dimension. Example: [64, 64, 64] for 3D loop nest, [32, 32] for 2D.",
+            "type": "list[int]",
+            "values": null
+        },
+        {
+            "name": "operation_tag",
+            "description": "Optional tag attribute to identify the target operation. If empty, matches any structured operation (linalg.matmul, linalg.conv_2d, etc.). Useful for selective tiling in multi-operation IRs.",
+            "type": "str",
+            "values": null
+        }
+    ]
+}

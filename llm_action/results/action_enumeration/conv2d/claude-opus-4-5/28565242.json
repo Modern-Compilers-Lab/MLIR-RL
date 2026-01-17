@@ -1,0 +1,244 @@
+{
+    "intents": [
+        {
+            "name": "Cache Locality Optimization",
+            "description": "Improve data reuse by structuring computation to fit working sets within L1/L2 cache hierarchies.",
+            "rationale": "Convolution has high arithmetic intensity but poor spatial locality by default due to strided access patterns across input channels and spatial dimensions. Tiling ensures that input/filter/output tiles fit in cache, reducing memory bandwidth pressure on Broadwell's cache hierarchy.",
+            "priority": "high",
+            "transformations": [
+                {
+                    "name": "Tiling",
+                    "description": "Partition loop iterations into smaller blocks that operate on cache-sized data tiles.",
+                    "rationale": "Enables reuse of input and filter data across multiple output computations by constraining working set size to L1/L2 capacity."
+                },
+                {
+                    "name": "Packing",
+                    "description": "Copy and reorganize data into contiguous, cache-line-aligned buffers optimized for the tiled computation order.",
+                    "rationale": "Eliminates strided memory access within tiles, improving cache line utilization and prefetcher effectiveness for the NCHW/FCHW layout."
+                },
+                {
+                    "name": "Interchange",
+                    "description": "Reorder loop nests to change the iteration order of dimensions.",
+                    "rationale": "Positions loops to maximize temporal locality; e.g., iterating over output channels in inner loops can improve filter reuse."
+                },
+                {
+                    "name": "Fusion",
+                    "description": "Combine producer-consumer operations to avoid intermediate materialization.",
+                    "rationale": "If subsequent operations exist (e.g., bias add, activation), fusing them with convolution keeps output tiles in cache rather than spilling to memory."
+                }
+            ]
+        },
+        {
+            "name": "SIMD Vectorization",
+            "description": "Expose data-parallel operations to AVX2 vector units for throughput multiplication.",
+            "rationale": "The Broadwell E5-2680 v4 supports AVX2+FMA with 256-bit vectors (4 FP64 lanes). Convolution's innermost reductions and output accumulations are naturally vectorizable, but require proper loop structure and memory alignment.",
+            "priority": "high",
+            "transformations": [
+                {
+                    "name": "Vectorization",
+                    "description": "Transform scalar loop iterations into SIMD vector operations.",
+                    "rationale": "Multiplies throughput by vector width (4x for FP64 AVX2); critical for achieving peak FLOPS on compute-bound convolution."
+                },
+                {
+                    "name": "Interchange",
+                    "description": "Reorder loops to place vectorizable dimensions innermost.",
+                    "rationale": "Ensures contiguous memory access along the vectorized dimension, enabling efficient vector loads/stores without gather/scatter."
+                },
+                {
+                    "name": "Packing",
+                    "description": "Reorganize data layout to ensure vector-width-aligned, contiguous access patterns.",
+                    "rationale": "Eliminates unaligned loads and enables full-width vector operations without masking overhead."
+                },
+                {
+                    "name": "Unrolling",
+                    "description": "Replicate loop body multiple times to increase instruction-level parallelism.",
+                    "rationale": "Exposes more independent FMA operations to hide latency and saturate vector execution units."
+                }
+            ]
+        },
+        {
+            "name": "Parallelization",
+            "description": "Distribute work across multiple cores to utilize the 28-core, 2-socket NUMA topology.",
+            "rationale": "Single-threaded execution underutilizes the E5-2680 v4's massive core count. Batch and output channel dimensions offer embarrassingly parallel work that scales linearly with cores.",
+            "priority": "high",
+            "transformations": [
+                {
+                    "name": "Parallelization",
+                    "description": "Mark loop dimensions for concurrent execution across threads.",
+                    "rationale": "Batch (N) and output filter (F) dimensions have no cross-iteration dependencies, enabling straightforward parallel distribution."
+                },
+                {
+                    "name": "Tiling",
+                    "description": "Partition work into coarse-grained chunks suitable for thread assignment.",
+                    "rationale": "Creates balanced work units that minimize synchronization overhead and enable NUMA-local memory allocation."
+                },
+                {
+                    "name": "Interchange",
+                    "description": "Position parallel loops at outermost levels of the loop nest.",
+                    "rationale": "Maximizes work per parallel task and minimizes thread management overhead by parallelizing coarse-grained outer loops."
+                }
+            ]
+        },
+        {
+            "name": "Register Pressure Management",
+            "description": "Balance unrolling and tiling to maximize register utilization without causing spills.",
+            "rationale": "Broadwell has 16 YMM registers for AVX2. Aggressive unrolling can exhaust registers, causing spills that negate vectorization benefits. Careful tuning is essential for FP64 convolution with its large accumulator state.",
+            "priority": "high",
+            "transformations": [
+                {
+                    "name": "Unrolling",
+                    "description": "Replicate loop iterations to increase register-resident computation.",
+                    "rationale": "Keeps accumulator values in registers across multiple FMA operations, amortizing load/store costs."
+                },
+                {
+                    "name": "Tiling",
+                    "description": "Control tile sizes to bound the number of live values requiring registers.",
+                    "rationale": "Smaller micro-tiles reduce simultaneous accumulator count, preventing register spills while maintaining locality."
+                },
+                {
+                    "name": "Peeling",
+                    "description": "Separate edge iterations from main loop body to simplify the main kernel.",
+                    "rationale": "Removes boundary condition checks from the hot path, enabling more aggressive register allocation in the main loop."
+                }
+            ]
+        },
+        {
+            "name": "Kernel Decomposition",
+            "description": "Break down the 7-deep convolution loop nest into simpler, more optimizable sub-operations.",
+            "rationale": "Direct convolution with NCHW/FCHW layout has complex strided access. Decomposition exposes matrix-multiply-like structure that benefits from highly optimized GEMM-style transformations.",
+            "priority": "medium",
+            "transformations": [
+                {
+                    "name": "Decomposition",
+                    "description": "Split compound operations into sequences of simpler operations.",
+                    "rationale": "Separates reduction dimensions from spatial dimensions, enabling independent optimization of each phase."
+                },
+                {
+                    "name": "Im2col Transformation",
+                    "description": "Reshape convolution into matrix multiplication by explicit input unfolding.",
+                    "rationale": "Converts strided convolution access into contiguous GEMM, enabling use of cache-optimized matrix multiplication strategies."
+                },
+                {
+                    "name": "Fusion",
+                    "description": "Recombine decomposed operations to avoid intermediate materialization overhead.",
+                    "rationale": "After optimizing sub-operations, selective fusion can eliminate memory traffic for intermediate buffers."
+                }
+            ]
+        },
+        {
+            "name": "Memory Layout Optimization",
+            "description": "Transform data layouts to improve access patterns for the target loop structure.",
+            "rationale": "NCHW layout causes strided access across the width dimension during convolution. Layout transformation can convert these into contiguous accesses, dramatically improving cache and vector efficiency.",
+            "priority": "medium",
+            "transformations": [
+                {
+                    "name": "Packing",
+                    "description": "Create temporary buffers with computation-friendly data layouts.",
+                    "rationale": "Converts NCHW/FCHW into blocked layouts (e.g., NCHWc) that align with tile boundaries and vector widths."
+                },
+                {
+                    "name": "Tiling",
+                    "description": "Partition dimensions to create natural boundaries for layout transformation.",
+                    "rationale": "Tile sizes determine block factors in packed layouts, coordinating memory organization with computation structure."
+                },
+                {
+                    "name": "Interchange",
+                    "description": "Reorder iteration to match the transformed data layout.",
+                    "rationale": "Ensures innermost loops traverse contiguous packed data, maximizing cache line utilization."
+                }
+            ]
+        },
+        {
+            "name": "Reduction Optimization",
+            "description": "Optimize the accumulation over input channels and kernel spatial dimensions.",
+            "rationale": "Convolution reduces over C, KH, KW dimensions. Inefficient reduction order causes repeated loads of output accumulators. Proper structuring keeps accumulators register-resident.",
+            "priority": "medium",
+            "transformations": [
+                {
+                    "name": "Interchange",
+                    "description": "Position reduction loops to maximize accumulator reuse.",
+                    "rationale": "Placing channel reduction innermost allows output tile accumulators to remain in registers across all C iterations."
+                },
+                {
+                    "name": "Tiling",
+                    "description": "Partition reduction dimensions to balance parallelism and accumulator locality.",
+                    "rationale": "Tiled reductions enable parallel partial sums while controlling the number of concurrent accumulators."
+                },
+                {
+                    "name": "Unrolling",
+                    "description": "Unroll reduction loops to expose FMA chains.",
+                    "rationale": "Creates longer dependency chains that the out-of-order engine can overlap, hiding FMA latency."
+                }
+            ]
+        },
+        {
+            "name": "NUMA-Aware Optimization",
+            "description": "Structure computation and data placement to respect the 2-socket NUMA topology.",
+            "rationale": "Cross-socket memory access incurs significant latency penalty on dual-socket Broadwell. Large tensors spanning both NUMA nodes require careful work distribution to maintain locality.",
+            "priority": "medium",
+            "transformations": [
+                {
+                    "name": "Tiling",
+                    "description": "Create coarse tiles aligned with NUMA-local memory regions.",
+                    "rationale": "Ensures each socket processes data residing in its local memory, avoiding QPI interconnect traffic."
+                },
+                {
+                    "name": "Parallelization",
+                    "description": "Distribute parallel work to match NUMA topology.",
+                    "rationale": "Socket-aware thread binding ensures threads access predominantly local memory, reducing average memory latency."
+                },
+                {
+                    "name": "Packing",
+                    "description": "Allocate packed buffers in NUMA-local memory.",
+                    "rationale": "First-touch allocation during packing ensures working buffers reside on the correct NUMA node."
+                }
+            ]
+        },
+        {
+            "name": "Loop Canonicalization",
+            "description": "Normalize loop structure to enable downstream transformations.",
+            "rationale": "Many transformations have preconditions on loop form (normalized bounds, single induction variable). Canonicalization ensures the IR is in a state amenable to tiling, vectorization, and parallelization.",
+            "priority": "low",
+            "transformations": [
+                {
+                    "name": "Canonicalization",
+                    "description": "Apply standard simplifications and normalizations to the IR.",
+                    "rationale": "Eliminates redundant operations and normalizes loop bounds, creating a clean foundation for optimization."
+                },
+                {
+                    "name": "Peeling",
+                    "description": "Extract boundary iterations to create perfectly nested main loops.",
+                    "rationale": "Separates irregular edge cases from the main computation, enabling more aggressive optimization of the common path."
+                },
+                {
+                    "name": "Loop Coalescing",
+                    "description": "Merge multiple loops into a single loop when beneficial.",
+                    "rationale": "Simplifies loop structure for certain parallelization and vectorization strategies."
+                }
+            ]
+        },
+        {
+            "name": "Prefetch Optimization",
+            "description": "Improve memory access latency hiding through explicit or implicit prefetching.",
+            "rationale": "Convolution's regular access patterns are prefetcher-friendly, but large strides across channels can defeat hardware prefetch. Explicit hints or access restructuring can improve memory subsystem utilization.",
+            "priority": "low",
+            "transformations": [
+                {
+                    "name": "Software Prefetching",
+                    "description": "Insert explicit prefetch instructions ahead of data use.",
+                    "rationale": "Compensates for hardware prefetcher limitations with large strides by explicitly initiating cache line fetches."
+                },
+                {
+                    "name": "Packing",
+                    "description": "Reorganize data to create sequential access patterns.",
+                    "rationale": "Converts strided accesses into sequential streaming patterns that hardware prefetchers can track effectively."
+                },
+                {
+                    "name": "Unrolling",
+                    "description": "Increase loop body size to provide more prefetch distance.",
+                    "rationale": "Creates sufficient distance between prefetch and use, allowing memory latency to be fully hidden."
+                }
+            ]
+        }
+    ]
+}

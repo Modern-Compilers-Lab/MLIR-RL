@@ -1,0 +1,22 @@
+{
+    "name": "TileAction",
+    "description": "Partition loop nests into smaller blocks to fit intermediate results in L1/L2 cache. Applies tiling to structured linalg operations (matmul, conv) or affine/scf loop nests. Tile size 0 means no tiling for that dimension.",
+    "parameters": [
+        {
+            "name": "tile_sizes",
+            "description": "List of tile sizes for each loop dimension. Zero means no tiling for that dimension. Must have length matching the number of loops in the target operation.",
+            "type": "list[int]",
+            "values": null
+        },
+        {
+            "name": "operation_name",
+            "description": "Optional: name or tag of the operation to tile. If not provided, targets the first tiling-eligible operation found. Common values: 'matmul', 'conv_2d_nchw_fchw'.",
+            "type": "str",
+            "values": [
+                "matmul",
+                "conv_2d_nchw_fchw",
+                "generic"
+            ]
+        }
+    ]
+}

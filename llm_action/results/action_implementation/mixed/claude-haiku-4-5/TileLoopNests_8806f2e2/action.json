@@ -1,0 +1,18 @@
+{
+    "name": "TileLoopNests",
+    "description": "Tile loop nests in structured operations (linalg or lowered scf/affine) to improve cache locality by partitioning iteration spaces into smaller rectangular blocks that fit in L1/L2 cache.",
+    "parameters": [
+        {
+            "name": "tiling_sizes",
+            "description": "List of tile sizes for each loop dimension. Zero means no tiling for that dimension. Non-zero values specify the tile size. Must be positive integers or zero.",
+            "type": "list[int]",
+            "values": null
+        },
+        {
+            "name": "operation_tag",
+            "description": "Optional tag attribute to match a specific operation for tiling. If empty, all linalg operations are candidates for tiling.",
+            "type": "str",
+            "values": null
+        }
+    ]
+}

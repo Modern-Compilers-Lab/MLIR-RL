@@ -1,0 +1,94 @@
+{
+    "intents": [
+        {
+            "name": "Cache Locality and Data Reuse",
+            "description": "Improve cache efficiency by tiling the convolution computation to fit working sets in L1/L2 cache and maximize data reuse across iterations.",
+            "rationale": "2D convolution exhibits poor cache locality due to large strides through input and output tensors. Tiling output spatial dimensions and input channels into cache-friendly blocks reduces memory traffic and increases arithmetic intensity, critical on Broadwell with limited L3 bandwidth.",
+            "priority": "high",
+            "transformations": [
+                {
+                    "name": "Tiling",
+                    "description": "Partition the convolution computation into rectangular tiles over output spatial dimensions (OH, OW) and input/output channels (C, F) to fit intermediate working sets in L1/L2 cache.",
+                    "rationale": "Reduces memory bandwidth pressure by reusing filter weights and input activations across multiple output elements; enables effective use of the 32KB L1d and 256KB L2 per core on Broadwell."
+                },
+                {
+                    "name": "Loop Interchange",
+                    "description": "Reorder nested loops (e.g., prioritize innermost loops over spatial or channel dimensions) to improve memory access patterns and cache line utilization.",
+                    "rationale": "Convolution loop nests can exhibit poor locality if traversed in suboptimal order; reordering loops to match the memory layout of tensors reduces cache misses and TLB pressure."
+                }
+            ]
+        },
+        {
+            "name": "SIMD Vectorization and Instruction-Level Parallelism",
+            "description": "Expose data parallelism to AVX2 vector units by restructuring the computation to operate on aligned, contiguous data and eliminate scalar bottlenecks.",
+            "rationale": "Convolution kernels are compute-intensive and benefit significantly from 256-bit SIMD (AVX2); vectorizing the innermost loops over spatial or channel dimensions can yield 4\u20138\u00d7 speedup on FP64 workloads while hiding latency.",
+            "priority": "high",
+            "transformations": [
+                {
+                    "name": "Vectorization",
+                    "description": "Transform innermost loops (typically over output channels F or spatial dimensions) into SIMD-friendly form suitable for code generation targeting AVX2 vector instructions.",
+                    "rationale": "Direct vectorization of linalg.conv_2d_nchw_fchw or its lowered form exposes parallelism to the 8-wide (FP32) or 4-wide (FP64) AVX2 pipeline; reduces scalar loop overhead and improves ILP."
+                },
+                {
+                    "name": "Layout Transformation",
+                    "description": "Reformat tensor layouts (e.g., NCHW \u2192 blocked/packed layouts) to align data access patterns with vector width and memory alignment requirements.",
+                    "rationale": "Convolution tensors in standard NCHW layout may not be conducive to aligned vector loads; transforming to a packed or blocked layout (e.g., NCHW \u2192 NC(H\u00d7W) or NC(8,8,C,4) for 8\u00d78 tiles with 4-wide channels) enables efficient gather/broadcast and reduces alignment penalties."
+                }
+            ]
+        },
+        {
+            "name": "Coarse-Grain Parallelism and NUMA Awareness",
+            "description": "Distribute independent iterations across the 28 CPU cores while respecting NUMA topology to maximize throughput and minimize cross-socket traffic.",
+            "rationale": "On a 28-core Broadwell system with 2 NUMA sockets, naive parallelization risks imbalance and remote memory access; careful distribution over batch (N), spatial (OH, OW), or output channel (F) dimensions with NUMA-aware memory allocation is essential for scalable performance.",
+            "priority": "high",
+            "transformations": [
+                {
+                    "name": "Parallelization",
+                    "description": "Parallelize independent outer loops (e.g., batch dimension N, output spatial dimensions OH/OW, or output channel F) across worker threads using a coarse-grain loop distribution strategy.",
+                    "rationale": "Convolution has abundant parallelism in batch, spatial, and channel dimensions; distributing these across 28 cores (avoiding oversubscription and false sharing) provides near-linear speedup for throughput-bound workloads."
+                },
+                {
+                    "name": "Memory Allocation and Data Layout Strategy",
+                    "description": "Align tensor allocation and loop blocking to NUMA boundaries and socket-local caches to minimize cross-socket traffic and remote memory latency.",
+                    "rationale": "Large tensors (e.g., feature maps of shape N\u00d7F\u00d7OH\u00d7OW) may span multiple NUMA nodes; explicit NUMA-aware blocking or allocation strategy reduces off-socket memory accesses and improves scalability on multi-socket systems."
+                }
+            ]
+        },
+        {
+            "name": "Operator Fusion and Intermediate Materialization Reduction",
+            "description": "Fuse adjacent operations and reduce temporary buffer allocation by combining computations to decrease memory bandwidth and improve cache reuse.",
+            "rationale": "Convolution followed by activation or normalization layers is common in neural networks; fusing these operations eliminates intermediate tensor materialization and reduces memory traffic, especially critical for bandwidth-limited workloads.",
+            "priority": "medium",
+            "transformations": [
+                {
+                    "name": "Operator Fusion",
+                    "description": "Fuse the convolution operation with subsequent elementwise operations (e.g., ReLU, bias addition) into a single kernel to avoid redundant memory reads/writes of intermediate results.",
+                    "rationale": "Elementwise fusion reduces bandwidth by keeping intermediate results in registers or cache; typical fusion patterns (conv + ReLU, conv + bias) are ubiquitous in ML inference and can provide 20\u201340% speedup."
+                },
+                {
+                    "name": "Loop Fusion",
+                    "description": "Merge nested loops across producer-consumer operation pairs to amortize loop overhead and improve data locality.",
+                    "rationale": "If convolution is followed by an independent tensor operation (e.g., transpose, normalization), fusing their loops reduces register spills and allows efficient pipelining on modern superscalar CPUs."
+                }
+            ]
+        },
+        {
+            "name": "Low-Level Loop Optimization and Register Efficiency",
+            "description": "Refine loop structure, unrolling, and register allocation to minimize loop overhead, hide latency, and reduce spills on the CPU pipeline.",
+            "rationale": "Convolution kernels often have high trip counts and instruction-level parallelism; careful loop unrolling, peeling, and jamming can hide FP64 latency (typically 3\u20135 cycles on Broadwell) and improve throughput by increasing in-flight instructions.",
+            "priority": "medium",
+            "transformations": [
+                {
+                    "name": "Loop Unrolling",
+                    "description": "Unroll innermost loops (over channels, spatial dimensions, or kernel height/width) by a factor determined by available ILP and register budget to reduce loop overhead and increase instruction density.",
+                    "rationale": "Reduces loop branch and increment overhead; increases the ratio of arithmetic operations to loop control, improving CPU pipeline efficiency and FP unit utilization on deep pipelines like Broadwell."
+                },
+                {
+                    "name": "Peeling and Jamming",
+                    "description": "Peel loop boundaries (e.g., handle unaligned iterations separately) and jam independent loop bodies to minimize mispredictions and improve register allocation.",
+                    "rationale": "Separates aligned fast-path from edge cases, enabling aggressive optimization on the main loop; jamming increases instruction-level parallelism by exposing multiple independent operations to out-of-order execution."
+                }
+            ]
+        }
+    ]
+}

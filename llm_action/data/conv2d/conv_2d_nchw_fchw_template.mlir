@@ -1,18 +1,17 @@
 module {
   func.func private @nanoTime() -> i64 attributes {llvm.emit_c_interface}
-
   func.func @main(
     %arg0: tensor<[N]x[C]x[H]x[W]xf64>,
     %arg1: tensor<[F]x[C]x[KH]x[KW]xf64>,
     %arg2: tensor<[N]x[F]x[OH]x[OW]xf64>
   ) -> (tensor<[N]x[F]x[OH]x[OW]xf64>, i64)
   attributes {llvm.emit_c_interface} {
-
     %0 = call @nanoTime() : () -> i64
-
     %1 = linalg.conv_2d_nchw_fchw
       { dilations = dense<1> : tensor<2xi64>,
-        strides   = dense<1> : tensor<2xi64> }
+        strides = dense<1> : tensor<2xi64>,
+        tag = "operation_0"
+      }
       ins(
         %arg0, %arg1 :
         tensor<[N]x[C]x[H]x[W]xf64>,

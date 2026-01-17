@@ -1,0 +1,21 @@
+{
+    "name": "LoweringAction",
+    "description": "Transform high-level structured operations (linalg.matmul, linalg.conv_2d_nchw_fchw) into lower-level loop nests with explicit iteration and memory access patterns. Exposes iteration structure for further optimization passes such as tiling, fusion, and vectorization.",
+    "parameters": [
+        {
+            "name": "operation_type",
+            "description": "The type of structured operation to lower. Supported values: 'matmul' for linalg.matmul, 'conv_2d_nchw_fchw' for 2D convolution in NCHW format.",
+            "type": "str",
+            "values": [
+                "matmul",
+                "conv_2d_nchw_fchw"
+            ]
+        },
+        {
+            "name": "enable_iterator_type_semantics",
+            "description": "If True, preserve iterator type semantics during lowering to enable semantics-preserving fusion and reductions. If False, perform a simpler structural lowering.",
+            "type": "bool",
+            "values": null
+        }
+    ]
+}

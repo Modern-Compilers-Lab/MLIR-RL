@@ -1,0 +1,34 @@
+# Reasoning
+
+This task asks me to implement a **Tiling action** for MLIR loop nests, targeting the Cache Locality & Memory Efficiency optimization intent. The tiling transformation is fundamental for CPU performance on structured kernels like matrix multiplication and convolution.
+
+## Key Design Decisions
+
+1. **Scope**: The action targets structured MLIR operations (`linalg.*` ops) and their loop-lowered forms (`scf.for`, `affine.for`). It will work with both high-level `linalg` operations and lower-level loop nests.
+
+2. **Parameters**:
+   - `tiling_sizes`: A list of tile sizes (positive integers or zeros). Zero means "no tiling for that dimension."
+   - `operation_tag`: Optional tag to target a specific operation. If not provided, the action will attempt to tile all tileable operations.
+
+3. **Precondition**: Check that:
+   - The IR contains at least one tileable operation (`linalg.*` or loop nest).
+   - At least one tiling size is non-zero (otherwise it's a no-op).
+   - The number of tiling sizes is reasonable (matches expected loop structure or is shorter).
+
+4. **Preprocessing**: Minimal—only prepare parameters (validate list format, ensure non-negative values).
+
+5. **Implementation**: Use MLIR Transform dialect's `transform.structured.tile_using_for` for `linalg` ops. This is the standard approach for tiling in MLIR. For lower-level loop nests, we fall back to transform.loop.tile or similar patterns.
+
+6. **Postcondition**: Verify that:
+   - The transformation did not fail (IR is still valid).
+   - The number of loops increased (tiling should introduce new tile loops).
+   - No operations were removed unexpectedly.
+
+## Implementation Strategy
+
+- Use `transform.structured.match` to identify tileable operations by tag or by operation type.
+- Apply `transform.structured.tile_using_for` with the provided tile sizes.
+- If no tag is provided, match all `linalg` operations and attempt tiling each.
+- Gracefully handle cases where tiling is not applicable (non-tileable ops).
+
+---

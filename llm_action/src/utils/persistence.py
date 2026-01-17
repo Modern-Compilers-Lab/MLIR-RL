@@ -1,28 +1,89 @@
 import os
 import json
+from typing import Tuple, Union, Optional
 
 from llm_action.src.utils.misc import random_id
-from llm_action.src.models import KernelType, ActionEnumeration
+from llm_action.src.models import ClaudeModel, KernelType, ActionEnumeration, ActionPackage
+
+from llm_action.src.config import ACTION_ENUMERATION_CACHE, CLAUDE_LLM_MODEL
+
+def load_kernel_code(kernel_type: KernelType) -> str:
+    dir = f"llm_action/data/{kernel_type.value}"
+    match kernel_type:
+        case KernelType.MATMUL:
+            name = "Matrix Multiplication"
+            code_path = f"{dir}/matmul_128_256_128.mlir"
+        case KernelType.CONV2D:
+            name = "2D Convolution"
+            code_path = f"{dir}/conv_2d_nchw_fchw_128_32_7_7_256_1_1_7_7.mlir"
+        case KernelType.ATTENTION:
+            name = "Attention"
+            code_path = f"{dir}/attention.mlir"
+        case KernelType.GENERIC:
+            name = "Generic"
+            code_path = f"{dir}/generic_8_8_16_8_32.mlir"
+    with open(code_path, "r") as f:
+        code = f.read()
+    return code
 
 def load_kernel_code_template(kernel_type: KernelType) -> str:
     dir = f"llm_action/data/{kernel_type.value}"
     match kernel_type:
         case KernelType.MATMUL:
+            name = "Matrix Multiplication"
             template_path = f"{dir}/matmul_template.mlir"
         case KernelType.CONV2D:
+            name = "2D Convolution"
             template_path = f"{dir}/conv_2d_nchw_fchw_template.mlir"
         case KernelType.ATTENTION:
+            name = "Attention"
             template_path = f"{dir}/attention_template.mlir"
         case KernelType.GENERIC:
+            name = "Generic"
             template_path = f"{dir}/generic_template.mlir"
     with open(template_path, "r") as f:
         code_template = f.read()
-    return code_template
+    return f"Kernel Code Template for {name}:\n{code_template}"
 
-def save_action_enumeration_result(result: ActionEnumeration, kernel_type: KernelType) -> str:
-    dir = f"llm_action/results/action_enumeration/{kernel_type.value}"
+def save_action_enumeration_result(reasoning: str, action_enumeration: ActionEnumeration, kernel_type: KernelType = None, model: ClaudeModel = CLAUDE_LLM_MODEL, run_id: str = None) -> str:
+    if run_id:
+        dir = f"llm_action/results/runs/{run_id}/action_enumeration"
+    else:
+        id = random_id()
+        dir = f"llm_action/results/action_enumeration/{kernel_type.value}/{model.value}/{id}"
     os.makedirs(dir, exist_ok=True)
-    file_path = f"{dir}/{random_id()}.json"
-    with open(file_path, "w") as f:
-        json.dump(result.model_dump(), f, indent=4)
-    return file_path
+    json_file_path = f"{dir}/action_enumeration.json"
+    with open(json_file_path, "w") as f:
+        json.dump(action_enumeration.model_dump(), f, indent=4)
+    reasoning_file_path = f"{dir}/reasoning.txt"
+    with open(reasoning_file_path, "w") as f:
+        f.write(reasoning)
+    return dir
+
+def load_cached_action_enumeration() -> ActionEnumeration:
+    with open(ACTION_ENUMERATION_CACHE, "r") as f:
+        data = json.load(f)
+    return ActionEnumeration(**data)
+
+def save_action_implementation_result(reasoning: str, action_package: ActionPackage, action_python_implementation: str, kernel_type: KernelType = None, model: ClaudeModel = CLAUDE_LLM_MODEL, run_id: str = None, save_to_playground: bool = False) -> Tuple[str, Optional[str]]:
+    if run_id:
+        dir = f"llm_action/results/runs/{run_id}/action_implementation/{action_package.name}"
+    else:
+        dir = f"llm_action/results/action_implementation/{kernel_type.value}/{model.value}/{action_package.name}_{random_id()}"
+    os.makedirs(dir, exist_ok=True)
+    txt_file_path = f"{dir}/reasoning.txt"
+    with open(txt_file_path, "w") as f:
+        f.write(reasoning)
+    json_file_path = f"{dir}/action.json"
+    with open(json_file_path, "w") as f:
+        json.dump(action_package.model_dump(), f, indent=4)
+    py_file_path = f"{dir}/action.py"
+    with open(py_file_path, "w") as f:
+        f.write(action_python_implementation)
+    if save_to_playground:
+        playground_dir = f"llm_action/playground/actions/candidates/"
+        os.makedirs(playground_dir, exist_ok=True)
+        playground_py_file_path = f"{playground_dir}/{action_package.name}_{random_id(short=True)}.py"
+        with open(playground_py_file_path, "w") as f:
+            f.write(action_python_implementation)
+    return dir, playground_py_file_path if save_to_playground else None

@@ -1,0 +1,82 @@
+{
+    "intents": [
+        {
+            "name": "Cache Locality and Data Reuse",
+            "description": "Improve cache efficiency by restructuring iteration space and memory access patterns to maximize temporal locality and minimize cache misses.",
+            "rationale": "Loop-nest kernels (matmul, convolution) access large tensors with regular strides. On the target Broadwell CPU with limited L1/L2 cache per core, tiling and blocking are essential to keep working sets within cache hierarchy and exploit data reuse across loop iterations. This is typically the highest-impact optimization for numerical kernels.",
+            "priority": "high",
+            "transformations": [
+                {
+                    "name": "Tiling",
+                    "description": "Restructure loops into nested tile blocks to fit computation and data within cache lines and cache levels.",
+                    "rationale": "Tiling divides iteration space into smaller rectangular blocks that can be fully computed with data resident in L1/L2 cache. Reduces main-memory bandwidth demand and exploits temporal reuse of both inputs and partial results.",
+                    "action_template": "Tiling(tile_sizes) OR Tiling(loop_band, tile_sizes) where tile_sizes is a vector of factors (0 = no tiling for that loop)."
+                },
+                {
+                    "name": "Loop Interchange",
+                    "description": "Reorder nested loops to improve memory access pattern (stride regularity, cache line utilization).",
+                    "rationale": "Changing loop order can transform irregular or strided memory accesses into unit-stride patterns, dramatically reducing cache-miss rates and improving prefetch efficiency. Critical for inputs with different memory layouts.",
+                    "action_template": "LoopInterchange(loop_band, permutation) OR LoopInterchangeSwap(adjacent_loop_pair) where permutation is a reordering of loop indices."
+                },
+                {
+                    "name": "Fusion",
+                    "description": "Merge producer-consumer loop nests to eliminate intermediate tensor materialization and improve data locality.",
+                    "rationale": "Fusion reduces memory bandwidth by keeping intermediate results in registers/cache instead of writing and reloading from main memory. For kernels with multiple operations (e.g., convolution followed by activation), fusion can reduce L3 cache evictions and main-memory traffic.",
+                    "action_template": "Fusion(producer_op, consumer_op) OR Fusion(operation_pair) specifying which operations to fuse."
+                }
+            ]
+        },
+        {
+            "name": "SIMD Vectorization and Parallelism",
+            "description": "Expose and utilize vector instruction sets (AVX2) and multi-core parallelism to increase computational throughput.",
+            "rationale": "The target CPU supports AVX2 (256-bit vectors: 8 FP32 lanes, 4 FP64 lanes) and has 28 physical cores. Vectorization converts scalar loop iterations into vector operations, improving ILP and throughput. Multi-core parallelism distributes independent iterations across cores. Both are essential for high performance on modern CPUs.",
+            "priority": "high",
+            "transformations": [
+                {
+                    "name": "Vectorization",
+                    "description": "Transform scalar loop into vector operations using SIMD instructions, with proper handling of loop remainder.",
+                    "rationale": "Vectorization exploits AVX2 to process multiple iterations per instruction cycle, increasing arithmetic throughput. Required to approach peak FLOPs on modern CPUs. Must handle loop remainder and potential gather/scatter patterns.",
+                    "action_template": "Vectorization(target_loop, vector_width) OR Vectorization(loop_band, vector_width) where vector_width is the SIMD width (e.g., 4 or 8)."
+                },
+                {
+                    "name": "Parallelization",
+                    "description": "Distribute independent loop iterations or computation across multiple CPU cores using coarse-grain parallelism.",
+                    "rationale": "Multi-core parallelism is necessary to scale performance across 28 cores. Outer loops in matmul (output rows/columns) and convolution (batch, output height/width) are typically parallelizable. Avoids oversubscription by respecting core count and NUMA topology.",
+                    "action_template": "Parallelization(target_loop) OR Parallelization(loop_band, num_threads) specifying which loop(s) to parallelize and optionally thread count."
+                },
+                {
+                    "name": "Unrolling",
+                    "description": "Replicate loop body a fixed number of times to reduce loop overhead and increase instruction-level parallelism.",
+                    "rationale": "Loop unrolling reduces the frequency of branch and loop-control instructions, exposing more independent operations for out-of-order execution. Increases register pressure but, when moderate (2-4x), typically improves performance by enabling better instruction scheduling and hiding latencies.",
+                    "action_template": "Unrolling(target_loop, unroll_factor) OR Unrolling(loop_band, unroll_factor) where unroll_factor is typically 2, 4, or 8."
+                }
+            ]
+        },
+        {
+            "name": "Memory Layout and Data Organization",
+            "description": "Restructure data layout and reorganize tensor access patterns to reduce overhead and improve memory efficiency.",
+            "rationale": "Numerical kernels often access tensors with irregular strides or unfavorable memory layouts. Restructuring (packing, transposition, layout changes) can regularize access patterns, improve cache utilization, and reduce address-generation overhead. Particularly important for convolution, which typically involves complex indexing.",
+            "priority": "medium",
+            "transformations": [
+                {
+                    "name": "Packing",
+                    "description": "Transform tensor layout to a cache-friendly blocked format, often by materializing a temporary buffer with contiguous storage.",
+                    "rationale": "Packing converts irregular, strided access into regular unit-stride access by copying data into a dense tile buffer. Common in high-performance BLAS (e.g., packing matrix panels). Trades copy overhead for improved cache behavior and reduced address computation.",
+                    "action_template": "Packing(tensor_input, block_size) OR Packing(tensor_input, tile_dimensions) specifying which tensor to pack and the target block/tile size."
+                },
+                {
+                    "name": "Lowering",
+                    "description": "Transform high-level structured operations into lower-level loop nests with explicit iteration and memory access.",
+                    "rationale": "Lowering (e.g., linalg to scf.for, or convolution to explicit im2col + matmul-like loops) exposes the underlying iteration structure for further optimization. Enables application of tiling, fusion, and vectorization by making loops explicit.",
+                    "action_template": "Lowering(structured_op) OR Lowering(operation_type) to convert high-level ops (linalg.matmul, linalg.conv_2d_nchw_fchw) to lower-level representations."
+                },
+                {
+                    "name": "Transposition",
+                    "description": "Reorder tensor dimensions or transpose matrices to align iteration and memory access order.",
+                    "rationale": "Transposition can convert column-major to row-major (or vice versa) to achieve unit-stride access in the inner loop. Can reduce cache misses and improve vectorization efficiency, though it incurs a one-time copy cost.",
+                    "action_template": "Transposition(tensor_input, permutation) where permutation specifies the new dimension order."
+                }
+            ]
+        }
+    ]
+}

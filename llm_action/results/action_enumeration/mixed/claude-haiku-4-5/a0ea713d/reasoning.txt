@@ -1,0 +1,45 @@
+# Reasoning
+
+Analyzing the two provided RL training templates (matrix multiplication and 2D convolution), I identify core performance-critical optimization opportunities for CPU execution on Broadwell-class hardware with AVX2/FMA and NUMA awareness.
+
+## Key Observations
+
+**Template Structure:**
+- Both templates are high-level `linalg.*` operations (matmul, conv_2d_nchw_fchw).
+- They operate on dense tensors with symbolic dimensions ([I], [J], [K] for matmul; [N], [C], [H], [W] for conv).
+- They will eventually be lowered to explicit loop nests via linalg decomposition and subsequent transformations.
+
+**Hardware Constraints (Broadwell):**
+- 28 physical cores across 2 NUMA sockets; cache hierarchy: L1d ~32KB, L2 ~256KB per core, shared L3.
+- SIMD: AVX2 (256-bit), supporting 8 FP32 or 4 FP64 lanes.
+- No SMT; register pressure is a concern with aggressive unrolling/fusion.
+
+**Loop-Nest Perspective:**
+Once lowered, both kernels manifest as regular loop nests with clear loop roles:
+- **Matmul:** three nested loops (I, J, K) forming a contraction over J with output dims (I, K).
+- **Conv:** lowered to implicit loop nests over (N, F, OH, OW, C, KH, KW) with contraction over (C, KH, KW).
+
+Both are **compute-dense** and benefit from:
+1. **Cache-aware tiling** (especially L1/L2 locality for the innermost compute kernel).
+2. **Vectorization** to expose SIMD parallelism (AVX2 width).
+3. **Loop fusion and producer-consumer optimization** to reduce memory traffic.
+4. **Coarse-grain parallelism** to distribute work across cores without oversubscription.
+5. **Data layout and packing** to regularize memory access patterns and enable efficient SIMD.
+
+## Optimization Intents & Transformations
+
+I enumerate three primary optimization intents:
+
+1. **Cache Locality & Memory Efficiency** (HIGH priority)
+   - Addresses the fundamental challenge of compute-dense kernels: driving compute intensity high enough to saturate bandwidth and keep data reuse within fast caches.
+   - Transformations: Tiling, Loop Fusion, Data Packing.
+
+2. **SIMD Vectorization & Instruction-Level Parallelism** (HIGH priority)
+   - Exposes fine-grain parallelism by restructuring loops to align with AVX2 vector lanes.
+   - Transformations: Vectorization, Loop Interchange, Unrolling.
+
+3. **Parallelism & Work Distribution** (MEDIUM priority)
+   - Distributes compute across cores; secondary compared to single-core performance on this hardware, but essential for scaling beyond one core.
+   - Transformations: Loop Parallelization, Workload Distribution.
+
+---

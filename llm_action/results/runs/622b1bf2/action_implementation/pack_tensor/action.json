@@ -1,0 +1,24 @@
+{
+    "name": "pack_tensor",
+    "description": "Transform tensor layout to a cache-friendly blocked format using tensor.pack operation, materializing a temporary contiguous buffer for improved memory access patterns.",
+    "parameters": [
+        {
+            "name": "tensor_name",
+            "description": "The name/index of the tensor operand to pack (e.g., 'arg0' for first argument)",
+            "type": "str",
+            "values": null
+        },
+        {
+            "name": "pack_tile_shape",
+            "description": "Target pack tile shape as list of integers. Length must match tensor rank. Zero dimensions are skipped. Example: [64, 128] for 2D, [8, 32, 32] for 3D.",
+            "type": "list[int]",
+            "values": null
+        },
+        {
+            "name": "outer_dims_perm",
+            "description": "Optional permutation of outer dimensions before packing (for layout restructuring). None means no permutation.",
+            "type": "list[int]",
+            "values": null
+        }
+    ]
+}
