@@ -1,0 +1,24 @@
+{
+    "name": "TransposeTensor",
+    "description": "Transpose a tensor by reordering its dimensions to align iteration and memory access order, improving cache utilization and vectorization efficiency.",
+    "parameters": [
+        {
+            "name": "tensor_operand",
+            "description": "The operand name or index of the tensor to transpose (e.g., 'arg0', 'arg1', or an integer index into function operands).",
+            "type": "str",
+            "values": null
+        },
+        {
+            "name": "permutation",
+            "description": "A list of integers specifying the new dimension order. For example, [1, 0] transposes a 2D matrix, [2, 0, 1, 3] reorders 4D tensor dimensions.",
+            "type": "list[int]",
+            "values": null
+        },
+        {
+            "name": "operation_tag",
+            "description": "A tag to mark the target operation for transformation. Defaults to 'linalg_op'.",
+            "type": "str",
+            "values": null
+        }
+    ]
+}

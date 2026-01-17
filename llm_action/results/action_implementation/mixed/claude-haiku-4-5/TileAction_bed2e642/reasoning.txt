@@ -1,0 +1,50 @@
+# Reasoning
+
+## Analysis of the Task
+
+I am tasked with implementing a **single, reusable RL action** for the **Tiling transformation** under the **Cache Locality & Memory Efficiency optimization intent**.
+
+### Key Observations
+
+1. **Transformation Scope**: The Tiling transformation is a foundational loop optimization that partitions iteration spaces into smaller blocks to improve cache utilization.
+
+2. **Target IR Patterns**:
+   - `linalg.matmul` (3-loop nest: I, J, K)
+   - `linalg.conv_2d_nchw_fchw` (4+ loop nest: N, C, H, W, OH, OW, KH, KW)
+   - After lowering to `scf.for` / `affine.for` loops
+
+3. **Action Parameters**:
+   - The transformation should accept **tiling factors** for applicable loops.
+   - For simplicity and robustness, I will support two parameterization modes:
+     - **tile_sizes**: A vector of tile sizes matching the loop depths (0 = no tiling for that dimension).
+     - **tile_op_name**: The operation to tile (e.g., "matmul", "conv_2d").
+   - Optional: explicit loop indexing if multiple nested operations exist.
+
+4. **Implementation Strategy**:
+   - Use MLIR Transform dialect's `transform.structured.tile_using_for` for structured ops (`linalg.*`).
+   - Fallback to `transform.affine.tile` for affine loops if needed.
+   - Tag the operation in the IR (if not already present) to target it reliably.
+
+5. **Precondition**:
+   - Check for presence of tiling targets (e.g., `linalg.matmul`, `linalg.conv_2d_nchw_fchw`, or affine/scf loop nests).
+   - Ensure tile_sizes has compatible length (or is a scalar for uniform tiling).
+   - Reject tile_sizes that are all zeros (no-op case).
+
+6. **Postcondition**:
+   - Verify that the transformed IR contains loop structures (either tiled loops or the original operation).
+   - Ensure no IR corruption (basic validity check).
+
+7. **Robustness**:
+   - Handle both high-level structured ops and lowered loop forms.
+   - Gracefully handle partial tiling (some dimensions tiled, others not).
+   - Return failure cleanly if preconditions are not met.
+
+### Action Design
+
+I will create a **TileAction** that:
+- Accepts a list of tile sizes (positive integers or 0 for "no tile").
+- Optionally targets a specific operation by name.
+- Uses Transform dialect to apply tiling atomically.
+- Includes robust pre/postconditions.
+
+---

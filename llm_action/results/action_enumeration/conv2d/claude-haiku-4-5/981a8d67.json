@@ -1,0 +1,174 @@
+{
+    "intents": [
+        {
+            "name": "Cache Locality and Data Reuse",
+            "description": "Improve L1/L2 cache hit rates and arithmetic intensity by tiling the convolution loop nest to keep working sets small and reuse data across iterations.",
+            "rationale": "2D convolution exhibits poor temporal and spatial locality due to the 5-dimensional iteration space (N, F, OH, OW, C, KH, KW). Tiling reduces the working set per tile to fit in L1/L2 cache (~32\u2013256 KB per core on Broadwell), dramatically increasing data reuse and reducing memory bandwidth pressure. This is typically the highest-impact optimization for compute-bound convolution kernels.",
+            "priority": "high",
+            "transformations": [
+                {
+                    "name": "Tiling",
+                    "description": "Decompose the convolution loop nest into rectangular tiles along multiple dimensions (e.g., batch, spatial output, output channels, input channels) to improve cache locality.",
+                    "rationale": "Tiling reduces working-set size and enables data to be reused multiple times from L1/L2 caches. Tile sizes must be tuned to hardware cache sizes; typical choices tile output spatial dimensions (OH, OW) to keep intermediate activations in L1d, and tile output channels (F) to respect L2 capacity while maintaining kernel reuse."
+                },
+                {
+                    "name": "Interchange",
+                    "description": "Reorder loop dimensions to improve memory access patterns and increase stride-1 access frequency.",
+                    "rationale": "Convolution memory access patterns depend critically on loop order. Permuting loops (e.g., swapping channel and spatial loops) can convert non-unit-stride accesses into unit-stride, reducing TLB misses and cache line waste. Interchange often precedes and enables effective tiling."
+                },
+                {
+                    "name": "Loop Fusion",
+                    "description": "Fuse adjacent loop nests to reduce redundant memory traffic and improve temporal locality between dependent operations.",
+                    "rationale": "If convolution is followed by element-wise operations (e.g., bias addition, activation), fusing them into a single loop nest avoids writing and re-reading intermediate tensors, reducing memory bandwidth by up to 2\u20134\u00d7."
+                }
+            ]
+        },
+        {
+            "name": "SIMD Vectorization and Register Reuse",
+            "description": "Expose innermost loops to SIMD vectorization (AVX2, 8-lane FP64 / 16-lane FP32) and maximize register reuse within vector operations.",
+            "rationale": "Modern CPUs can execute 8 FP64 or 16 FP32 operations per cycle per core using AVX2. Vectorizing the innermost loops (typically the spatial or channel dimensions) exposes parallelism and increases per-core throughput from scalar ~1 OP/cycle to SIMD ~8\u201316 OPs/cycle. On a 28-core Broadwell, this can yield 10\u201315\u00d7 speedup if memory bandwidth is saturated.",
+            "priority": "high",
+            "transformations": [
+                {
+                    "name": "Vectorization",
+                    "description": "Restructure innermost loops to enable SIMD instruction generation (e.g., ensure unit stride and alignment, expose reduction-friendly patterns).",
+                    "rationale": "Vectorization requires specific loop structures (contiguous, unit-stride memory accesses; simple reduction patterns). Preparing the IR via canonicalization, peeling, and loop distribution often precedes explicit vectorization passes. On Broadwell with AVX2, vectorizing an 8-wide or 4-wide loop for FP64 is essential for reaching peak FP throughput."
+                },
+                {
+                    "name": "Unrolling",
+                    "description": "Unroll innermost loops to increase instruction-level parallelism and reduce loop overhead, enabling better pipelining and register reuse within a single vector operation.",
+                    "rationale": "Moderate unrolling (2\u20134\u00d7) of the innermost loop reduces loop control overhead and exposes more parallelism for OoO execution and vectorization. Over-aggressive unrolling leads to register spills, which is costly on Broadwell with limited registers; tuning is critical."
+                }
+            ]
+        },
+        {
+            "name": "Coarse-Grain Parallelization",
+            "description": "Distribute computation across the 28 cores of the Broadwell CPU via parallel loops on batch, spatial, and channel dimensions.",
+            "rationale": "Without parallelization, the kernel runs on a single core, leaving 27 cores idle. Exposing parallelism over outer loops (N, OH, OW, F) via loop distribution and omp.parallel allows the RL agent to scale linearly with core count (up to 28\u00d7 speedup). NUMA awareness is secondary for smaller workloads but critical for large tensors.",
+            "priority": "high",
+            "transformations": [
+                {
+                    "name": "Loop Distribution and Parallelization",
+                    "description": "Split the convolution loop nest and parallelize coarse-grained loops (batch, spatial output, output channels) using OpenMP or similar mechanisms.",
+                    "rationale": "Convolution's outer loops (N, OH, OW, F) are embarrassingly parallel and exhibit minimal synchronization. Distributing these loops allows the compiler to place them in parallel regions, scaling to all 28 cores with minimal overhead. Careful selection of which loops to parallelize (vs. tile or fuse) is critical for avoiding oversubscription and load imbalance."
+                }
+            ]
+        },
+        {
+            "name": "Memory Layout and Packing",
+            "description": "Transform tensor layouts to dense, cache-aligned formats that improve memory bandwidth utilization and reduce addressing overhead.",
+            "rationale": "The NCHW/FCHW layout is a logical format but often leads to scattered memory access. Packing tensors into blocked or channel-packed layouts (e.g., NCHW \u2192 NCHWc where c is a small pack factor) improves spatial locality and cache line utilization. On Broadwell, 64-byte cache lines favor aligned, contiguous accesses; packing can double memory throughput.",
+            "priority": "medium",
+            "transformations": [
+                {
+                    "name": "Tensor Packing",
+                    "description": "Restructure input and output tensors into cache-aligned, blocked layouts (e.g., tiling the channel dimension with a small factor for dense packing).",
+                    "rationale": "Packing reduces stride and improves cache line efficiency. For convolution, packing the channel dimension or spatial dimensions into small sub-tiles (e.g., 4\u20138 elements) creates dense, aligned memory footprints that fit entire cache lines and reduce address generation overhead."
+                },
+                {
+                    "name": "Layout Transformation",
+                    "description": "Convert between NCHW, NHWC, or other tensor layouts to match kernel memory access patterns and improve vectorization efficiency.",
+                    "rationale": "NHWC (channels-last) layout often improves vectorization by making the channel dimension contiguous in memory. Converting NCHW \u2192 NHWC at the boundary and scheduling the layout change at the appropriate transformation point can significantly improve L1 hit rates and SIMD utilization."
+                }
+            ]
+        },
+        {
+            "name": "Kernel Fusion and Elimination of Intermediate Buffers",
+            "description": "Combine convolution with subsequent operations and eliminate redundant intermediate tensor materialization to reduce memory traffic.",
+            "rationale": "Convolution often appears in chains with bias addition, activation functions, or pooling. Fusing these operations into a single loop nest avoids writing and reading large intermediate tensors (potentially 10\u201320\u00d7 the filter size). On bandwidth-limited systems, this can provide 2\u20134\u00d7 speedup.",
+            "priority": "medium",
+            "transformations": [
+                {
+                    "name": "Fusion",
+                    "description": "Merge the convolution operation with downstream element-wise or reduction operations into a single fused kernel.",
+                    "rationale": "Fusion eliminates intermediate buffer writes/reads. For convolution followed by bias-add, element-wise activation, or reduction (e.g., pooling), fusing the operations into one loop reduces memory traffic by the number of intermediate array passes (typically 2\u20134)."
+                },
+                {
+                    "name": "Dead-Code Elimination and Simplification",
+                    "description": "Remove redundant computations, unused intermediate values, and simplify IR to reduce unnecessary work.",
+                    "rationale": "After tiling and fusion, the IR often contains redundant loop bounds, unused variables, and redundant subexpressions. Simplification reduces code size, improves instruction cache efficiency, and eliminates scalar overhead."
+                }
+            ]
+        },
+        {
+            "name": "Register and Memory Pressure Optimization",
+            "description": "Balance unrolling, tiling, and vectorization to avoid register spills and out-of-core memory traffic on Broadwell's limited register file.",
+            "rationale": "Broadwell has ~16 general-purpose registers and ~16 vector registers per logical thread. Aggressive unrolling or large tile factors can exceed this budget, forcing the compiler to spill to stack memory (L1 miss cost: ~10\u2013100 cycles). Careful tuning of tile sizes and unroll factors keeps working sets in registers.",
+            "priority": "medium",
+            "transformations": [
+                {
+                    "name": "Tile Size Tuning",
+                    "description": "Adjust tile dimensions to balance cache capacity, register pressure, and TLB usage without exceeding register file capacity.",
+                    "rationale": "Tile sizes are critical hyperparameters. Too-large tiles cause register spills; too-small tiles increase loop overhead and reduce arithmetic intensity. On Broadwell, typical tile sizes are 32\u2013256 elements per dimension for the innermost dimensions, tuned to keep scalar and vector register pressure below ~80% utilization."
+                },
+                {
+                    "name": "Loop Peeling",
+                    "description": "Extract and optimize prologue/epilogue code (e.g., partial tiles or boundary conditions) separately to simplify the main loop and reduce control flow overhead.",
+                    "rationale": "Convolution often exhibits irregular boundaries (not all dimensions are perfect multiples of tile sizes). Peeling extracts boundary iterations into separate, optimized code paths, allowing the main loop to assume regular, unrolled structure without conditional branches that inhibit vectorization."
+                }
+            ]
+        },
+        {
+            "name": "Instruction-Level Parallelism and Pipeline Efficiency",
+            "description": "Expose instruction-level parallelism (ILP) through loop unrolling, multi-way decomposition, and minimization of loop-carried dependencies.",
+            "rationale": "Modern out-of-order CPUs can execute multiple independent instructions per cycle (4\u20136 issue width on Broadwell). Exposing ILP via unrolling and dependency breaking (e.g., computing multiple partial sums in parallel) hides memory latency and increases CPU utilization from ~30% (single-threaded, no unrolling) to ~60\u201380% (well-unrolled).",
+            "priority": "medium",
+            "transformations": [
+                {
+                    "name": "Unrolling",
+                    "description": "Unroll loops to expose multiple independent iterations for out-of-order execution and to reduce loop control overhead.",
+                    "rationale": "2\u20134\u00d7 unrolling is typical for convolution inner loops. Unrolling increases the number of independent instructions, allowing the CPU's out-of-order engine to hide memory latency and saturate execution units. Excessive unrolling (>8\u00d7) risks register pressure and instruction cache misses."
+                },
+                {
+                    "name": "Loop Jamming",
+                    "description": "Combine multiple loops into a single, larger loop to reduce loop overhead and increase opportunities for scalar/vector register reuse.",
+                    "rationale": "If two or more adjacent loops have the same bounds or compatible bounds, jamming (fusion) them reduces the number of loop control instructions and allows multi-iteration reuse of data in registers. This is especially beneficial after tiling, where jamming outer tile loops reduces overhead."
+                }
+            ]
+        },
+        {
+            "name": "Special Kernel Decompositions and Lowering Strategies",
+            "description": "Apply domain-specific transformations such as im2col, Winograd-style decompositions, or other specialized convolution lowering strategies.",
+            "rationale": "Standard loop nests for convolution have redundant computations and poor cache behavior due to the indirection of kernel access. Specialized lowering strategies (e.g., im2col, which reshapes the convolution into a matrix multiplication; or Winograd, which reduces FLOPs but increases memory traffic for small kernels) can provide 2\u201310\u00d7 speedup depending on kernel size and shape.",
+            "priority": "low",
+            "transformations": [
+                {
+                    "name": "Im2Col Transformation",
+                    "description": "Reshape the convolution into a matrix multiplication by expanding the image into a column matrix, enabling use of highly optimized GEMM libraries.",
+                    "rationale": "Im2col converts 2D convolution into a matrix multiplication, which can leverage hand-tuned GEMM kernels (e.g., BLAS) that are highly optimized for Broadwell. Overhead: extra memory for the im2col matrix. Benefit: 2\u20134\u00d7 speedup for large kernels due to superior GEMM optimization and memory layout."
+                },
+                {
+                    "name": "Kernel Decomposition",
+                    "description": "Decompose large or complex kernels (e.g., dilated, strided convolutions) into sequences of simpler operations (e.g., standard convolution + pooling) for independent optimization.",
+                    "rationale": "Dilated or strided convolutions have inefficient inner loops with variable strides or gaps. Decomposing them into simpler building blocks (e.g., standard unit-stride convolution) can expose more optimization opportunities, though at the cost of potential intermediate buffer materialization."
+                }
+            ]
+        },
+        {
+            "name": "Reduction and Accumulation Optimization",
+            "description": "Optimize the accumulation pattern in convolution (the innermost reduction over the channel and kernel spatial dimensions) to maximize parallelism and reduce synchronization.",
+            "rationale": "Convolution's innermost loop is a reduction over C \u00d7 KH \u00d7 KW. This reduction is a potential bottleneck due to loop-carried dependencies. Restructuring the reduction (e.g., partial-sum decomposition, horizontal SIMD reductions) can expose more parallelism and reduce latency hiding requirements.",
+            "priority": "low",
+            "transformations": [
+                {
+                    "name": "Reduction Decomposition",
+                    "description": "Split the innermost reduction into multiple independent partial reductions (e.g., over different groups of channels) that can be summed later.",
+                    "rationale": "The innermost reduction has a loop-carried dependency: each iteration depends on the previous accumulator value. Splitting it into independent partial reductions (e.g., sum 4 channels independently, then combine) reduces dependency length and exposes more parallelism for out-of-order execution."
+                }
+            ]
+        },
+        {
+            "name": "Prefetching and Memory Access Scheduling",
+            "description": "Insert explicit prefetch hints and reorder memory access patterns to hide latency and improve memory bandwidth utilization.",
+            "rationale": "Modern CPUs have hardware prefetchers, but they struggle with the complex, multi-dimensional access patterns of convolution. Explicit software prefetching (loading future data into L1/L2 in advance) can hide memory latency and improve sustained memory bandwidth by 20\u201330%. This is most effective after tiling and locality-improving transformations.",
+            "priority": "low",
+            "transformations": [
+                {
+                    "name": "Prefetching",
+                    "description": "Insert prefetch hints into the inner loops to load upcoming data into L1/L2 caches in advance of use.",
+                    "rationale": "Prefetching with a distance of 4\u20138 iterations hides the ~12-cycle L3\u2192L1 latency on Broadwell, improving sustained memory throughput. Effective prefetching requires stable memory access patterns, typically achieved after tiling and canonicalization."
+                }
+            ]
+        }
+    ]
+}

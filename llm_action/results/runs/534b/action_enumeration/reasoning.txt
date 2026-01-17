@@ -1,0 +1,39 @@
+# Reasoning
+
+Analyzing the provided MLIR templates, I observe three distinct kernels:
+1. **Matrix multiplication** (`linalg.matmul`): A 2D contraction with parallelism across output dimensions and reduction along the inner dimension.
+2. **2D Convolution** (`linalg.conv_2d_nchw_fchw`): A structured convolution kernel with implicit loop nests over spatial, channel, and filter dimensions.
+3. **Generic linalg operation**: An element-wise operation with 5 parallel dimensions, representative of broader tensor operations.
+
+All kernels are compute-intensive, loop-nest dominated, and will be deployed on **Intel Xeon Broadwell-class CPU** (28 cores, 2 NUMA nodes, AVX2 + FMA, no AVX-512, L1d ~32KB per core).
+
+## Performance Optimization Priorities for This Hardware
+
+For Broadwell CPUs executing regular loop nests, the hierarchy of impactful transformations is:
+
+1. **Cache Locality & Tiling** (HIGH): Loop nests typically exceed L1/L2 working sets. Multi-level tiling is essential to maximize cache reuse and minimize memory bandwidth pressure.
+
+2. **SIMD Vectorization** (HIGH): AVX2 can deliver 4–8× throughput per core if iteration spaces are properly exposed and regularized. Vectorization is critical for dense, regular kernels.
+
+3. **Parallelization & Work Distribution** (HIGH): With 28 physical cores across 2 NUMA domains, exploiting coarse-grain parallelism over outer loop bands is mandatory. Careful distribution avoids oversubscription and respects NUMA boundaries.
+
+4. **Data Layout & Memory Access Regularization** (MEDIUM): Strided, irregular, or cache-hostile access patterns can cause L1/L2 misses and TLB pressure. Layout transforms (packing, transposition) and iteration-space restructuring reduce these costs.
+
+5. **Loop Fusion & Materialization Control** (MEDIUM): Fusing producers and consumers reduces temporary buffer allocation and memory traffic; however, aggressive fusion can increase register pressure. Selective fusion is a tuning knob.
+
+6. **Loop Unrolling & Jamming** (LOW): Limited benefit on modern out-of-order cores unless combined with other transformations; can increase code size and register pressure.
+
+## Transformation Enumeration Strategy
+
+I will enumerate transformations as **macro RL actions** that:
+- Are reusable across kernels (loop-nest agnostic).
+- Can be parameterized (Layer 2 handles specifics).
+- Operate on the implicit or explicit loop structure.
+- Are grain-appropriate for RL decision-making.
+
+I will avoid:
+- Kernel-specific variants (e.g., "tile matmul K-dimension" vs. "tile matmul I-dimension").
+- Implementation details, legality checks, or parameter ranges.
+- Compound actions that bundle logically independent transformations.
+
+---

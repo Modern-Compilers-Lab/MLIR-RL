@@ -1,0 +1,12 @@
+{
+    "name": "CacheAwareDataLayout",
+    "description": "Restructure tensors through cache-aware tiling to improve cache locality and reduce memory bandwidth pressure",
+    "parameters": [
+        {
+            "name": "tile_sizes",
+            "description": "List of cache-friendly tile sizes for each tiled dimension. Typical values: 8-64 depending on cache size and data type.",
+            "type": "list[int]",
+            "values": null
+        }
+    ]
+}

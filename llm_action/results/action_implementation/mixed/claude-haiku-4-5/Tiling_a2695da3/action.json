@@ -1,0 +1,12 @@
+{
+    "name": "Tiling",
+    "description": "Partition loop nests into smaller rectangular blocks to fit intermediate results in L1/L2 cache, enabling cache-efficient computation of matmul, convolution, and other structured loop nests.",
+    "parameters": [
+        {
+            "name": "tile_sizes",
+            "description": "A list of positive integers or zeros representing the tile size for each loop dimension. Zero means no tiling for that dimension. Example: [8, 16, 4] tiles the first three loops with sizes 8, 16, and 4 respectively.",
+            "type": "list[int]",
+            "values": null
+        }
+    ]
+}

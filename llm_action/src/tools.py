@@ -2,6 +2,9 @@ from llm_action.src.utils.transformation import transform_bufferize_and_lower_v,
 
 from agno.tools import tool
 
+from llm_action.src.utils.log import logger
+from llm_action.src.config import TOOL_VERBOSE
+
 @tool(
     name="measure_speedup",
     description="""
@@ -27,7 +30,14 @@ from agno.tools import tool
     stop_after_tool_call=False
 )
 def measure_speedup(base_execution_time: float, execution_time: float) -> float:
-    return base_execution_time / execution_time
+    if TOOL_VERBOSE:
+        logger.info("[TOOL] Executing `measure_speedup`")
+        logger.info(f"[TOOL PARAM] Base Execution Time (ns): {base_execution_time}")
+        logger.info(f"[TOOL PARAM] Transformed Execution Time (ns): {execution_time}")
+    speedup = base_execution_time / execution_time
+    if TOOL_VERBOSE:
+        logger.info(f"[TOOL RESULT] Speedup: {speedup}")
+    return speedup
 
 @tool(
     name="transform_code",
@@ -54,7 +64,14 @@ def measure_speedup(base_execution_time: float, execution_time: float) -> float:
     stop_after_tool_call=False
 )
 def transform_code(code: str, transformation_code: str) -> str:
-    return run_transform_code(code, transformation_code)
+    if TOOL_VERBOSE:
+        logger.info("[TOOL] Executing `transform_code`")
+        logger.info(f"[TOOL PARAM] Base Code:\n{code}")
+        logger.info(f"[TOOL PARAM] Transformation Code:\n{transformation_code}")
+    transformed_code = run_transform_code(code, transformation_code)
+    if TOOL_VERBOSE:
+        logger.info(f"[TOOL RESULT] Updated Code:\n{transformed_code}")
+    return transformed_code
 
 @tool(
     name="execute_code",
@@ -96,8 +113,12 @@ def execute_code(code: str) -> tuple[int, bool]:
     Returns:
         tuple[int, bool]: (execution time in nanoseconds, assertion result)
     """
-
+    if TOOL_VERBOSE:
+        logger.info("[TOOL] Executing `execute_code`")
+        logger.info(f"[TOOL PARAM] Code:\n{code}")
     bufferized_code = transform_bufferize_and_lower_v(code)
     real_exec_time, success = execute_bufferized_code(bufferized_code)
+    if TOOL_VERBOSE:
+        logger.info(f"[TOOL RESULT] Execution Time (ns): {real_exec_time}")
+        logger.info(f"[TOOL RESULT] Assertion Success: {success}")
     return real_exec_time, success
-

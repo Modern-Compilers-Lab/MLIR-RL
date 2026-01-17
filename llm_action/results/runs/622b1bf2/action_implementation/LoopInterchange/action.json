@@ -1,0 +1,18 @@
+{
+    "name": "LoopInterchange",
+    "description": "Reorder nested loops to improve memory access patterns and cache locality by transforming strided accesses into unit-stride patterns.",
+    "parameters": [
+        {
+            "name": "loop_band",
+            "description": "Tag or name identifying the loop band (set of consecutive loops) to interchange. For linalg operations, typically the outermost parallel or sequential loop nest.",
+            "type": "str",
+            "values": null
+        },
+        {
+            "name": "permutation",
+            "description": "List of integers representing the new loop order. For example, [0, 1, 2] is identity; [1, 0, 2] swaps the first two loops. Length must equal the number of loops in the band.",
+            "type": "list[int]",
+            "values": null
+        }
+    ]
+}

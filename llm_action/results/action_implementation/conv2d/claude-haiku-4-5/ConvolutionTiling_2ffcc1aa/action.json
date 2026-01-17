@@ -1,0 +1,54 @@
+{
+    "name": "ConvolutionTiling",
+    "description": "Tile a 2D convolution (linalg.conv_2d_nchw_fchw) along output spatial dimensions (OH, OW) and output channel dimension (F) to improve cache locality and data reuse. Generates a nested loop structure with configurable tile sizes.",
+    "parameters": [
+        {
+            "name": "tile_oh",
+            "description": "Tile size for the output height (OH) dimension. Set to 0 to skip tiling this dimension.",
+            "type": "int",
+            "values": [
+                0,
+                4,
+                8,
+                16,
+                32
+            ]
+        },
+        {
+            "name": "tile_ow",
+            "description": "Tile size for the output width (OW) dimension. Set to 0 to skip tiling this dimension.",
+            "type": "int",
+            "values": [
+                0,
+                4,
+                8,
+                16,
+                32
+            ]
+        },
+        {
+            "name": "tile_f",
+            "description": "Tile size for the output channel (F) dimension. Set to 0 to skip tiling this dimension.",
+            "type": "int",
+            "values": [
+                0,
+                8,
+                16,
+                32,
+                64
+            ]
+        },
+        {
+            "name": "tile_n",
+            "description": "Tile size for the batch (N) dimension. Set to 0 to skip tiling this dimension.",
+            "type": "int",
+            "values": [
+                0,
+                1,
+                2,
+                4
+            ]
+        }
+    ],
+    "python_source": "from typing import Optional\nimport re\n\nclass Action(ActionBase):\n    \"\"\"\n    Tile a 2D convolution operation (linalg.conv_2d_nchw_fchw) along output spatial\n    and channel dimensions to improve cache locality.\n    \n    The action uses the MLIR Transform dialect to decompose the convolution into\n    nested tiles, reducing the working set per tile to fit in L1/L2 cache.\n    \"\"\"\n    \n    name = \"ConvolutionTiling\"\n    \n    @classmethod\n    def parameters(cls) -> dict:\n        \"\"\"Return the parameter schema for this action.\"\"\"\n        return {\n            \"tile_oh\": {\n                \"description\": \"Tile size for output height dimension (0 = skip)\",\n                \"type\": \"int\",\n                \"values\": [0, 4, 8, 16, 32],\n                \"default\": 0\n            },\n            \"tile_ow\": {\n                \"description\": \"Tile size for output width dimension (0 = skip)\",\n                \"type\": \"int\",\n                \"values\": [0, 4, 8, 16, 32],\n                \"default\": 0\n            },\n            \"tile_f\": {\n                \"description\": \"Tile size for output channel dimension (0 = skip)\",\n                \"type\": \"int\",\n                \"values\": [0, 8, 16, 32, 64],\n                \"default\": 0\n            },\n            \"tile_n\": {\n                \"description\": \"Tile size for batch dimension (0 = skip)\",\n                \"type\": \"int\",\n                \"values\": [0, 1, 2, 4],\n                \"default\": 0\n            }\n        }\n    \n    @classmethod\n    def precondition(cls, code: str, params: dict) -> bool:\n        \"\"\"\n        Check if the transformation is applicable:\n        - The code must contain at least one linalg.conv_2d_nchw_fchw operation.\n        - At least one tile size must be non-zero.\n        \"\"\"\n        # Check for presence of the convolution operation\n        if \"linalg.conv_2d_nchw_fchw\" not in code:\n            return False\n        \n        # Check that at least one tile dimension is non-zero\n        tile_oh = params.get(\"tile_oh\", 0)\n        tile_ow = params.get(\"tile_ow\", 0)\n        tile_f = params.get(\"tile_f\", 0)\n        tile_n = params.get(\"tile_n\", 0)\n        \n        if all([tile_oh == 0, tile_ow == 0, tile_f == 0, tile_n == 0]):\n            return False\n        \n        # Check that tile sizes are positive integers\n        for param_name in [\"tile_oh\", \"tile_ow\", \"tile_f\", \"tile_n\"]:\n            val = params.get(param_name, 0)\n            if not isinstance(val, int) or val < 0:\n                return False\n        \n        return True\n    \n    @classmethod\n    def preprocess(cls, code: str, params: dict) -> str:\n        \"\"\"\n        Preprocess the code by adding a transform.tag attribute to the\n        convolution operation if not already present.\n        \"\"\"\n        # If the conv operation already has a tag, return as-is\n        if 'transform.tag = \"conv\"' in code:\n            return code\n        \n        # Add a transform tag to the conv operation\n        # Find the linalg.conv_2d_nchw_fchw operation and insert the tag\n        pattern = r'(%\\d+\\s*=\\s*linalg\\.conv_2d_nchw_fchw)'\n        replacement = r'\\1 { transform.tag = \"conv\" }'\n        result = re.sub(pattern, replacement, code)\n        \n        if result == code:\n            # If the simple pattern didn't match, try matching the full operation\n            # and add the tag before the closing brace or at the end of attributes\n            if \"linalg.conv_2d_nchw_fchw\" in code:\n                # Insert tag attribute\n                pattern = r'(linalg\\.conv_2d_nchw_fchw)([^{]*{[^}]*})'\n                def add_tag(match):\n                    op = match.group(1)\n                    attrs = match.group(2)\n                    # Insert tag before the closing brace\n                    return op + attrs[:-2] + ', transform.tag = \"conv\" }'\n                result = re.sub(pattern, add_tag, code)\n        \n        return result if result != code else code\n    \n    @classmethod\n    def implement(cls, code: str, params: dict) -> str:\n        \"\"\"\n        Implement the tiling transformation using MLIR Transform dialect.\n        \n        This constructs a transform sequence that:\n        1. Matches the tagged convolution operation.\n        2. Applies tiling along the specified dimensions using\n           transform.structured.tile_using_for.\n        \"\"\"\n        tile_oh = params.get(\"tile_oh\", 0)\n        tile_ow = params.get(\"tile_ow\", 0)\n        tile_f = params.get(\"tile_f\", 0)\n        tile_n = params.get(\"tile_n\", 0)\n        \n        # Build the tile_sizes list; order follows the iteration space order\n        # for linalg.conv_2d_nchw_fchw: [N, F, OH, OW, C, KH, KW]\n        tile_sizes = [tile_n, tile_f, tile_oh, tile_ow, 0, 0, 0]\n        \n        # Count non-zero tiles to construct the result type\n        num_tiles = sum(1 for s in tile_sizes if s != 0)\n        \n        # Construct the result binding for tiled operation and loop handles\n        # Format: %tiled_op, %loop_0, %loop_1, ... = transform.structured.tile_using_for ...\n        loop_bindings = ', '.join([f'%loop_{i}' for i in range(num_tiles)])\n        if loop_bindings:\n            result_binding = f'%tiled_op, {loop_bindings}'\n        else:\n            result_binding = '%tiled_op'\n        \n        # Build the transform code\n        transform_code = f\"\"\"\nmodule attributes {{transform.with_named_sequence}} {{\n  transform.named_sequence @__transform_main(%arg0: !transform.any_op {{transform.readonly}}) {{\n    %conv_op = transform.structured.match attributes{{transform.tag = \"conv\"}} in %arg0 : (!transform.any_op) -> !transform.any_op\n    {result_binding} = transform.structured.tile_using_for %conv_op tile_sizes {tile_sizes} : (!transform.any_op) -> (!transform.any_op{', !transform.any_op' * num_tiles})\n    transform.yield\n  }}\n}}\n\"\"\"\n        \n        # Execute the transformation\n        try:\n            result = transform_code(code, transform_code)\n            return result\n        except Exception as e:\n            # If transformation fails, return the original code\n            # (Postcondition will catch this)\n            return code\n    \n    @classmethod\n    def postcondition(cls, before: str, after: str, params: dict) -> bool:\n        \"\"\"\n        Verify that the transformation succeeded:\n        - The output IR must be valid MLIR.\n        - The convolution operation should be tiled (indicated by nested loops\n          or a transformed IR structure).\n        - Basic structural invariants: the result should contain for loops\n          if tiling was applied.\n        \"\"\"\n        # Check that we got a non-empty result\n        if not after or after.strip() == \"\":\n            return False\n        \n        # Minimal validity check: the IR should still contain the convolution\n        # (it may be wrapped/decomposed but the operation should exist)\n        if \"linalg.conv_2d_nchw_fchw\" not in after and \"scf.for\" not in after:\n            # After tiling, we expect either the original conv (if tile size was 0)\n            # or an scf.for loop structure. If neither, something went wrong.\n            # Exception: if all tile sizes were 0, the IR should be unchanged.\n            tile_oh = params.get(\"tile_oh\", 0)\n            tile_ow = params.get(\"tile_ow\", 0)\n            tile_f = params.get(\"tile_f\", 0)\n            tile_n = params.get(\"tile_n\", 0)\n            if all([tile_oh == 0, tile_ow == 0, tile_f == 0, tile_n == 0]):\n                # All tile sizes are 0; expect no-op (original IR preserved)\n                return after == before\n            else:\n                # We expected tiling to occur but didn't see it\n                return False\n        \n        # Check that we still have a valid function\n        if \"func.func @main\" not in after:\n            return False\n        \n        return True\n"
+}

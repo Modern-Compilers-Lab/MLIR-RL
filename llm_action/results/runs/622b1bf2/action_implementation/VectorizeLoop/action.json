@@ -1,0 +1,23 @@
+{
+    "name": "VectorizeLoop",
+    "description": "Transform scalar loop into vector operations using SIMD instructions (AVX2), with proper handling of loop remainder.",
+    "parameters": [
+        {
+            "name": "target_loop_tag",
+            "description": "Tag identifying the target loop operation to vectorize (e.g., 'innermost_loop', 'reduction_loop'). Used to match the operation in the transform dialect.",
+            "type": "str",
+            "values": null
+        },
+        {
+            "name": "vector_width",
+            "description": "SIMD vector width in elements. For AVX2: use 8 for FP32, 4 for FP64. Must be a positive power of 2.",
+            "type": "int",
+            "values": [
+                2,
+                4,
+                8,
+                16
+            ]
+        }
+    ]
+}

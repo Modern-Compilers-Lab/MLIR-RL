@@ -1,0 +1,28 @@
+{
+    "name": "fusion_producer_consumer",
+    "description": "Fuse producer-consumer linalg operations to eliminate intermediate tensor materialization and improve cache locality.",
+    "parameters": [
+        {
+            "name": "producer_tag",
+            "description": "Tag name of the producer operation (e.g., 'conv', 'matmul'). If empty, auto-detect first linalg operation.",
+            "type": "str",
+            "values": null
+        },
+        {
+            "name": "consumer_tag",
+            "description": "Tag name of the consumer operation. If empty, auto-detect operation consuming producer's output.",
+            "type": "str",
+            "values": null
+        },
+        {
+            "name": "fusion_strategy",
+            "description": "Fusion strategy: 'auto' (let MLIR decide), 'loop' (fuse into loops), 'producer' (fuse into producer).",
+            "type": "str",
+            "values": [
+                "auto",
+                "loop",
+                "producer"
+            ]
+        }
+    ]
+}

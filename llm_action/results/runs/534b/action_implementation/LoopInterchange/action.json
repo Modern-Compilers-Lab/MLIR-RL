@@ -1,0 +1,18 @@
+{
+    "name": "LoopInterchange",
+    "description": "Permute the order of loops in a structured operation to improve memory access patterns and enable downstream optimizations.",
+    "parameters": [
+        {
+            "name": "loop_indices",
+            "description": "A list of integers specifying the new loop order (0-indexed permutation). For example, [1, 0, 2] swaps the first two loops.",
+            "type": "list[int]",
+            "values": null
+        },
+        {
+            "name": "tile_sizes",
+            "description": "Optional tile sizes for each loop. If empty, defaults to all 1s (minimal tiling to expose loops without changing iteration count).",
+            "type": "list[int]",
+            "values": null
+        }
+    ]
+}

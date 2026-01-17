@@ -1,4 +1,4 @@
-# 2051 Tokens
+# 2734 Tokens
 
 def get_system_purpose() -> str:
     return f"""## 1. Purpose of the System
@@ -34,7 +34,7 @@ Responsibility:
 Key Properties:
 - Does **not** write MLIR Transform dialect code.
 - Does **not** think in terms of implementation or debugging.
-- Operates at the level of *what transformations exist*, *why they help*, and *when they apply*.
+- Operates at the level of *what transformations exist* and *why they help*.
 
 Output Artifact:
 - A structured metadata containing:
@@ -189,6 +189,55 @@ def get_system_targets_and_assumptions() -> str:
 - When uncertain, prefer robust, general-purpose CPU optimizations over fragile, microarchitecture-specific tricks.
 """
 
+def get_system_action_implementation_snapshot() -> str:
+    return """## 7. Action Implementation Snapshot (Illustrative Example)
+
+This section provides a **non-normative** example to clarify what the system means by an "action" in practice.
+It is included to align all agents on the intended abstraction:
+- **Layer 1** proposes *what* transformations exist (ideas only).
+- **Layer 2** turns a transformation idea into a **parameterized executable action** (Python + MLIR Transform dialect).
+- **Layer 3** validates that actions compose and execute robustly in sequences.
+
+### What an Action Typically Looks Like (Conceptual)
+In our current implementation, an action is commonly represented as a **parameterized Python function** that:
+1. receives the current MLIR payload IR as text,
+2. performs lightweight parameter handling / preprocessing (if needed),
+3. constructs a parameterized MLIR Transform dialect snippet (template injection),
+4. executes it using an internal runner (e.g., `__run_transform_code`),
+5. returns the transformed MLIR payload IR (or a classified no-op / failure).
+
+### Example: Parameterized Tiling Action (Illustrative)
+```python
+def transform_tile(code: str, operation_tag: str, tiling_sizes: list[int]):
+    # If tiling sizes are all zeros, treat as no-op
+    if all([a == 0 for a in tiling_sizes]):
+        return code
+
+    n_loops = sum([s != 0 for s in tiling_sizes])
+    r = ', '.join(['!transform.any_op'] * n_loops)
+    assert n_loops > 0, "No loops to tile"
+
+    transform_code = (
+        f'\\nmodule attributes {{transform.with_named_sequence}} {{\\n'
+        f'  transform.named_sequence @__transform_main(%arg1: !transform.any_op {{transform.readonly}}) {{\\n'
+        f'    %op_{operation_tag} = transform.structured.match attributes{{tag = "{operation_tag}"}} in %arg1'
+        f' : (!transform.any_op) -> !transform.any_op\\n'
+        f'    %tiled_op_{operation_tag}, %loops:{n_loops} = transform.structured.tile_using_for %op_{operation_tag}'
+        f' tile_sizes {str(tiling_sizes)} : (!transform.any_op) -> (!transform.any_op, {r})\\n'
+        f'    transform.yield\\n'
+        f'  }}\\n'
+        f'}}\\n'
+    )
+
+    return __run_transform_code(code, transform_code)
+
+Important Notes (for all agents)
+The example above is illustrative, not a strict requirement; it conveys the current direction:
+- actions are parameterized,
+- implementable as executable units,
+- and expressed through MLIR Transform dialect where applicable.
+"""
+
 def get_system_description_prompt() -> str:
     return f"""# Global System Description — MLIR-RL Automatic Action Synthesis Framework
 
@@ -197,7 +246,8 @@ def get_system_description_prompt() -> str:
 {get_system_design_principles()}
 {get_system_relation_rl()}
 {get_system_expected_behavior()}
-{get_system_targets_and_assumptions()}"""
+{get_system_targets_and_assumptions()}
+{get_system_action_implementation_snapshot()}"""
 
 if __name__ == "__main__":
     print(get_system_description_prompt())

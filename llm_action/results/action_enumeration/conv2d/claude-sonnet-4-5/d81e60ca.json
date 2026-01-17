@@ -1,0 +1,214 @@
+{
+    "intents": [
+        {
+            "name": "Cache Locality and Memory Hierarchy Optimization",
+            "description": "Improve data reuse across cache levels by blocking computation into cache-friendly tiles, reducing memory traffic and improving temporal locality.",
+            "rationale": "Convolution has high data reuse potential (input spatial region reused across filters, filters reused across batch/spatial). Tiling is essential on CPUs with hierarchical caches (L1/L2/L3) to minimize cache misses and maximize effective bandwidth.",
+            "priority": "high",
+            "transformations": [
+                {
+                    "name": "Tiling",
+                    "description": "Partition loop iteration spaces into smaller blocks that fit in target cache levels.",
+                    "rationale": "Core technique for cache locality; enables tuning tile sizes per cache level (L1/L2) and workload shape to maximize reuse and minimize capacity misses."
+                },
+                {
+                    "name": "Interchange",
+                    "description": "Reorder loops to change iteration order and data access patterns.",
+                    "rationale": "Affects which dimensions exhibit spatial/temporal locality; can expose vectorization opportunities or improve cache line utilization by changing stride patterns."
+                },
+                {
+                    "name": "Packing",
+                    "description": "Explicitly copy and layout-transform data into contiguous scratch buffers optimized for access patterns.",
+                    "rationale": "Eliminates strided accesses and improves cache line utilization; critical for input/filter tensors in convolution when natural layout leads to poor spatial locality."
+                }
+            ]
+        },
+        {
+            "name": "SIMD Vectorization and Instruction-Level Parallelism",
+            "description": "Expose and exploit vector parallelism using AVX2 SIMD instructions to process multiple data elements per instruction.",
+            "rationale": "Target CPU has AVX2 (256-bit, 4xFP64 or 8xFP32 lanes). Vectorization is mandatory for compute efficiency; convolution's innermost reductions and spatial loops are naturally vectorizable if properly structured.",
+            "priority": "high",
+            "transformations": [
+                {
+                    "name": "Vectorization",
+                    "description": "Transform scalar loops into vector operations mapping to SIMD instructions.",
+                    "rationale": "Directly exploits hardware vector units; essential for achieving peak FLOPS on modern CPUs; requires contiguous memory access and proper alignment."
+                },
+                {
+                    "name": "Unrolling",
+                    "description": "Replicate loop bodies to expose instruction-level parallelism and reduce loop overhead.",
+                    "rationale": "Increases instruction window for out-of-order execution; can improve pipelining and enable better software pipelining; must balance against register pressure."
+                },
+                {
+                    "name": "Peeling",
+                    "description": "Split off initial or final loop iterations to enable cleaner vectorization of the main loop body.",
+                    "rationale": "Handles boundary conditions and alignment requirements separately, allowing the bulk of iterations to be vectorized without predication or masking overhead."
+                }
+            ]
+        },
+        {
+            "name": "Thread-Level Parallelism and NUMA Awareness",
+            "description": "Distribute work across multiple CPU cores while respecting NUMA topology to exploit coarse-grain parallelism.",
+            "rationale": "Target system has 28 cores across 2 NUMA nodes. Convolution's batch and output channel dimensions are embarrassingly parallel; effective parallelization is critical for multi-core scaling.",
+            "priority": "high",
+            "transformations": [
+                {
+                    "name": "Parallelization",
+                    "description": "Distribute loop iterations across threads using parallel execution primitives.",
+                    "rationale": "Exploits multi-core hardware; convolution naturally parallelizes over batch and filter dimensions with minimal synchronization overhead."
+                },
+                {
+                    "name": "Distribution",
+                    "description": "Partition data and computation across NUMA nodes or hierarchical thread groups.",
+                    "rationale": "Improves memory bandwidth and reduces remote memory access latency on multi-socket systems; critical for large tensors spanning multiple NUMA domains."
+                }
+            ]
+        },
+        {
+            "name": "Computation Fusion and Operator Decomposition",
+            "description": "Merge or split operations to reduce memory traffic, eliminate intermediate buffers, or expose optimization opportunities.",
+            "rationale": "Convolution may be preceded/followed by bias addition, activation functions, or other element-wise ops. Fusing these eliminates store-load round-trips; decomposition can enable specialized optimization paths.",
+            "priority": "medium",
+            "transformations": [
+                {
+                    "name": "Fusion",
+                    "description": "Combine producer-consumer operations into a single fused kernel sharing loop nests.",
+                    "rationale": "Eliminates intermediate memory allocation and traffic; improves cache locality by keeping data hot; especially valuable for element-wise ops chained with convolution."
+                },
+                {
+                    "name": "Decomposition",
+                    "description": "Break down complex operations into simpler primitives that may be easier to optimize or map to specialized instructions.",
+                    "rationale": "Enables targeting of specific microarchitectural features or library primitives; can expose further fusion or transformation opportunities."
+                }
+            ]
+        },
+        {
+            "name": "Algebraic and Algorithmic Restructuring",
+            "description": "Apply mathematically equivalent transformations that change computation order or representation to improve efficiency.",
+            "rationale": "Convolution admits multiple algorithmic formulations (direct, im2col+gemm, Winograd, FFT-based). Restructuring can better match hardware capabilities or enable library reuse.",
+            "priority": "medium",
+            "transformations": [
+                {
+                    "name": "Im2Col Transformation",
+                    "description": "Lower convolution to matrix multiplication by explicitly unrolling spatial windows into columns.",
+                    "rationale": "Converts convolution into GEMM, enabling reuse of highly optimized BLAS libraries; trades memory for compute efficiency and simplicity; effective for small kernels."
+                },
+                {
+                    "name": "Reduction Decomposition",
+                    "description": "Split multi-dimensional reductions into sequences of simpler reductions or change accumulation order.",
+                    "rationale": "Can improve numerical stability, enable better vectorization, or expose parallelism in reduction dimensions; may reduce register pressure."
+                },
+                {
+                    "name": "Loop Invariant Code Motion",
+                    "description": "Move computations that do not depend on inner loop variables outside those loops.",
+                    "rationale": "Reduces redundant computation; improves instruction scheduling; can enable better register allocation for hoisted values."
+                }
+            ]
+        },
+        {
+            "name": "Memory Layout and Data Format Transformation",
+            "description": "Change the physical layout or format of tensors in memory to match optimal access patterns for target operations.",
+            "rationale": "NCHW layout may not be optimal for cache or SIMD access patterns; layout transformation can eliminate strided accesses and improve vectorization-friendliness.",
+            "priority": "medium",
+            "transformations": [
+                {
+                    "name": "Layout Transformation",
+                    "description": "Convert tensor data layouts between formats such as NCHW, NHWC, blocked/tiled layouts, or custom formats.",
+                    "rationale": "Optimizes spatial locality and access stride for target hardware; blocked layouts can improve cache efficiency; certain formats enable better vectorization."
+                },
+                {
+                    "name": "Padding and Alignment",
+                    "description": "Insert padding to align data structures to cache line or vector register boundaries.",
+                    "rationale": "Eliminates unaligned memory accesses and cache line splits; ensures vector loads/stores are efficient; can prevent false sharing in parallel code."
+                }
+            ]
+        },
+        {
+            "name": "Bufferization and Intermediate Materialization Control",
+            "description": "Control where and how intermediate results are materialized, balancing memory footprint against recomputation.",
+            "rationale": "Convolution generates large intermediate activations; deciding what to buffer versus recompute affects memory bandwidth and cache pressure; critical in memory-constrained scenarios.",
+            "priority": "medium",
+            "transformations": [
+                {
+                    "name": "Bufferization Strategy",
+                    "description": "Specify policies for when to allocate buffers for intermediate tensor values versus keeping them in registers or recomputing.",
+                    "rationale": "Manages register pressure and memory traffic trade-offs; in-place updates can reduce allocation overhead; important for controlling peak memory usage."
+                },
+                {
+                    "name": "Scratch Allocation Optimization",
+                    "description": "Optimize allocation and reuse of temporary buffers for packed data or intermediate tiles.",
+                    "rationale": "Reduces dynamic allocation overhead; improves cache residency of scratch data; enables stack allocation for small tiles; can prevent heap fragmentation."
+                }
+            ]
+        },
+        {
+            "name": "Loop Transformation for Instruction Scheduling",
+            "description": "Restructure loops to improve instruction pipelining, hide latencies, and maximize instruction throughput.",
+            "rationale": "Modern CPUs rely on deep pipelines and out-of-order execution; loop transformations can increase independent instruction streams and improve instruction-level parallelism beyond vectorization.",
+            "priority": "low",
+            "transformations": [
+                {
+                    "name": "Loop Jamming",
+                    "description": "Merge adjacent loops into a single loop body to increase instruction count per iteration and reduce loop overhead.",
+                    "rationale": "Expands loop bodies, giving schedulers more instructions to reorder; can hide latencies; reduces branch misprediction penalties by decreasing loop count."
+                },
+                {
+                    "name": "Loop Skewing",
+                    "description": "Transform loop bounds to change dependence patterns and enable better parallelization or pipelining.",
+                    "rationale": "Breaks certain loop-carried dependencies or enables wavefront parallelism; can improve cache reuse in specific access patterns."
+                },
+                {
+                    "name": "Strip Mining",
+                    "description": "Split a loop into an outer loop over strips and an inner loop over elements within each strip.",
+                    "rationale": "Provides explicit control over iteration chunk sizes; useful for register blocking or matching instruction queue depth; precursor to tiling."
+                }
+            ]
+        },
+        {
+            "name": "Specialization and Predication Elimination",
+            "description": "Generate specialized code paths for common cases or eliminate conditional overhead within hot loops.",
+            "rationale": "Generic convolution code contains conditionals for boundary handling, padding, and stride logic; specialization can eliminate branches in inner loops, improving pipelining and reducing mispredictions.",
+            "priority": "low",
+            "transformations": [
+                {
+                    "name": "Loop Splitting",
+                    "description": "Separate loop iterations into multiple loops based on conditions, creating specialized paths for boundary versus interior cases.",
+                    "rationale": "Eliminates conditionals from inner loops; enables aggressive optimization of the common interior case; simplifies dependence analysis."
+                },
+                {
+                    "name": "Constant Propagation and Folding",
+                    "description": "Evaluate expressions involving compile-time constants to simplify control flow and reduce runtime computation.",
+                    "rationale": "Exposes further optimization opportunities; can turn dynamic conditionals into static decisions; simplifies code generation."
+                },
+                {
+                    "name": "Predicate Elimination",
+                    "description": "Remove or minimize predicated execution or masked operations within vectorized loops.",
+                    "rationale": "Predication introduces overhead on CPUs without full mask support; eliminating masks via loop splitting or peeling improves vector instruction efficiency."
+                }
+            ]
+        },
+        {
+            "name": "Canonicalization and IR Simplification",
+            "description": "Apply standard compiler simplifications to normalize IR, expose optimization opportunities, and enable pattern matching.",
+            "rationale": "Transformations introduce complexity and redundancy; canonicalization ensures IR remains analyzable and optimization-friendly; critical for enabling downstream passes.",
+            "priority": "low",
+            "transformations": [
+                {
+                    "name": "Canonicalization",
+                    "description": "Apply standard simplification patterns such as dead code elimination, common subexpression elimination, and algebraic identities.",
+                    "rationale": "Cleans up IR after transformations; exposes further opportunities; ensures consistent IR form for pattern matching in subsequent passes."
+                },
+                {
+                    "name": "Affine Simplification",
+                    "description": "Simplify affine expressions, bounds, and maps to canonical forms to improve analysis precision.",
+                    "rationale": "Enables more accurate dependence analysis and legality checking; simplifies bounds for polyhedral optimizations; reduces representation overhead."
+                },
+                {
+                    "name": "Loop Normalization",
+                    "description": "Standardize loop bounds to start at zero and increment by one, simplifying further transformations.",
+                    "rationale": "Normalizes loop analysis; makes bounds checking and transformation application more uniform; simplifies code generation."
+                }
+            ]
+        }
+    ]
+}
