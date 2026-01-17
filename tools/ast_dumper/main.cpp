@@ -46,15 +46,10 @@ std::string getLinalgOpTag(mlir::linalg::LinalgOp op) {
 
 int main(int argc, char **argv) {
   if (argc < 2) {
-    llvm::errs() << "Usage: AstDumper <input.mlir> [<prev_tag_count>]\n";
+    llvm::errs() << "Usage: AstDumper <input.mlir>\n";
     exit(1);
   }
   llvm::StringRef inputFilename = argv[1];
-  int prevTagCount;
-  if (argc > 2)
-    prevTagCount = std::stoi(argv[2]);
-  else
-    prevTagCount = 0;
 
   mlir::registerAsmPrinterCLOptions();
   mlir::registerMLIRContextCLOptions();
@@ -89,15 +84,8 @@ int main(int argc, char **argv) {
   }
 
   llvm::SmallVector<linalg::LinalgOp> ops_list;
-  std::set<std::string> tags_set;
-
-  // A pass for existing tags
-  module->walk([&](mlir::linalg::LinalgOp linalgOp){
-    std::string tagName = getLinalgOpTag(linalgOp);
-    if (!tagName.empty()) {
-      tags_set.insert(tagName);
-    }
-  });
+  bool allTagged = true;
+  bool allUntagged = true;
 
   module->walk([&](mlir::linalg::LinalgOp linalgOp){
     // If iteration space is zero, skip
@@ -107,16 +95,11 @@ int main(int argc, char **argv) {
 
     std::string tagName = getLinalgOpTag(linalgOp);
     if (tagName.empty()) {
-      std::string newTagName = "operation_" + std::to_string(prevTagCount);
-      prevTagCount++;
-      if (tags_set.find(newTagName) != tags_set.end()) {
-        llvm::errs() << "Unexpected: Tag " << newTagName << " already exists\n";
-        exit(1);
-      }
-
-      tagName = newTagName;
-      tags_set.insert(tagName);
+      allTagged = false;
+      tagName = "operation_" + std::to_string(ops_list.size());
       linalgOp->setAttr("tag", mlir::StringAttr::get(&context, tagName));
+    } else {
+      allUntagged = false;
     }
 
     ops_list.push_back(linalgOp);
@@ -185,8 +168,13 @@ int main(int argc, char **argv) {
     llvm::outs() << "#END_OPERATION" << "\n";
   });
 
-  llvm::outs() << "#TAG_COUNTER" << "\n";
-  llvm::outs() << prevTagCount << "\n";
+  if (!allTagged && !allUntagged) {
+    llvm::errs() << "Error: Mixed tagged and untagged Linalg operations found.\n"
+      << "This can lead to ambiguous operation identification.\n"
+      << "Please ensure all Linalg operations are either tagged or untagged.\n";
+    exit(1);
+  }
+
   llvm::outs() << "#GRAPH" << "\n";
 
   for (auto producer_op : ops_list) {

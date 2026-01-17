@@ -135,7 +135,6 @@ class BenchmarkFeatures:
         operation_tags: List of operation tags.
         operations: List of operations where each operation is represented by the [OperationFeatures][..OperationFeatures] dataclass.
         root_exec_time: Execution time of the benchmark in nanoseconds without any transformation.
-        tag_counter: A counter to generate unique tags.
     """
 
     bench_name: str
@@ -143,7 +142,6 @@ class BenchmarkFeatures:
     operation_tags: list[str]
     operations: dict[str, OperationFeatures]
     root_exec_time: int
-    tag_counter: int
 
     def copy(self) -> 'BenchmarkFeatures':
         """Copy the current [BenchmarkFeatures][..] object.
@@ -157,7 +155,6 @@ class BenchmarkFeatures:
             self.operation_tags.copy(),
             {tag: op.copy() for tag, op in self.operations.items()},
             self.root_exec_time,
-            self.tag_counter
         )
 
 
@@ -265,7 +262,7 @@ class OperationState:
         )
 
 
-def extract_bench_features_from_code(bench_name: str, code: str, root_execution_time: int, previous_op_count: Optional[int] = None) -> BenchmarkFeatures:
+def extract_bench_features_from_code(bench_name: str, code: str, root_execution_time: int) -> BenchmarkFeatures:
     """Extract benchmark features from the given code.
 
     Args:
@@ -279,7 +276,7 @@ def extract_bench_features_from_code(bench_name: str, code: str, root_execution_
     """
     try:
         result = subprocess.run(
-            [os.getenv("AST_DUMPER_BIN_PATH", ''), '-'] + ([str(previous_op_count)] if previous_op_count is not None else []),
+            [os.getenv("AST_DUMPER_BIN_PATH", ''), '-'],
             input=code,
             capture_output=True,
             text=True,
@@ -292,7 +289,7 @@ def extract_bench_features_from_code(bench_name: str, code: str, root_execution_
     return __extract_bench_features_from_ast_result(bench_name, raw_ast_info, root_execution_time)
 
 
-def extract_bench_features_from_file(bench_name: str, file_path: str, root_execution_time: int, previous_op_count: Optional[int] = None) -> BenchmarkFeatures:
+def extract_bench_features_from_file(bench_name: str, file_path: str, root_execution_time: int) -> BenchmarkFeatures:
     """Extract benchmark features from the code in the file.
 
     Args:
@@ -306,7 +303,7 @@ def extract_bench_features_from_file(bench_name: str, file_path: str, root_execu
     """
     try:
         result = subprocess.run(
-            [os.getenv("AST_DUMPER_BIN_PATH", ''), file_path] + ([str(previous_op_count)] if previous_op_count is not None else []),
+            [os.getenv("AST_DUMPER_BIN_PATH", ''), file_path],
             capture_output=True,
             text=True,
             check=True,
@@ -332,8 +329,7 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
     cfg = Config()
 
     info, full_code = raw_ast_info.split("########################################")
-    operations_lines, info = info.split('#TAG_COUNTER')
-    tag_counter_str, graph_str = info.split('#GRAPH')
+    operations_lines, graph_str = info.split('#GRAPH')
 
     operations_blocks = operations_lines.split('#START_OPERATION')
     operations_blocks = [block.strip() for block in operations_blocks if block.strip()]
@@ -449,7 +445,6 @@ def __extract_bench_features_from_ast_result(bench_name: str, raw_ast_info: str,
         operation_tags=ops_tags,
         operations=operations,
         root_exec_time=root_execution_time,
-        tag_counter=int(tag_counter_str.strip()),
     )
 
 

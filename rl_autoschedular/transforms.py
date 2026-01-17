@@ -7,8 +7,9 @@ with the MLIR transform dialect for specifying and applying transformations.
 
 import os
 import subprocess
-from mlir._mlir_libs._mlir.ir import Module  # type: ignore
+from mlir._mlir_libs._mlir.ir import Module, Operation, StringAttr, WalkResult  # type: ignore
 from mlir.dialects.transform import interpreter
+from utils import move_module
 from utils.bindings_process import BindingsProcess
 
 
@@ -130,14 +131,15 @@ module attributes {{transform.with_named_sequence}} {{
 
     %a, %b = transform.structured.convert_conv2d_to_img2col %op_operation : (!transform.any_op) -> (!transform.any_op, !transform.any_op)
 
+    %a_tag = transform.param.constant "{operation_tag}_img2col" -> !transform.any_param
+    transform.annotate %a "tag" = %a_tag : !transform.any_op, !transform.any_param
+
     %matmul_op = transform.get_producer_of_operand %b[0]: (!transform.any_op) -> !transform.any_op
     %matmul_op_tag = transform.param.constant "{operation_tag}" -> !transform.any_param
     transform.annotate %matmul_op "tag" = %matmul_op_tag : !transform.any_op, !transform.any_param
     transform.yield
   }}
 }}"""
-    # %a_tag = transform.param.constant "{operation_tag}_img2col" -> !transform.any_param
-    # transform.annotate %a "tag" = %a_tag : !transform.any_op, !transform.any_param
 
     __run_transform_code_wrapper(module, transform_code)
 
@@ -165,14 +167,29 @@ def transform_TF(module: Module, consumer_tag: str, producer_tag: str, new_produ
         f'    %tiled_op_{consumer_tag}, %forall_op_{consumer_tag} = transform.structured.tile_using_forall %op_{consumer_tag} tile_sizes {str(tiling_sizes)} : (!transform.any_op) -> (!transform.any_op, !transform.any_op)\n'
         f'    %op_{producer_tag} = transform.structured.match attributes{{tag = "{producer_tag}"}} in %arg1 : (!transform.any_op) -> !transform.any_op\n'
         f'    %fused, %containing = transform.structured.fuse_into_containing_op %op_{producer_tag} into %forall_op_{consumer_tag} : (!transform.any_op, !transform.any_op) -> (!transform.any_op, !transform.any_op)\n'
+        f'    %fused_tag = transform.param.constant "{new_producer_tag}" -> !transform.any_param\n'
+        f'    transform.annotate %fused "tag" = %fused_tag : !transform.any_op, !transform.any_param\n'
         f'    transform.yield\n'
         f'  }}\n'
         f'}}\n'
     )
-    # f'    %fused_tag = transform.param.constant "{new_producer_tag}" -> !transform.any_param\n'
-    # f'    transform.annotate %fused "tag" = %fused_tag : !transform.any_op, !transform.any_param\n'
 
     __run_transform_code_wrapper(module, transform_code)
+
+    def make_producer_tags_unique(op: Operation):
+        nonlocal prods_counter
+        if "tag" not in op.attributes:
+            return WalkResult.ADVANCE
+        tag_attr = op.attributes["tag"]
+        if not isinstance(tag_attr, StringAttr) or tag_attr.value != new_producer_tag:
+            return WalkResult.ADVANCE
+
+        op.attributes["tag"] = StringAttr.get(f"{new_producer_tag}_{prods_counter}", op.context)
+        prods_counter += 1
+
+        return WalkResult.ADVANCE
+    prods_counter = 0
+    module.operation.walk(make_producer_tags_unique)
 
 
 def transform_decompose(module: Module, operation_tag: str):
@@ -313,10 +330,17 @@ def transform_pack(module: Module, operation_tag: str, tiling_sizes: list[int]):
         f'    %op_packed_{operation_tag} = transform.structured.pack %op_{operation_tag} packed_sizes = {str(tiling_sizes)} : (!transform.any_op) -> !transform.any_op\n'
         f'    %packed_tag = transform.param.constant "{operation_tag}" -> !transform.any_param\n'
         f'    transform.annotate %op_packed_{operation_tag} "tag" = %packed_tag : !transform.any_op, !transform.any_param\n'
+
         f'    %pack = transform.structured.match ops{{["tensor.pack"]}} in %arg0 : (!transform.any_op) -> !transform.op<"tensor.pack">'
-        f'    transform.structured.lower_pack %pack : (!transform.op<"tensor.pack">) -> (!transform.op<"tensor.pad">, !transform.op<"tensor.expand_shape">, !transform.op<"linalg.transpose">)'
+        f'    %a:2, %pack_linalg = transform.structured.lower_pack %pack : (!transform.op<"tensor.pack">) -> (!transform.op<"tensor.pad">, !transform.op<"tensor.expand_shape">, !transform.op<"linalg.transpose">)'
+        f'    %pack_linalg_tag = transform.param.constant "{operation_tag}_pack" -> !transform.any_param\n'
+        f'    transform.annotate %pack_linalg "tag" = %pack_linalg_tag : !transform.op<"linalg.transpose">, !transform.any_param\n'
+
         f'    %unpack = transform.structured.match ops{{["tensor.unpack"]}} in %arg0 : (!transform.any_op) -> !transform.op<"tensor.unpack">'
-        f'    transform.structured.lower_unpack %unpack : (!transform.op<"tensor.unpack">) -> (!transform.op<"tensor.empty">, !transform.op<"linalg.transpose">, !transform.op<"tensor.collapse_shape">, !transform.op<"tensor.extract_slice">)'
+        f'    %b, %unpack_linalg, %c:2 = transform.structured.lower_unpack %unpack : (!transform.op<"tensor.unpack">) -> (!transform.op<"tensor.empty">, !transform.op<"linalg.transpose">, !transform.op<"tensor.collapse_shape">, !transform.op<"tensor.extract_slice">)'
+        f'    %unpack_linalg_tag = transform.param.constant "{operation_tag}_unpack" -> !transform.any_param\n'
+        f'    transform.annotate %unpack_linalg "tag" = %unpack_linalg_tag : !transform.op<"linalg.transpose">, !transform.any_param\n'
+
         f'    transform.yield\n'
         f'  }}\n'
         f'}}'
@@ -324,18 +348,28 @@ def transform_pack(module: Module, operation_tag: str, tiling_sizes: list[int]):
 
     __run_transform_code_wrapper(module, transform_code)
 
+    def tag_pack_unpack(op: Operation):
+        nonlocal packs_counter, unpacks_counter
+        if "tag" not in op.attributes:
+            if op.name == "linalg.copy":
+                pass  # TODO: Continue here
+            return WalkResult.ADVANCE
+        tag_attr = op.attributes["tag"]
+        if not isinstance(tag_attr, StringAttr):
+            return WalkResult.ADVANCE
 
-def move_module(source: Module, destination: Module):
-    """Copy all operations from source module to destination module.
+        if tag_attr.value == f"{operation_tag}_pack":
+            op.attributes["tag"] = StringAttr.get(f"{operation_tag}_pack_{packs_counter}", op.context)
+            packs_counter += 1
+        elif tag_attr.value == f"{operation_tag}_unpack":
+            op.attributes["tag"] = StringAttr.get(f"{operation_tag}_unpack_{unpacks_counter}", op.context)
+            unpacks_counter += 1
 
-    Args:
-        source: The source MLIR module.
-        destination: The destination MLIR module where operations will be copied.
-    """
-    for op in destination.body.operations:
-        op.erase()
-    for op in source.body.operations:
-        destination.body.append(op.clone())
+        return WalkResult.ADVANCE
+
+    packs_counter = 0
+    unpacks_counter = 0
+    module.operation.walk(tag_pack_unpack)
 
 
 def __run_transform_code_wrapper(module: Module, transform_code: str):
@@ -345,7 +379,7 @@ def __run_transform_code_wrapper(module: Module, transform_code: str):
         module: The MLIR module to transform.
         transform_code: The MLIR transform dialect code.
     """
-    BindingsProcess.call(__run_transform_code, module, transform_code, timeout=60)
+    BindingsProcess.call(__run_transform_code, module, transform_code, timeout=60, read_only=False)
 
 
 def __run_transform_code(module: Module, transform_code: str):

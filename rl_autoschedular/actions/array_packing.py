@@ -1,7 +1,9 @@
 from typing import Optional
+
+from utils import move_module
 from .tiling import Tiling
 from rl_autoschedular.state import OperationFeatures, OperationState
-from rl_autoschedular.transforms import move_module, transform_pack
+from rl_autoschedular.transforms import transform_pack
 from utils.config import Config
 from mlir._mlir_libs._mlir.ir import Module  # type: ignore
 
@@ -33,7 +35,8 @@ class ArrayPacking(Tiling):
         # due to MLIR's preconditions, so we can ignore them
         try:
             transform_pack(module, self.operation_tag, self.parameters)
-        except Exception:
+        except Exception as e:
+            print("Packing transformation failed:", e)
             self.extras['packed'] = False
             move_module(module_clone, module)
 

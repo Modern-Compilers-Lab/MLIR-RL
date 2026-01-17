@@ -62,12 +62,7 @@ class Benchmarks:
                     else:
                         modified = True
                 if modified:
-                    benchmark_data = extract_bench_features_from_code(
-                        bench_name,
-                        str(bench_module),
-                        root_exec_time,
-                        benchmark_data.tag_counter
-                    )
+                    benchmark_data = extract_bench_features_from_code(bench_name, str(bench_module), root_exec_time)
             self.data.append(benchmark_data)
 
     def __len__(self) -> int:

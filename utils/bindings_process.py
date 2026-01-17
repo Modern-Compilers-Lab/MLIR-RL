@@ -10,7 +10,8 @@ from multiprocessing.connection import wait
 import os
 import queue
 import signal
-from typing import Callable, Optional, TypeVar, TYPE_CHECKING
+from typing import Callable, Optional, TypeVar, Any, TYPE_CHECKING
+from mlir._mlir_libs._mlir.ir import Module, Context  # type: ignore
 
 if TYPE_CHECKING:
     from multiprocessing import Queue
@@ -22,15 +23,18 @@ ENABLE_TIMEOUT = False
 
 class BindingsProcess:
     @staticmethod
-    def call(func: Callable[..., T], *args, timeout: Optional[float] = None) -> T:
+    def call(func: Callable[..., T], module: Module, *args, timeout: Optional[float] = None, read_only: bool = True) -> T:
         if not ENABLED:
-            return func(*args)
+            return func(module, *args)
+        if not read_only:
+            # NOTE: No support for modifying modules for now
+            return func(module, *args)
         if not ENABLE_TIMEOUT:
             timeout = None
 
         ctx = multiprocessing.get_context('fork')
-        q = ctx.Queue()
-        p = ctx.Process(target=_func_wrapper, args=(q, func, *args), daemon=True)
+        q: 'Queue[dict[str, Any]]' = ctx.Queue()
+        p = ctx.Process(target=_func_wrapper, args=(q, func, str(module), *args), daemon=True)
         p.start()
         ready = wait([p.sentinel, q._reader.fileno()], timeout=timeout)
         if not ready:
@@ -41,9 +45,9 @@ class BindingsProcess:
         try:
             res = q.get_nowait()
             p.join()
-            if isinstance(res, Exception):
-                raise res
-            return res
+            if 'exception' in res:
+                raise res['exception']
+            return res['result']
         except queue.Empty:
             p.join()
             ec = p.exitcode
@@ -61,9 +65,10 @@ class BindingsProcess:
             raise Exception(msg)
 
 
-def _func_wrapper(q: 'Queue', func: Callable, *args):
+def _func_wrapper(q: 'Queue', func: Callable, code: str, *args):
     try:
-        res = func(*args)
-        q.put(res)
+        module = Module.parse(code, Context())
+        res = func(module, *args)
+        q.put({"result": res})
     except Exception as e:
-        q.put(e)
+        q.put({"exception": e})

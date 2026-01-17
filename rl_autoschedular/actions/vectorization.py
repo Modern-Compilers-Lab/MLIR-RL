@@ -4,10 +4,11 @@ This module implements the vectorization transformation action, which applies
 vectorization to operations and handles preprocessing steps like transpose and decompose.
 """
 
+from utils import move_module
 from utils.config import Config
 from .base import Action
 from rl_autoschedular.transforms import (
-    move_module, transform_pre_vec, transform_vectorize, transform_tile,
+    transform_pre_vec, transform_vectorize, transform_tile,
     transform_decompose, transform_transpose_conv_2d
 )
 from rl_autoschedular.state import OperationFeatures, OperationState, OperationType

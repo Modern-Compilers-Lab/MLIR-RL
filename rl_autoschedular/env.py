@@ -6,11 +6,13 @@ sequences. The environment tracks operations across benchmarks and evaluates the
 effectiveness of optimizations.
 """
 
+import os
 from rl_autoschedular.state import OperationState, BenchmarkFeatures, extract_bench_features_from_code
 from rl_autoschedular.benchmarks import Benchmarks
 from typing import Optional, Union
 from rl_autoschedular.execution import Execution
 from rl_autoschedular.actions import Action, TiledFusion
+from utils.file_logger import FileLogger
 from utils.log import print_error
 from utils.config import Config
 from mlir._mlir_libs._mlir.ir import Context, Module  # type: ignore
@@ -138,11 +140,11 @@ class Env:
             The execution time.
             Whether it was a cache miss.
         """
-        transformed_code, rewards = self._apply_sequence(seq)
+        transformed_module, rewards = self._apply_sequence(seq)
 
         # Evaluate the code (since the operation is done)
         try:
-            new_exec_time, exec_succeeded, cache_miss = Execution().execute_code(transformed_code, self.benchmark_data.bench_name, seq)
+            new_exec_time, exec_succeeded, cache_miss = Execution().execute_code(transformed_module, self.benchmark_data.bench_name, seq)
             if not exec_succeeded:
                 raise Exception("Incorrect results")
         except Exception as e:
@@ -158,6 +160,13 @@ class Env:
             new_exec_time = None
             exec_succeeded = False
             cache_miss = True
+
+            with open(os.path.join(FileLogger().run_dir, 'errors.mlir'), 'a') as f:
+                seq_str = '\n// '.join([str(list(map(str, op_seq))) for op_seq in seq])
+                f.write(f"// Benchmark: {self.benchmark_data.bench_name}\n")
+                f.write(f"// {seq_str}\n")
+                f.write(str(transformed_module))
+                f.write("\n\n// -----\n\n")
 
         # The reward will take into consideration whether execution succeeded or not
         rewards[-1] = self._action_reward(True, exec_succeeded, new_exec_time, self.benchmark_data.root_exec_time)
@@ -332,7 +341,6 @@ class ReactiveEnv(Env):
             self.benchmark_data.bench_name,
             str(bench_module),
             self.benchmark_data.root_exec_time,
-            self.benchmark_data.tag_counter,
         )
 
         # Update state

@@ -39,6 +39,11 @@ if __name__ == "__main__":
     dm = DaskManager()
     go = GPUOccupier()
 
+    cfg.print_config()
+    print_success(f'Logging to: {fl.run_dir}')
+    if cfg.main_exec_data_file:
+        print_info(f"Global execution data located in: {cfg.main_exec_data_file}")
+
     # Start GPU Occupier
     if device.type == "cuda":
         go.start(device)
@@ -63,11 +68,6 @@ if __name__ == "__main__":
 
     # Initialize execution singleton
     Execution(fl.exec_data_file, main_exec_data)
-
-    cfg.print_config()
-    print_success(f'Logging to: {fl.run_dir}')
-    if cfg.main_exec_data_file:
-        print_info(f"Global execution data located in: {cfg.main_exec_data_file}")
 
     # Setup torch
     torch.set_grad_enabled(False)
