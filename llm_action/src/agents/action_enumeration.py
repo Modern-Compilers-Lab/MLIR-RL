@@ -46,7 +46,7 @@ class ActionEnumerationAgentWrapper:
             action_enumeration = load_cached_action_enumeration()
         else:
             response = self.action_enumeration_agent.agent.run(
-                message=code_template,
+                input=code_template,
             )
             raw_content = response.content
             reasoning, action_enumeration = parse_action_enumeration_output(raw_content)

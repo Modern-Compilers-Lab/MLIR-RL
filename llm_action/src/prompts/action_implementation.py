@@ -123,6 +123,13 @@ Each Action must define the following conceptual stages:
 
 You may use the following tool to validate the MLIR transform while synthesizing it:
 
+- `delegate_documentation_lookup(task: str) -> str`
+  Delegates Transform dialect documentation lookup to a deterministic retrieval agent. Example tasks:
+  - "How to tile a linalg operation using Transform dialect?"
+  - "How to vectorize loops in Transform dialect?"
+  - "What is the Transform dialect op for loop interchange?"
+  This lookup agent provides authoritative, pre-scraped MLIR Transform dialect documentation, including exact operation names, required handles, key attributes, and minimal Transform IR skeletons, and should be used to ground Transform dialect usage before implementation.
+
 - `transform_code(code: str, transformation_code: str) -> str`
   Applies Transform dialect code and returns transformed MLIR.
 
@@ -142,22 +149,26 @@ Execution semantics are intentionally simple:
 
 For each kernel instance you test during synthesis, follow systematically this plan:
 
-1. **Baseline execution sanity**
+1. **Documentation sanity**
+   - Truth ground your knowledge about Transform dialect op names, handles, or attributes,
+     call `delegate_documentation_lookup(...)` before writing or revising transform IR.
+
+2. **Baseline execution sanity**
    - Call `execute_code(original_code)`.
    - Require `success_flag == True`.
    - If baseline execution fails, do not proceed with transform testing on that instance.
 
-2. **Transform application sanity**
+3. **Transform application sanity**
    - Call `transform_code(original_code, transform_ir)`.
    - Require that the returned MLIR differs from the input (`transformed.strip() != original.strip()`).
    - If the transform produces identical code or throws, treat it as a failed transform attempt.
 
-3. **Post-transform execution sanity**
+4. **Post-transform execution sanity**
    - Call `execute_code(transformed_code)`.
    - Require `success_flag == True`.
    - If execution fails, the transform is not acceptable and must be revised.
    
-4. **Speedup measurement**
+5. **Speedup measurement**
    - Call `measure_speedup(base_execution_time, transformed_execution_time)`.
    - Use this metric as a sanity check not for optimization purposes.
 

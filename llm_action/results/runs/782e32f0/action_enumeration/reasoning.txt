@@ -1,0 +1,120 @@
+# Reasoning
+
+## Analysis of MLIR Templates
+
+The provided templates consist of three main kernel categories:
+
+1. **Matrix Multiplication** (linalg.matmul): A rank-3 contraction computing C[I,K] ← A[I,J] × B[J,K]. This is a dense, compute-bound kernel with a single reduction dimension (J). The concrete instance is 128×256 × 256×128, a moderate-sized matmul.
+
+2. **2D Convolution** (linalg.conv_2d_nchw_fchw): A structured convolution in NCHW (image) × FCHW (filter) format producing output in NCHW (result). The concrete instance is a 1×1 convolution on 7×7 spatial maps, which effectively behaves as a matmul-like operation with minimal kernel overhead. This represents both dense convolution patterns and the special case of point-wise convolutions.
+
+3. **Generic Linalg** (linalg.generic): A multi-dimensional elementwise or near-elementwise operation across 5 parallel loops (A×B×C×D×E). The concrete instance operates on 8×8×16×8×32 tensors. This represents data-parallel, memory-bound kernels.
+
+All three use **linalg operations**, which in MLIR are high-level structured abstractions that lower to loop nests over time. Performance on CPUs depends critically on:
+- **Cache locality**: how data is reused and accessed in memory,
+- **SIMD utilization**: vectorization width and alignment,
+- **Parallelism**: exposure and distribution of loop-level parallelism,
+- **Fusion**: elimination of intermediate buffers and memory round-trips.
+
+## Hardware Target (Broadwell-class, 28 cores, AVX2)
+
+Given the Xeon E5-2680 v4 target:
+- **AVX2 (256-bit SIMD)**: 8 FP32 lanes, 4 FP64 lanes.
+- **L1/L2 caches**: ~32KB L1d, ~256KB L2 per core—small, so tiling for cache is essential.
+- **No SMT**: Parallelism is thread-based (coarse-grain), not warp-based.
+- **No AVX-512**: Avoid any assumptions about masks or 512-bit operations.
+- **Typical optimization patterns**:
+  - L1/L2-friendly tiling to maximize data reuse,
+  - Vectorization to saturate SIMD pipelines,
+  - Moderate parallelism (avoid oversubscription on 28 cores),
+  - Loop fusion to reduce memory bandwidth,
+  - Layout transformations (packing, im2col) to regularize memory access.
+
+## RL Action Space Perspective
+
+From an RL viewpoint, an agent should make **discrete choices** about **which** transformation to apply (the macro action), and then **how** to apply it (parameters). The agent's action space should be:
+- **Tractable in size**: 5–10 macro transformation types, each with discretized parameters.
+- **Composable**: sequences of actions should be applicable without immediate contradiction.
+- **Maskable by preconditions**: some actions may not apply to certain loop structures (handled by Layer 2).
+
+## Optimization Intent Mapping
+
+For loop-nest kernels on this CPU, the primary optimization drivers are:
+
+### Intent 1: Cache Locality & Memory Efficiency (HIGH priority)
+- Loop-level tiling is the most critical optimization for cache utilization.
+- Reduces memory bandwidth, improves data reuse.
+- Universally applicable to structured loop nests (matmul, convolution, generic).
+
+### Intent 2: SIMD Parallelism & Vectorization (HIGH priority)
+- Vectorization converts scalar operations to SIMD lanes.
+- Especially critical for elementwise and convolution kernels.
+- Requires loop structure that exposes regular strides and aligned access patterns.
+
+### Intent 3: Coarse-Grain Thread Parallelism (MEDIUM priority)
+- Thread parallelization over outer loops avoids oversubscription.
+- Less critical on smaller matmuls but essential for scaling to multi-socket.
+- Interacts with tiling; often applied after tiling is determined.
+
+### Intent 4: Data Packing & Layout Regularization (MEDIUM priority)
+- Transforms irregular or strided access patterns into regular, cache-friendly layouts.
+- Essential for convolutions (im2col-style) and certain memory layouts.
+- Can amortize copy cost if applied at appropriate granularity.
+
+### Intent 5: Producer-Consumer Fusion & Buffer Elimination (MEDIUM priority)
+- Reduces intermediate allocations and memory bandwidth.
+- Applies when there are dependent operations or temporary tensors.
+- Less directly relevant to single-op templates but important in general pipelines.
+
+### Intent 6: Loop Ordering & Iteration Space Restructuring (LOW-MEDIUM priority)
+- Loop interchange changes memory access patterns and cache locality.
+- Enables better vectorization or parallelism in some cases.
+- Often a secondary optimization after tiling.
+
+Given the **template constraints** (single monolithic operations with no multi-op fusion opportunities in the templates themselves), the most relevant intents are **1, 2, 3, and optionally 4**. Fusion (Intent 5) would be secondary unless there are hidden opportunities in lowering.
+
+---
+
+## Transformation Enumeration (By Intent)
+
+### **Intent 1: Cache Locality & Memory Efficiency**
+- **Tiling**: Recursively partition loop nests into cache-friendly tiles. Directly reduces working set and improves reuse.
+- **Loop Interchange**: Reorder loop dimensions to improve stride patterns and cache behavior.
+- **Loop Peeling**: Separate loop boundary conditions to allow inner loop optimization and avoid control flow.
+
+### **Intent 2: SIMD Parallelism & Vectorization**
+- **Vectorization**: Convert scalar loop nests into vector operations (SIMD lanes), respecting alignment and stride.
+- **Unrolling**: Increase loop body to expose ILP and reduce loop overhead; often precedes vectorization.
+- **Loop Jamming**: Fuse multiple loops into a single loop body to improve cache reuse and vectorization opportunities.
+
+### **Intent 3: Coarse-Grain Thread Parallelism**
+- **Parallelization**: Distribute outer loops across worker threads; uses OpenMP or task-based concurrency.
+- **Thread Binding & Work Partitioning**: Map logical parallelism to physical cores; respect NUMA locality (deferred to Layer 2).
+
+### **Intent 4: Data Packing & Layout Regularization**
+- **Packing / Prepacking**: Reorganize tensor layouts (e.g., im2col for convolution) to regularize memory access and reduce stride overhead.
+- **Layout Transformation**: Permute tensor strides or tile order to align with access patterns (e.g., row-major vs. column-major).
+
+### **Intent 5: Producer-Consumer Fusion & Buffer Elimination**
+- **Operator Fusion**: Merge dependent operations to eliminate intermediate allocations; may reduce memory bandwidth.
+- **Tiling for Locality**: Co-tile producer and consumer to fit in shared cache.
+
+### **Intent 6: Loop Ordering & Iteration Space Restructuring**
+- **Loop Interchange**: Already listed in Intent 1; repeated here for emphasis as a secondary optimization.
+
+---
+
+## Selection for RL Action Space
+
+Focusing on the **most impactful and widely applicable** transformations for the given templates and hardware:
+
+1. **Tiling** (HIGH): Essential for cache locality on all three kernels.
+2. **Vectorization** (HIGH): Critical for SIMD exposure, especially elementwise and convolution.
+3. **Parallelization** (MEDIUM): Essential for multi-core scaling; moderately important.
+4. **Loop Interchange** (MEDIUM): Improves cache and vectorization; often a secondary knob.
+5. **Unrolling** (MEDIUM): Improves ILP and loop overhead; kernel-dependent effectiveness.
+6. **Packing / Layout Transformation** (MEDIUM): Relevant for convolution and certain dense ops; less critical for generic elementwise.
+
+I will structure the output with **3 optimization intents**, each containing **2–3 transformations**, prioritizing high-impact, reusable actions:
+
+---

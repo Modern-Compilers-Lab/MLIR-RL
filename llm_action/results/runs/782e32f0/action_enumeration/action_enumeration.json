@@ -1,0 +1,76 @@
+{
+    "intents": [
+        {
+            "name": "Cache Locality & Memory Efficiency",
+            "description": "Optimize for data reuse and L1/L2 cache utilization through loop-level tiling and ordering transformations, reducing memory bandwidth pressure.",
+            "rationale": "On Broadwell, L1/L2 caches are small (32KB/256KB per core). Tiling loop nests to fit working sets into cache dramatically improves performance. This is the single highest-impact optimization for compute-bound kernels.",
+            "priority": "high",
+            "transformations": [
+                {
+                    "name": "Tiling",
+                    "description": "Partition loop nest into cache-friendly tiles by introducing inner and outer loop levels, enabling reuse and reducing working-set size.",
+                    "rationale": "Tiling is fundamental for CPU performance on structured kernels (matmul, convolution, generic loops). Reduces memory bandwidth by a factor of tiling ratio; enables vectorization and parallelism of inner loops.",
+                    "action_template": "Tiling(tile_sizes) OR Tiling(loop_band, factors) OR Tiling(loop_id, factor)"
+                },
+                {
+                    "name": "Loop Interchange",
+                    "description": "Reorder loop dimensions to improve memory access patterns, regularize strides, and enable better vectorization or cache locality.",
+                    "rationale": "Loop interchange can convert irregular or long-stride access into unit-stride, improving cache behavior and vectorization potential. Often a secondary optimization after tiling.",
+                    "action_template": "LoopInterchange(loop_band, permutation) OR LoopInterchangeSwap(loop_id_a, loop_id_b)"
+                },
+                {
+                    "name": "Loop Peeling",
+                    "description": "Separate loop boundary conditions and edge cases from the main loop body, enabling optimization of the main loop without conditional overhead.",
+                    "rationale": "Allows inner loops to proceed without guard conditions, enabling vectorization and other aggressive optimizations. Reduces branch misprediction and conditional complexity.",
+                    "action_template": "LoopPeeling(loop_id, peel_count)"
+                }
+            ]
+        },
+        {
+            "name": "SIMD Parallelism & Vectorization",
+            "description": "Expose and exploit vector parallelism (AVX2, 256-bit SIMD) by restructuring loops for regular, aligned memory access and vectorizable operations.",
+            "rationale": "AVX2 on Broadwell provides 8 FP32 or 4 FP64 lanes. Vectorization can improve throughput by 4\u20138\u00d7. Essential for dense, regular kernels (matmul, convolution, elementwise). Requires aligned, strided access patterns.",
+            "priority": "high",
+            "transformations": [
+                {
+                    "name": "Vectorization",
+                    "description": "Convert scalar loop nests into vector operations by exposing innermost loop parallelism as SIMD lanes, with proper alignment and stride assumptions.",
+                    "rationale": "Directly maps inner loop iterations to SIMD lanes, improving throughput. Most effective when memory access is unit-stride or regular. Prerequisite for achieving peak CPU performance on AVX2.",
+                    "action_template": "Vectorization(target_loop, vector_width) OR Vectorization(loop_band, vector_width)"
+                },
+                {
+                    "name": "Loop Unrolling",
+                    "description": "Expand loop body by replicating iterations, increasing instruction-level parallelism and reducing loop overhead, enabling latency hiding and better register allocation.",
+                    "rationale": "Unrolling exposes ILP and amortizes loop control overhead. On CPUs with moderate issue width, moderate unroll factors (2\u20134) improve performance. Precedes vectorization in many pipelines.",
+                    "action_template": "Unrolling(loop_id, unroll_factor) OR Unrolling(loop_band, factors)"
+                },
+                {
+                    "name": "Loop Jamming",
+                    "description": "Fuse adjacent or nearby loop nests into a single loop body, improving cache reuse and enabling better vectorization of merged iterations.",
+                    "rationale": "Reduces memory bandwidth by improving temporal locality between fused operations. Simplifies control flow for vectorization. Effective for fusible producer-consumer pairs or adjacent operations.",
+                    "action_template": "LoopJamming(loop_band_a, loop_band_b) OR LoopJamming(loop_id_a, loop_id_b)"
+                }
+            ]
+        },
+        {
+            "name": "Thread-Level Parallelism & Data Organization",
+            "description": "Distribute computation across multiple cores and optimize tensor layouts to support efficient coarse-grain parallelism and memory access patterns.",
+            "rationale": "On 28-core Broadwell, coarse-grain parallelism over outer loops is essential for scaling. Data packing (e.g., im2col) regularizes memory access and can reduce cache pressure and stride overhead.",
+            "priority": "medium",
+            "transformations": [
+                {
+                    "name": "Parallelization",
+                    "description": "Distribute outermost or appropriately chosen loop dimensions across worker threads using task-based or OpenMP-style parallelism, enabling multi-core scaling.",
+                    "rationale": "Maps logical loop parallelism to physical cores. Critical for scaling on 28-core systems. Typically applied to outermost parallel loops after inner loops are optimized via tiling and vectorization.",
+                    "action_template": "Parallelization(loop_id, num_threads) OR Parallelization(loop_band, strategy)"
+                },
+                {
+                    "name": "Packing / Data Layout Transformation",
+                    "description": "Reorganize tensor layouts (e.g., im2col for convolution, or tensor transposition) to regularize memory access patterns and reduce stride overhead.",
+                    "rationale": "Converts irregular access into regular, cache-friendly patterns. Example: im2col lifts convolution into a dense matmul-like operation. Amortized cost is often worthwhile for repeated kernels.",
+                    "action_template": "Packing(operation_name, packing_scheme) OR LayoutTransformation(tensor_id, new_layout)"
+                }
+            ]
+        }
+    ]
+}

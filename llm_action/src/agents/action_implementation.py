@@ -15,7 +15,8 @@ from llm_action.src.utils.persistence import load_kernel_code_template, save_act
 from llm_action.src.utils.parse import parse_action_implementation_output
 from llm_action.src.models import ActionPackage, ActionEnumeration
 
-from llm_action.src.tools import transform_code, execute_code, measure_speedup
+from llm_action.src.tools.transformation import transform_code, execute_code, measure_speedup
+from llm_action.src.tools.agent_as_tool import delegate_documentation_lookup
 
 class ActionImplementationAgent:
     def __init__(self, llm_model: ClaudeModel = CLAUDE_LLM_MODEL):
@@ -27,7 +28,7 @@ class ActionImplementationAgent:
             description=self.description,
             model=self.model,
             instructions=get_layer2_system_prompt(),
-            tools=[transform_code, execute_code, measure_speedup],
+            tools=[delegate_documentation_lookup, transform_code, execute_code, measure_speedup],
             add_history_to_context=False,
             num_history_runs=0,
             markdown=True,
@@ -47,7 +48,7 @@ class ActionImplementationAgentWrapper:
             pass
         else:
             response = self.action_implementation_agent.agent.run(
-                message=f"Code Template: {code_template}\n{get_optimization_intent_representation(optimization_intent)}\n{get_transformation_representation(transformation)}",
+                input=f"Code Template: {code_template}\n{get_optimization_intent_representation(optimization_intent)}\n{get_transformation_representation(transformation)}",
             )
             raw_content = response.content
             reasoning, action_package, action_python_implementation = parse_action_implementation_output(raw_content)
@@ -73,7 +74,7 @@ if __name__ == "__main__":
     pprint(action_package.model_dump())
     print("===== Action Python =====")
     pprint(action_python_implementation)
-    save_path, candidate_path = save_action_implementation_result(reasoning, action_package, action_python_implementation, KernelType.MIXED, llm_model, save_to_playground=True)
+    save_path, candidate_path = save_action_implementation_result(reasoning, action_package, action_python_implementation, KernelType.MIXED, llm_model, save_to_playground=False)
     print(f"=== Response saved to: {save_path} ===")
     if candidate_path:
         print(f"=== Candidate action also saved to: {candidate_path} ===")

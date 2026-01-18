@@ -1,0 +1,24 @@
+{
+    "name": "LoopPeeling",
+    "description": "Separates loop boundary conditions and edge cases from the main loop body by peeling off the first iteration(s). This enables optimization of the main loop without conditional overhead, supporting aggressive transformations like vectorization.",
+    "parameters": [
+        {
+            "name": "peel_front",
+            "description": "If true, peels the first iteration(s) from the loop. If false, peels the last iteration(s) to make remainder evenly divisible.",
+            "type": "bool",
+            "values": [
+                1,
+                0
+            ]
+        },
+        {
+            "name": "fail_if_already_divisible",
+            "description": "If true, fails the transformation if the loop step already evenly divides the range. If false, proceeds regardless.",
+            "type": "bool",
+            "values": [
+                1,
+                0
+            ]
+        }
+    ]
+}

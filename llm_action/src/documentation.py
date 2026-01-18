@@ -11,8 +11,7 @@ from llm_action.src.models import TransformationDocumentation, TransformationCat
 
 def load_documentation() -> Documentation:
     with open("llm_action/resources/ready/documentation.json", "r", encoding="utf-8") as f:
-        documentation_dict = json.load(f)
-    documentation = Documentation(**documentation_dict)
+        documentation = json.load(f)
     return documentation
 
 if __name__ == "__main__":

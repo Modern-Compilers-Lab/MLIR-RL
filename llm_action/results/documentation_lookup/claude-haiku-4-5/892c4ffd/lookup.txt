@@ -1,0 +1,398 @@
+TASK:
+How to do vectorization in MLIR Transform dialect?
+
+RESPONSE:
+I'll retrieve documentation on vectorization in the MLIR Transform dialect for you.### `transform.structured.vectorize` (transform::VectorizeOp) [¶](#transformstructuredvectorize-transformvectorizeop)
+
+`transform.structured.vectorize`
+[¶](#transformstructuredvectorize-transformvectorizeop)
+
+Syntax:
+
+```
+operation ::= `transform.structured.vectorize` $target oilist(
+              `vector_sizes` custom<DynamicIndexList>(
+              $vector_sizes,
+              $static_vector_sizes,
+              $scalable_sizes))
+              attr-dict
+              `:` type($target)(`,`type($vector_sizes)^)?
+```
+
+`` operation ::= `transform.structured.vectorize` $target oilist(
+`vector_sizes` custom<DynamicIndexList>(
+$vector_sizes,
+$static_vector_sizes,
+$scalable_sizes))
+attr-dict
+`:` type($target)(`,`type($vector_sizes)^)? ``
+
+Vectorize the target ops, which must be Linalg ops.
+
+Use the optional vector sizes to specify exactly what configuration the
+vectorizer should use. It will then use masked vectors of the specified
+size to enforce this configuration (“masked vectorization”). If no vector
+sizes are specified, the vectorizer will infer the shapes to use from the
+target Linalg ops (“regular vectorization”). More specifically:
+
+```
+transform.structured.vectorize %target vector_sizes [1, 4] : !transform.any_op
+# Regular vectorization - vector sizes are inferred from the target Op
+transform.structured.vectorize %target : !transform.any_op
+```
+
+```
+transform.structured.vectorize %target vector_sizes [1, 4] : !transform.any_op
+# Regular vectorization - vector sizes are inferred from the target Op
+transform.structured.vectorize %target : !transform.any_op
+```
+
+`transform.structured.vectorize %target vector_sizes [1, 4] : !transform.any_op
+# Regular vectorization - vector sizes are inferred from the target Op
+transform.structured.vectorize %target : !transform.any_op`
+transform.structured.vectorize %target vector\_sizes [1, 4] : !transform.any\_op
+transform.structured.vectorize %target vector\_sizes [1, 4] : !transform.any\_op
+.
+.
+vector
+%target
+vector
+[
+1
+,
+4
+]
+:
+!
+.
+# Regular vectorization - vector sizes are inferred from the target Op
+# Regular vectorization - vector sizes are inferred from the target Op
+#
+vector
+-
+vector
+transform.structured.vectorize %target : !transform.any\_op
+transform.structured.vectorize %target : !transform.any\_op
+.
+.
+vector
+%target
+:
+!
+.
+
+The vector sizes can be either static or dynamic (SSA values). In case of
+SSA values, the handle must be mapped to exactly one payload op with
+exactly one index-typed result.
+
+Note: The input vector sizes must be bigger than or equal to their
+counterpart iteration space sizes.
+
+Typically this operator should be applied to linalg operations that have
+already been tiled to the appropriate sizes.
+
+---
+
+#### Return modes: [¶](#return-modes-74)
+
+[¶](#return-modes-74)
+
+This operation produces a silenceable failure if at least one target op is
+not a Linalg op or fails to vectorize. It produces a definite failure if
+the dynamic vector sizes (SSA values) do not satisfy the constraints
+mentioned above.
+
+Traits: `ReportTrackingListenerFailuresOpTrait`
+
+`ReportTrackingListenerFailuresOpTrait`
+
+Interfaces: `MemoryEffectOpInterface`, `TransformOpInterface`
+
+`MemoryEffectOpInterface`
+`TransformOpInterface`
+
+---
+
+#### Attributes: [¶](#attributes-85)
+
+[¶](#attributes-85)
+
+| Attribute | MLIR Type | Description |
+| --- | --- | --- |
+| `static_vector_sizes` | ::mlir::DenseI64ArrayAttr | i64 dense array attribute |
+| `vectorize_nd_extract` | ::mlir::UnitAttr | unit attribute |
+| `assume_dynamic_dims_match_vec_sizes` | ::mlir::UnitAttr | unit attribute |
+| `create_named_contraction` | ::mlir::UnitAttr | unit attribute |
+| `scalable_sizes` | ::mlir::DenseBoolArrayAttr | i1 dense array attribute |
+
+| Attribute | MLIR Type | Description |
+ Attribute | MLIR Type | Description || `static_vector_sizes` | ::mlir::DenseI64ArrayAttr | i64 dense array attribute |
+ `static_vector_sizes` |`static_vector_sizes` ::mlir::DenseI64ArrayAttr | i64 dense array attribute || `vectorize_nd_extract` | ::mlir::UnitAttr | unit attribute |
+ `vectorize_nd_extract` |`vectorize_nd_extract` ::mlir::UnitAttr | unit attribute || `assume_dynamic_dims_match_vec_sizes` | ::mlir::UnitAttr | unit attribute |
+ `assume_dynamic_dims_match_vec_sizes` |`assume_dynamic_dims_match_vec_sizes` ::mlir::UnitAttr | unit attribute || `create_named_contraction` | ::mlir::UnitAttr | unit attribute |
+ `create_named_contraction` |`create_named_contraction` ::mlir::UnitAttr | unit attribute || `scalable_sizes` | ::mlir::DenseBoolArrayAttr | i1 dense array attribute |
+ `scalable_sizes` |`scalable_sizes` ::mlir::DenseBoolArrayAttr | i1 dense array attribute |
+
+---
+
+#### Operands: [¶](#operands-125)
+
+[¶](#operands-125)
+
+| Operand | Description |
+| --- | --- |
+| `target` | TransformHandleTypeInterface instance |
+| `vector_sizes` | variadic of transform any param type or any handle type |
+
+| Operand | Description |
+| --- | --- |
+| Operand | Description |
+ Operand | Description || `target` | TransformHandleTypeInterface instance |
+| `vector_sizes` | variadic of transform any param type or any handle type |
+| `target` | TransformHandleTypeInterface instance |
+ `target` |`target` TransformHandleTypeInterface instance || `vector_sizes` | variadic of transform any param type or any handle type |
+ `vector_sizes` |`vector_sizes` variadic of transform any param type or any handle type |### `transform.structured.vectorize_children_and_apply_patterns` (transform::VectorizeChildrenAndApplyPatternsOp) [¶](#transformstructuredvectorize_children_and_apply_patterns-transformvectorizechildrenandapplypatternsop)
+
+`transform.structured.vectorize_children_and_apply_patterns`
+[¶](#transformstructuredvectorize_children_and_apply_patterns-transformvectorizechildrenandapplypatternsop)
+
+Syntax:
+
+```
+operation ::= `transform.structured.vectorize_children_and_apply_patterns` $target attr-dict `:`functional-type(operands, results)
+```
+
+`` operation ::= `transform.structured.vectorize_children_and_apply_patterns` $target attr-dict `:`functional-type(operands, results) ``
+
+Vectorizes all children contained in the given `target` using the
+configuration specified by the attributes of this op. This only vectorizes
+structured ops that operate on shaped types and does not vectorize loops or
+straight-line. Internally, it applies a set of rewrite patterns, some of
+which enable vectorization and some of which clean up the results.
+Therefore, it can only be applied to an op with the “isolated from above”
+property. This transformation only fails if the entire pattern rewriting
+failed, i.e., it does **not** fail when no ops were vectorized.
+
+`target`
+**not**
+
+Finer granularity can be achieved either with the `VectorizeOp` for
+individual ops or by outlining the target part of the payload IR into, e.g.,
+a function, performing this transformation, and inlining it back.
+
+`VectorizeOp`
+
+Note that this transformation invalidates the handles to any payload IR
+operation that is contained inside the vectorization target.
+
+This transformation supports the following attributes:
+
+* `fold_type_extensions_into_contract`: a `UnitAttr` to enable the folding of
+  type extension operations into `vector.contract` to create a mixed precision
+  operation.
+* `vectorize_padding`: a `UnitAttr` to activate the vectorization of
+  `tensor.pad` ops. Different pipelines may prefer to lower such ops to
+  loops.
+* `disable_multi_reduction_to_contract_patterns`: a `UnitAttr` to deactivate
+  the rewrite of `vector.multi_reduction` to `vector.contract`. This is
+  intended to be used in tests only.
+* `disable_transfer_permutation_map_lowering_patterns`: a `UnitAttr` to
+  deactivate the rewrite of `vector.transfer` with permutation maps into
+  explicit `vector.transpose` operations. This is intended to be used in
+  tests only but may be promoted to a first class attribute in the future.
+
+- `fold_type_extensions_into_contract`: a `UnitAttr` to enable the folding of
+  type extension operations into `vector.contract` to create a mixed precision
+  operation.
+`fold_type_extensions_into_contract`
+`UnitAttr`
+`vector.contract`- `vectorize_padding`: a `UnitAttr` to activate the vectorization of
+  `tensor.pad` ops. Different pipelines may prefer to lower such ops to
+  loops.
+`vectorize_padding`
+`UnitAttr`
+`tensor.pad`- `disable_multi_reduction_to_contract_patterns`: a `UnitAttr` to deactivate
+  the rewrite of `vector.multi_reduction` to `vector.contract`. This is
+  intended to be used in tests only.
+`disable_multi_reduction_to_contract_patterns`
+`UnitAttr`
+`vector.multi_reduction`
+`vector.contract`- `disable_transfer_permutation_map_lowering_patterns`: a `UnitAttr` to
+  deactivate the rewrite of `vector.transfer` with permutation maps into
+  explicit `vector.transpose` operations. This is intended to be used in
+  tests only but may be promoted to a first class attribute in the future.
+`disable_transfer_permutation_map_lowering_patterns`
+`UnitAttr`
+`vector.transfer`
+`vector.transpose`
+
+---
+
+#### Return modes: [¶](#return-modes-73)
+
+[¶](#return-modes-73)
+
+This operation produces a definite failure if vectorization fails for any
+reason.
+The operation always returns the handle to the target op that is expected
+to be isolated from above.
+
+Traits: `FunctionalStyleTransformOpTrait`, `ReportTrackingListenerFailuresOpTrait`, `TransformEachOpTrait`
+
+`FunctionalStyleTransformOpTrait`
+`ReportTrackingListenerFailuresOpTrait`
+`TransformEachOpTrait`
+
+Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
+
+`MemoryEffectsOpInterface`
+`TransformOpInterface`
+
+---
+
+#### Attributes: [¶](#attributes-84)
+
+[¶](#attributes-84)
+
+| Attribute | MLIR Type | Description |
+| --- | --- | --- |
+| `fold_type_extensions_into_contract` | ::mlir::UnitAttr | unit attribute |
+| `vectorize_padding` | ::mlir::UnitAttr | unit attribute |
+| `vectorize_nd_extract` | ::mlir::UnitAttr | unit attribute |
+| `flatten_1d_depthwise_conv` | ::mlir::UnitAttr | unit attribute |
+| `disable_multi_reduction_to_contract_patterns` | ::mlir::UnitAttr | unit attribute |
+| `disable_transfer_permutation_map_lowering_patterns` | ::mlir::UnitAttr | unit attribute |
+
+| Attribute | MLIR Type | Description |
+ Attribute | MLIR Type | Description || `fold_type_extensions_into_contract` | ::mlir::UnitAttr | unit attribute |
+ `fold_type_extensions_into_contract` |`fold_type_extensions_into_contract` ::mlir::UnitAttr | unit attribute || `vectorize_padding` | ::mlir::UnitAttr | unit attribute |
+ `vectorize_padding` |`vectorize_padding` ::mlir::UnitAttr | unit attribute || `vectorize_nd_extract` | ::mlir::UnitAttr | unit attribute |
+ `vectorize_nd_extract` |`vectorize_nd_extract` ::mlir::UnitAttr | unit attribute || `flatten_1d_depthwise_conv` | ::mlir::UnitAttr | unit attribute |
+ `flatten_1d_depthwise_conv` |`flatten_1d_depthwise_conv` ::mlir::UnitAttr | unit attribute || `disable_multi_reduction_to_contract_patterns` | ::mlir::UnitAttr | unit attribute |
+ `disable_multi_reduction_to_contract_patterns` |`disable_multi_reduction_to_contract_patterns` ::mlir::UnitAttr | unit attribute || `disable_transfer_permutation_map_lowering_patterns` | ::mlir::UnitAttr | unit attribute |
+ `disable_transfer_permutation_map_lowering_patterns` |`disable_transfer_permutation_map_lowering_patterns` ::mlir::UnitAttr | unit attribute |
+
+---
+
+#### Operands: [¶](#operands-124)
+
+[¶](#operands-124)
+
+| Operand | Description |
+| --- | --- |
+| `target` | TransformHandleTypeInterface instance |
+
+| Operand | Description |
+| --- | --- |
+| Operand | Description |
+ Operand | Description || `target` | TransformHandleTypeInterface instance |
+| `target` | TransformHandleTypeInterface instance |
+ `target` |`target` TransformHandleTypeInterface instance |
+
+---
+
+#### Results: [¶](#results-98)
+
+[¶](#results-98)
+
+| Result | Description |
+| --- | --- |
+| `transformed` | TransformHandleTypeInterface instance |
+
+| Result | Description |
+| --- | --- |
+| Result | Description |
+ Result | Description || `transformed` | TransformHandleTypeInterface instance |
+| `transformed` | TransformHandleTypeInterface instance |
+ `transformed` |`transformed` TransformHandleTypeInterface instance |## Retrieved Documentation (verbatim)
+
+### `transform.structured.vectorize`
+Vectorizes the target ops, which must be Linalg ops. Use optional vector sizes to specify the configuration the vectorizer should use. If no vector sizes are specified, the vectorizer will infer the shapes from the target Linalg ops.
+
+**Operands:**
+- `target`: TransformHandleTypeInterface instance
+- `vector_sizes`: variadic of transform any param type or any handle type (optional)
+
+**Attributes:**
+- `static_vector_sizes`: i64 dense array attribute
+- `vectorize_nd_extract`: unit attribute
+- `assume_dynamic_dims_match_vec_sizes`: unit attribute
+- `create_named_contraction`: unit attribute
+- `scalable_sizes`: i1 dense array attribute
+
+**Return modes:** Silenceable failure if at least one target op is not a Linalg op or fails to vectorize.
+
+---
+
+### `transform.structured.vectorize_children_and_apply_patterns`
+Vectorizes all children contained in the target using configuration specified by attributes. Only works on ops with "isolated from above" property. Applies rewrite patterns to enable vectorization and cleanup results.
+
+**Operands:**
+- `target`: TransformHandleTypeInterface instance
+
+**Results:**
+- `transformed`: TransformHandleTypeInterface instance (returns handle to target op)
+
+**Supported attributes:**
+- `fold_type_extensions_into_contract`: enables folding of type extension ops into `vector.contract`
+- `vectorize_padding`: activates vectorization of `tensor.pad` ops
+- `disable_multi_reduction_to_contract_patterns`: deactivates rewrite of `vector.multi_reduction` to `vector.contract`
+- `disable_transfer_permutation_map_lowering_patterns`: deactivates rewrite of `vector.transfer` with permutation maps
+
+---
+
+## Answer
+
+1. **For individual Linalg ops**: Use `transform.structured.vectorize` to vectorize a matched Linalg op. Optionally specify `vector_sizes` for masked vectorization, or omit it for inference-based vectorization.
+
+2. **For hierarchical/isolated ops**: Use `transform.structured.vectorize_children_and_apply_patterns` to vectorize all structured children within an isolated-from-above target. This also applies cleanup patterns automatically.
+
+3. **Typical flow**: Apply `transform.structured.tile_using_for` or `transform.structured.tile_using_forall` first to tile the op to appropriate sizes, then vectorize.
+
+4. **Vector sizes parameter**: Can be static (dense array) or dynamic (SSA values from ops). Static values are typically preferred.
+
+5. **Pattern rewriting**: `vectorize_children_and_apply_patterns` applies multiple rewrite patterns including `vector.contract` folding and transfer op lowering for cleanup.
+
+6. **Handle invalidation**: Using `vectorize_children_and_apply_patterns` invalidates handles to nested payload ops inside the target.
+
+---
+
+## Minimal Transform IR skeleton
+
+```mlir
+module attributes { transform.with_named_sequence } {
+  transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {
+    // Option 1: Inferred vectorization
+    %matched = transform.structured.match attributes { tag = "operation_0" } in %arg0 
+      : (!transform.any_op) -> !transform.any_op
+    transform.structured.vectorize %matched : !transform.any_op
+    
+    // Option 2: Explicit vector sizes (static)
+    // transform.structured.vectorize %matched vector_sizes [1, 4, 8] : !transform.any_op
+    
+    // Option 3: Vectorize children with patterns
+    // %result = transform.structured.vectorize_children_and_apply_patterns %matched 
+    //   { fold_type_extensions_into_contract } : !transform.any_op -> !transform.any_op
+    
+    transform.yield
+  }
+}
+```
+
+---
+
+## Constraints / Preconditions
+
+- **Target must be a Linalg op** (or multiple Linalg ops when using multiple handles).
+- **Vector sizes must be ≥ iteration space sizes** if explicitly specified.
+- **For dynamic vector sizes**: handle must map to exactly one payload op with exactly one index-typed result.
+- **Typically applied post-tiling**: vectorization works best after the op has been tiled to appropriate loop bounds.
+- **For `vectorize_children_and_apply_patterns`**: target must have the "isolated from above" property (e.g., a function or scf.forall with isolated semantics).
+- Silenceable failures occur if vectorization is not applicable to a particular op.
+
+---
+
+## Lookup keys used
+
+- `("Structured (Linalg) Transform Operations", "transform.structured.vectorize")`
+- `("Structured (Linalg) Transform Operations", "transform.structured.vectorize_children_and_apply_patterns")`
