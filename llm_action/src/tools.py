@@ -1,4 +1,5 @@
 from llm_action.src.utils.transformation import transform_bufferize_and_lower_v, execute_bufferized_code, run_transform_code
+from llm_action.src.documentation import load_documentation
 
 from agno.tools import tool
 
@@ -122,3 +123,32 @@ def execute_code(code: str) -> tuple[int, bool]:
         logger.info(f"[TOOL RESULT] Execution Time (ns): {real_exec_time}")
         logger.info(f"[TOOL RESULT] Assertion Success: {success}")
     return real_exec_time, success
+
+documentation = load_documentation()
+
+@tool(
+    name="lookup_transformation",
+    description="""
+    Looks up MLIR Transform dialect documentation for a specific transformation.
+    
+    This tool retrieves detailed documentation for a given transformation from the MLIR Transform dialect reference, including operation names, required operands/results, attributes, and example snippets.
+    
+    Args:
+        category_name: The name of the transformation category
+        transformation_name: The name of the specific transformation
+    
+    Returns:
+        Detailed documentation string for the specified transformation
+    """,
+    show_result=True,
+    stop_after_tool_call=False
+)
+def lookup_transformation(category_name: str, transformation_name: str) -> str:
+    if TOOL_VERBOSE:
+        logger.info("[TOOL] Executing `lookup_transformation`")
+        logger.info(f"[TOOL PARAM] Category: {category_name}")
+        logger.info(f"[TOOL PARAM] Name: {transformation_name}")
+    result = documentation[category_name][transformation_name]
+    if TOOL_VERBOSE:
+        logger.info(f"[TOOL RESULT] Result: {result}")
+    return result

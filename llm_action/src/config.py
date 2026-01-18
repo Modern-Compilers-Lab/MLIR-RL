@@ -19,3 +19,6 @@ ACTION_ENUMERATION_CACHE = "llm_action/results/action_enumeration/mixed/claude-h
 
 # Verbose logging
 TOOL_VERBOSE = True
+
+# Web
+MLIR_TRANSFORM_DIALECT_DOCS_URL = "https://mlir.llvm.org/docs/Dialects/Transform/"

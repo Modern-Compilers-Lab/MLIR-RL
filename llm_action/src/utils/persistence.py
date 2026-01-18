@@ -1,9 +1,10 @@
 import os
 import json
-from typing import Tuple, Union, Optional
+from typing import List, Tuple, Union, Optional
 
 from llm_action.src.utils.misc import random_id
-from llm_action.src.models import ClaudeModel, KernelType, ActionEnumeration, ActionPackage
+from llm_action.src.models import ClaudeModel, KernelType, ActionEnumeration, ActionPackage, DocTreeNode, Documentation
+from llm_action.src.utils.scrape import collect_md_tree, collect_md_doc
 
 from llm_action.src.config import ACTION_ENUMERATION_CACHE, CLAUDE_LLM_MODEL
 
@@ -87,3 +88,56 @@ def save_action_implementation_result(reasoning: str, action_package: ActionPack
         with open(playground_py_file_path, "w") as f:
             f.write(action_python_implementation)
     return dir, playground_py_file_path if save_to_playground else None
+
+def save_documentation_lookup_result(task: str, response: str, model: ClaudeModel = CLAUDE_LLM_MODEL, run_id: str = None) -> str:
+    if run_id:
+        dir = f"llm_action/results/runs/{run_id}/documentation_lookup"
+    else:
+        id = random_id()
+        dir = f"llm_action/results/documentation_lookup/{model.value}/{id}"
+    os.makedirs(dir, exist_ok=True)
+    lookup_file_path = f"{dir}/lookup.txt"
+    with open(lookup_file_path, "w") as f:
+        f.write(f"TASK:\n{task}\n\nRESPONSE:\n{response}")
+    return lookup_file_path
+
+def save_documentation(tree: DocTreeNode, outdir: str, filename: str = "documentation.json") -> str:
+    os.makedirs(outdir, exist_ok=True)
+    path = os.path.join(outdir, filename)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(tree.model_dump(), f, ensure_ascii=False, indent=2)
+    return path
+
+def save_documentation_doc_md(doc: Documentation, outdir: str, filename: str = "documentation.md") -> str:
+    os.makedirs(outdir, exist_ok=True)
+    path = os.path.join(outdir, filename)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(collect_md_doc(doc).rstrip() + "\n")
+    return path
+
+def save_documentation_tree_md(tree: DocTreeNode, outdir: str, filename: str = "documentation.md") -> str:
+    os.makedirs(outdir, exist_ok=True)
+    path = os.path.join(outdir, filename)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(collect_md_tree(tree).rstrip() + "\n")
+    return path
+
+def save_documentation_outline(tree: DocTreeNode, outdir: str, filename: str = "outline.txt") -> str:
+    os.makedirs(outdir, exist_ok=True)
+    path = os.path.join(outdir, filename)
+
+    lines: List[str] = []
+    
+    def walk(n: DocTreeNode):
+        if n.name != "ROOT":
+            indent = "  " * (max(n.level, 1) - 1)
+            lines.append(f"{indent}- {n.name}")
+        for c in n.children:
+            walk(c)
+
+    for c in tree.children:
+        walk(c)
+
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines).rstrip() + "\n")
+    return path

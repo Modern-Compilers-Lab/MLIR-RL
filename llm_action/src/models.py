@@ -51,3 +51,21 @@ class ActionPackage(BaseModel):
     name: str
     description: str
     parameters: List[Parameter]
+
+class DocTreeNode(BaseModel):
+    name: str
+    level: int
+    content: str
+    children: List["DocTreeNode"] = []
+
+class TransformationDocumentation(BaseModel):
+    name: str
+    label: str
+    content: str
+    
+class TransformationCategory(BaseModel):
+    name: str
+    transformations: List[TransformationDocumentation]
+
+class Documentation(BaseModel):
+    transformation_categories: List[TransformationCategory]
