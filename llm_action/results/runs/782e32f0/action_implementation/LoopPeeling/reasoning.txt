@@ -1,0 +1,1686 @@
+I'll analyze this task and implement the Loop Peeling action for the given optimization intent.
+
+## Reasoning
+
+**Understanding the Requirements:**
+
+1. **Transformation:** Loop Peeling - separates loop boundary conditions from the main loop body
+2. **Target:** Structured MLIR operations (linalg.matmul, linalg.conv_2d_nchw_fchw, linalg.generic) tagged with `tag = "operation_0"`
+3. **Hardware:** Broadwell CPU - L1/L2 cache optimization focus
+4. **Goal:** Enable aggressive optimizations on main loop body by peeling boundary iterations
+
+**Key Insights:**
+
+- Loop peeling works at the loop level - after a linalg operation is lowered to affine or scf loops
+- The action must apply peeling to loops within or emerging from the operation tagged `operation_0`
+- I need to use MLIR Transform dialect to:
+  1. Match the tagged operation
+  2. Expand/lower it into loops (if not already)
+  3. Apply loop peeling transformation
+  4. Let subsequent optimizations work on the main loop
+
+**Transform Dialect Approach:**
+
+Loop peeling in MLIR Transform dialect uses `transform.loop.peel`. I need to:
+1. Match the operation with tag `operation_0`
+2. Lower it to loops (using `transform.apply_patterns`)
+3. Peel a specified number of iterations from the outermost loops
+4. The peel count should be parameterizable (typically 1-2 for most loops)
+
+Let me verify the Transform dialect documentation first:I'll look up the loop peeling operation in the MLIR Transform dialect documentation.### `transform.loop.peel` (transform::LoopPeelOp) [¶](#transformlooppeel-transformlooppeelop)
+
+`transform.loop.peel`
+[¶](#transformlooppeel-transformlooppeelop)
+
+*Peels the first or last iteration of the loop*
+
+*Peels the first or last iteration of the loop*
+
+Syntax:
+
+```
+operation ::= `transform.loop.peel` $target attr-dict `:` functional-type(operands, results)
+```
+
+`` operation ::= `transform.loop.peel` $target attr-dict `:` functional-type(operands, results) ``
+
+Rewrite the given loop with a main loop and a partial (first or last) loop.
+When the `peelFront` option is set to true, the first iteration is peeled off.
+Otherwise, updates the given loop so that its step evenly divides its range and puts
+the remaining iteration into a separate loop or a conditional.
+
+`peelFront`
+
+In the absence of sufficient static information, this op may peel a loop,
+even if the step always divides the range evenly at runtime.
+
+---
+
+#### Return modes [¶](#return-modes-14)
+
+[¶](#return-modes-14)
+
+This operation ignores non-scf::ForOp ops and drops them in the return.
+The op returns two loops, the peeled loop which has trip count divisible
+by the step, and the remainder loop.
+
+When `peelFront` is true, the first result (remainder loop) executes all
+but the first iteration of the target loop. The second result (peeled
+loop) corresponds to the first iteration of the loop which can be
+canonicalized away in the following optimizations.
+
+`peelFront`
+
+When `peelFront` is false, the first result (peeled loop) is the portion
+of the target loop with the highest upper bound that is divisible by the
+step. The second result (remainder loop) contains the remaining iterations.
+
+`peelFront`
+
+Note that even though the Payload IR modification may be performed
+in-place, this operation consumes the operand handle and produces a new one.
+
+---
+
+#### Return Modes [¶](#return-modes-15)
+
+[¶](#return-modes-15)
+
+Produces a definite failure if peeling fails.
+
+Traits: `FunctionalStyleTransformOpTrait`, `TransformEachOpTrait`
+
+`FunctionalStyleTransformOpTrait`
+`TransformEachOpTrait`
+
+Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
+
+`MemoryEffectsOpInterface`
+`TransformOpInterface`
+
+---
+
+#### Attributes: [¶](#attributes-41)
+
+[¶](#attributes-41)
+
+| Attribute | MLIR Type | Description |
+| --- | --- | --- |
+| `peel_front` | ::mlir::BoolAttr | bool attribute |
+| `fail_if_already_divisible` | ::mlir::BoolAttr | bool attribute |
+
+| Attribute | MLIR Type | Description |
+ Attribute | MLIR Type | Description || `peel_front` | ::mlir::BoolAttr | bool attribute |
+ `peel_front` |`peel_front` ::mlir::BoolAttr | bool attribute || `fail_if_already_divisible` | ::mlir::BoolAttr | bool attribute |
+ `fail_if_already_divisible` |`fail_if_already_divisible` ::mlir::BoolAttr | bool attribute |
+
+---
+
+#### Operands: [¶](#operands-55)
+
+[¶](#operands-55)
+
+| Operand | Description |
+| --- | --- |
+| `target` | Transform IR handle to scf.for operations |
+
+| Operand | Description |
+| --- | --- |
+| Operand | Description |
+ Operand | Description || `target` | Transform IR handle to scf.for operations |
+| `target` | Transform IR handle to scf.for operations |
+ `target` |`target` Transform IR handle to scf.for operations |
+
+---
+
+#### Results: [¶](#results-38)
+
+[¶](#results-38)
+
+| Result | Description |
+| --- | --- |
+| `peeled_loop` | TransformHandleTypeInterface instance |
+| `remainder_loop` | TransformHandleTypeInterface instance |
+
+| Result | Description |
+| --- | --- |
+| Result | Description |
+ Result | Description || `peeled_loop` | TransformHandleTypeInterface instance |
+| `remainder_loop` | TransformHandleTypeInterface instance |
+| `peeled_loop` | TransformHandleTypeInterface instance |
+ `peeled_loop` |`peeled_loop` TransformHandleTypeInterface instance || `remainder_loop` | TransformHandleTypeInterface instance |
+ `remainder_loop` |`remainder_loop` TransformHandleTypeInterface instance |## Retrieved Documentation
+
+**Operation:** `transform.loop.peel`
+
+Peels the first or last iteration of a loop, rewriting it into a main loop with even step-to-range divisibility and a partial remainder loop.
+
+Key attributes:
+- **`peel_front`** (BoolAttr): If `true`, peels the first iteration; if `false`, peels the last iteration.
+- **`fail_if_already_divisible`** (BoolAttr): If `true`, fails if the step already evenly divides the range; if `false`, proceeds regardless.
+
+Operand:
+- **`target`**: Transform IR handle to `scf.for` operations.
+
+Results (two handles produced):
+1. **`peeled_loop`**: The peeled portion (first iteration if `peel_front=true`, otherwise the main divisible portion).
+2. **`remainder_loop`**: The remainder portion (main loop if `peel_front=true`, otherwise the last iterations).
+
+---
+
+## Answer
+
+- **Exact operation name:** `transform.loop.peel`
+- **Required operand:** A Transform handle bound to `scf.for` operations (e.g., via `transform.structured.match`).
+- **Two required attributes:**
+  - `peel_front: i1` — `true` to peel the first iteration, `false` to peel the last.
+  - `fail_if_already_divisible: i1` — controls behavior if step already divides range evenly.
+- **Produces two result handles:** `peeled_loop` and `remainder_loop`; both conform to `TransformHandleTypeInterface`.
+- **Legality:** Ignores non-`scf.for` ops and drops them from the result.
+- **Failure mode:** Produces a definite failure if peeling cannot be applied.
+
+---
+
+## Minimal Transform IR Skeleton
+
+```mlir
+module attributes {transform.with_named_sequence} {
+  transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {
+    %scf_for = transform.structured.match ops{["scf.for"]} in %arg0 : (!transform.any_op) -> !transform.any_op
+    %peeled_loop, %remainder_loop = transform.loop.peel %scf_for 
+      { peel_front = true, fail_if_already_divisible = false } 
+      : (!transform.any_op) -> (!transform.any_op, !transform.any_op)
+    transform.yield
+  }
+}
+```
+
+---
+
+## Constraints / Preconditions
+
+- **Required IR form:** Target must be `scf.for` operations (lowered structured loops).
+- **Handle typing:** Input is `!transform.any_op`; output handles are also `!transform.any_op`.
+- **Non-applicability:** If the operation targets non-`scf.for` ops, they are silently dropped from results.
+- **Attribute constraints:**
+  - `peel_front` and `fail_if_already_divisible` must be explicitly set.
+  - If `fail_if_already_divisible = true` and the step already divides the range, the operation fails.
+- **Consumption:** The operand handle is consumed; a new pair of handles is produced.
+
+---
+
+## Lookup Keys Used
+
+| Category | Transformation |
+|----------|-----------------|
+| `Loop (SCF) Transform Operations` | `transform.loop.peel` |Good. Now let me understand how to lower linalg operations to scf loops. Let me check:I'll retrieve the documentation for linalg-to-SCF loop conversion operations.### `transform.structured.convert_to_loops` (transform::ConvertToLoopsOp) [¶](#transformstructuredconvert_to_loops-transformconverttoloopsop)
+
+`transform.structured.convert_to_loops`
+[¶](#transformstructuredconvert_to_loops-transformconverttoloopsop)
+
+Syntax:
+
+```
+operation ::= `transform.structured.convert_to_loops` $target attr-dict `:` functional-type(operands, results)
+```
+
+`` operation ::= `transform.structured.convert_to_loops` $target attr-dict `:` functional-type(operands, results) ``
+
+For operations that implement the `TilingInterface`, and implement
+the `generateScalarImplementation` method, lowers the operation to
+loops. The return handle points to all generated loops.
+Fails if the payload ops cannot be lowered to loops.
+
+`TilingInterface`
+`generateScalarImplementation`
+
+Traits: `FunctionalStyleTransformOpTrait`, `ReportTrackingListenerFailuresOpTrait`
+
+`FunctionalStyleTransformOpTrait`
+`ReportTrackingListenerFailuresOpTrait`
+
+Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
+
+`MemoryEffectsOpInterface`
+`TransformOpInterface`
+
+---
+
+#### Operands: [¶](#operands-84)
+
+[¶](#operands-84)
+
+| Operand | Description |
+| --- | --- |
+| `target` | TransformHandleTypeInterface instance |
+
+| Operand | Description |
+| --- | --- |
+| Operand | Description |
+ Operand | Description || `target` | TransformHandleTypeInterface instance |
+| `target` | TransformHandleTypeInterface instance |
+ `target` |`target` TransformHandleTypeInterface instance |
+
+---
+
+#### Results: [¶](#results-59)
+
+[¶](#results-59)
+
+| Result | Description |
+| --- | --- |
+| `result` | TransformHandleTypeInterface instance |
+
+| Result | Description |
+| --- | --- |
+| Result | Description |
+ Result | Description || `result` | TransformHandleTypeInterface instance |
+| `result` | TransformHandleTypeInterface instance |
+ `result` |`result` TransformHandleTypeInterface instance |### `transform.loop.forall_to_for` (transform::ForallToForOp) [¶](#transformloopforall_to_for-transformforalltoforop)
+
+`transform.loop.forall_to_for`
+[¶](#transformloopforall_to_for-transformforalltoforop)
+
+*Converts scf.forall into a nest of scf.for operations*
+
+*Converts scf.forall into a nest of scf.for operations*
+
+Syntax:
+
+```
+operation ::= `transform.loop.forall_to_for` $target attr-dict `:` functional-type(operands, results)
+```
+
+`` operation ::= `transform.loop.forall_to_for` $target attr-dict `:` functional-type(operands, results) ``
+
+Converts the `scf.forall` operation pointed to by the given handle into a
+set of nested `scf.for` operations. Each new operation corresponds to one
+induction variable of the original “multifor” loop.
+
+`scf.forall`
+`scf.for`
+
+The operand handle must be associated with exactly one payload operation.
+
+Loops with shared outputs are currently not supported.
+
+---
+
+#### Return Modes [¶](#return-modes-9)
+
+[¶](#return-modes-9)
+
+Consumes the operand handle. Produces a silenceable failure if the operand
+is not associated with a single `scf.forall` payload operation.
+Returns as many handles as the given `forall` op has induction variables
+that are associated with the generated `scf.for` loops.
+Produces a silenceable failure if another number of resulting handles is
+requested.
+
+`scf.forall`
+`forall`
+`scf.for`
+
+Traits: `FunctionalStyleTransformOpTrait`
+
+`FunctionalStyleTransformOpTrait`
+
+Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
+
+`MemoryEffectsOpInterface`
+`TransformOpInterface`
+
+---
+
+#### Operands: [¶](#operands-50)
+
+[¶](#operands-50)
+
+| Operand | Description |
+| --- | --- |
+| `target` | TransformHandleTypeInterface instance |
+
+| Operand | Description |
+| --- | --- |
+| Operand | Description |
+ Operand | Description || `target` | TransformHandleTypeInterface instance |
+| `target` | TransformHandleTypeInterface instance |
+ `target` |`target` TransformHandleTypeInterface instance |
+
+---
+
+#### Results: [¶](#results-33)
+
+[¶](#results-33)
+
+| Result | Description |
+| --- | --- |
+| `transformed` | variadic of TransformHandleTypeInterface instance |
+
+| Result | Description |
+| --- | --- |
+| Result | Description |
+ Result | Description || `transformed` | variadic of TransformHandleTypeInterface instance |
+| `transformed` | variadic of TransformHandleTypeInterface instance |
+ `transformed` |`transformed` variadic of TransformHandleTypeInterface instance |---
+
+## Retrieved Documentation
+
+### Operation 1: `transform.structured.convert_to_loops`
+
+For operations implementing the `TilingInterface` and `generateScalarImplementation` method, lowers the operation to loops. The return handle points to all generated loops.
+
+**Operand:**
+- `target`: TransformHandleTypeInterface instance (the linalg op to lower)
+
+**Results:**
+- `result`: TransformHandleTypeInterface instance (generated loops)
+
+**Traits:** FunctionalStyleTransformOpTrait, ReportTrackingListenerFailuresOpTrait
+
+---
+
+### Operation 2: `transform.loop.forall_to_for`
+
+Converts `scf.forall` into a nest of `scf.for` operations. Each induction variable of the original loop becomes a separate `scf.for`.
+
+**Operand:**
+- `target`: TransformHandleTypeInterface instance (the forall loop)
+
+**Results:**
+- `transformed`: variadic of TransformHandleTypeInterface instance (one handle per generated `scf.for`)
+
+**Traits:** FunctionalStyleTransformOpTrait
+
+---
+
+## Answer
+
+1. **Primary operation**: `transform.structured.convert_to_loops` directly lowers linalg operations (that implement `TilingInterface`) to `scf.for` loops.
+2. **Prerequisites**: The target linalg operation must implement the `TilingInterface` and provide a `generateScalarImplementation` method.
+3. **Common linalg operations** supporting this include: `linalg.generic`, `linalg.matmul`, `linalg.conv_2d`, and similar structured ops.
+4. **Alternative path**: If you first tile with `transform.structured.tile_using_forall`, use `transform.loop.forall_to_for` to convert the resulting `scf.forall` nests into `scf.for` nests.
+5. **Return semantics**: The operation returns a handle to all generated loops.
+6. **Failure handling**: The operation fails silently if the payload op cannot be lowered.
+
+---
+
+## Minimal Transform IR Skeleton
+
+```mlir
+transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {
+  %matched = transform.structured.match attributes{tag = "operation_0"} in %arg0 : (!transform.any_op) -> !transform.any_op
+  %loops = transform.structured.convert_to_loops %matched : (!transform.any_op) -> !transform.any_op
+  transform.yield
+}
+```
+
+---
+
+## Constraints / Preconditions
+
+- **TilingInterface requirement**: The target linalg operation must implement `TilingInterface`.
+- **ScalarImplementation requirement**: The operation must provide a `generateScalarImplementation` method.
+- **Single operation**: Each call operates on one matched operation.
+- **Failure is silenceable**: If lowering cannot occur, the operation fails gracefully without crashing.
+- **No shared outputs**: When using `forall_to_for`, loops with shared outputs are not supported.
+
+---
+
+## Lookup Keys Used
+
+- `("Structured (Linalg) Transform Operations", "transform.structured.convert_to_loops")`
+- `("Loop (SCF) Transform Operations", "transform.loop.forall_to_for")`Perfect! Now let me test the baseline execution and then develop the loop peeling transformation. Let me start with a concrete instance:(1798815, True)Good! Baseline execution works. Now let me develop the loop peeling transformation. I'll construct a transform sequence that:
+
+1. Matches the operation with `tag = "operation_0"`
+2. Converts it to loops using `transform.structured.convert_to_loops`
+3. Peels the first iteration(s) from the outermost loop
+
+Let me test this transform:I see. The issue is that `transform.loop.peel` expects a more specific handle type. Let me adjust - I need to cast the result or use a different approach. Let me check how to properly handle the loops returned from `convert_to_loops`:I'll retrieve documentation for both `transform.structured.convert_to_loops` and `transform.loop.peel` to understand handle typing and compatibility.### `transform.structured.convert_to_loops` (transform::ConvertToLoopsOp) [¶](#transformstructuredconvert_to_loops-transformconverttoloopsop)
+
+`transform.structured.convert_to_loops`
+[¶](#transformstructuredconvert_to_loops-transformconverttoloopsop)
+
+Syntax:
+
+```
+operation ::= `transform.structured.convert_to_loops` $target attr-dict `:` functional-type(operands, results)
+```
+
+`` operation ::= `transform.structured.convert_to_loops` $target attr-dict `:` functional-type(operands, results) ``
+
+For operations that implement the `TilingInterface`, and implement
+the `generateScalarImplementation` method, lowers the operation to
+loops. The return handle points to all generated loops.
+Fails if the payload ops cannot be lowered to loops.
+
+`TilingInterface`
+`generateScalarImplementation`
+
+Traits: `FunctionalStyleTransformOpTrait`, `ReportTrackingListenerFailuresOpTrait`
+
+`FunctionalStyleTransformOpTrait`
+`ReportTrackingListenerFailuresOpTrait`
+
+Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
+
+`MemoryEffectsOpInterface`
+`TransformOpInterface`
+
+---
+
+#### Operands: [¶](#operands-84)
+
+[¶](#operands-84)
+
+| Operand | Description |
+| --- | --- |
+| `target` | TransformHandleTypeInterface instance |
+
+| Operand | Description |
+| --- | --- |
+| Operand | Description |
+ Operand | Description || `target` | TransformHandleTypeInterface instance |
+| `target` | TransformHandleTypeInterface instance |
+ `target` |`target` TransformHandleTypeInterface instance |
+
+---
+
+#### Results: [¶](#results-59)
+
+[¶](#results-59)
+
+| Result | Description |
+| --- | --- |
+| `result` | TransformHandleTypeInterface instance |
+
+| Result | Description |
+| --- | --- |
+| Result | Description |
+ Result | Description || `result` | TransformHandleTypeInterface instance |
+| `result` | TransformHandleTypeInterface instance |
+ `result` |`result` TransformHandleTypeInterface instance |### `transform.loop.peel` (transform::LoopPeelOp) [¶](#transformlooppeel-transformlooppeelop)
+
+`transform.loop.peel`
+[¶](#transformlooppeel-transformlooppeelop)
+
+*Peels the first or last iteration of the loop*
+
+*Peels the first or last iteration of the loop*
+
+Syntax:
+
+```
+operation ::= `transform.loop.peel` $target attr-dict `:` functional-type(operands, results)
+```
+
+`` operation ::= `transform.loop.peel` $target attr-dict `:` functional-type(operands, results) ``
+
+Rewrite the given loop with a main loop and a partial (first or last) loop.
+When the `peelFront` option is set to true, the first iteration is peeled off.
+Otherwise, updates the given loop so that its step evenly divides its range and puts
+the remaining iteration into a separate loop or a conditional.
+
+`peelFront`
+
+In the absence of sufficient static information, this op may peel a loop,
+even if the step always divides the range evenly at runtime.
+
+---
+
+#### Return modes [¶](#return-modes-14)
+
+[¶](#return-modes-14)
+
+This operation ignores non-scf::ForOp ops and drops them in the return.
+The op returns two loops, the peeled loop which has trip count divisible
+by the step, and the remainder loop.
+
+When `peelFront` is true, the first result (remainder loop) executes all
+but the first iteration of the target loop. The second result (peeled
+loop) corresponds to the first iteration of the loop which can be
+canonicalized away in the following optimizations.
+
+`peelFront`
+
+When `peelFront` is false, the first result (peeled loop) is the portion
+of the target loop with the highest upper bound that is divisible by the
+step. The second result (remainder loop) contains the remaining iterations.
+
+`peelFront`
+
+Note that even though the Payload IR modification may be performed
+in-place, this operation consumes the operand handle and produces a new one.
+
+---
+
+#### Return Modes [¶](#return-modes-15)
+
+[¶](#return-modes-15)
+
+Produces a definite failure if peeling fails.
+
+Traits: `FunctionalStyleTransformOpTrait`, `TransformEachOpTrait`
+
+`FunctionalStyleTransformOpTrait`
+`TransformEachOpTrait`
+
+Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
+
+`MemoryEffectsOpInterface`
+`TransformOpInterface`
+
+---
+
+#### Attributes: [¶](#attributes-41)
+
+[¶](#attributes-41)
+
+| Attribute | MLIR Type | Description |
+| --- | --- | --- |
+| `peel_front` | ::mlir::BoolAttr | bool attribute |
+| `fail_if_already_divisible` | ::mlir::BoolAttr | bool attribute |
+
+| Attribute | MLIR Type | Description |
+ Attribute | MLIR Type | Description || `peel_front` | ::mlir::BoolAttr | bool attribute |
+ `peel_front` |`peel_front` ::mlir::BoolAttr | bool attribute || `fail_if_already_divisible` | ::mlir::BoolAttr | bool attribute |
+ `fail_if_already_divisible` |`fail_if_already_divisible` ::mlir::BoolAttr | bool attribute |
+
+---
+
+#### Operands: [¶](#operands-55)
+
+[¶](#operands-55)
+
+| Operand | Description |
+| --- | --- |
+| `target` | Transform IR handle to scf.for operations |
+
+| Operand | Description |
+| --- | --- |
+| Operand | Description |
+ Operand | Description || `target` | Transform IR handle to scf.for operations |
+| `target` | Transform IR handle to scf.for operations |
+ `target` |`target` Transform IR handle to scf.for operations |
+
+---
+
+#### Results: [¶](#results-38)
+
+[¶](#results-38)
+
+| Result | Description |
+| --- | --- |
+| `peeled_loop` | TransformHandleTypeInterface instance |
+| `remainder_loop` | TransformHandleTypeInterface instance |
+
+| Result | Description |
+| --- | --- |
+| Result | Description |
+ Result | Description || `peeled_loop` | TransformHandleTypeInterface instance |
+| `remainder_loop` | TransformHandleTypeInterface instance |
+| `peeled_loop` | TransformHandleTypeInterface instance |
+ `peeled_loop` |`peeled_loop` TransformHandleTypeInterface instance || `remainder_loop` | TransformHandleTypeInterface instance |
+ `remainder_loop` |`remainder_loop` TransformHandleTypeInterface instance |### `transform.cast` (transform::CastOp) [¶](#transformcast-transformcastop)
+
+`transform.cast`
+[¶](#transformcast-transformcastop)
+
+Syntax:
+
+```
+operation ::= `transform.cast` $input attr-dict `:` type($input) `to` type($output)
+```
+
+`` operation ::= `transform.cast` $input attr-dict `:` type($input) `to` type($output) ``
+
+Traits: `TransformEachOpTrait`
+
+`TransformEachOpTrait`
+
+Interfaces: `CastOpInterface`, `MemoryEffectOpInterface`, `TransformOpInterface`
+
+`CastOpInterface`
+`MemoryEffectOpInterface`
+`TransformOpInterface`
+
+---
+
+#### Operands: [¶](#operands-8)
+
+[¶](#operands-8)
+
+| Operand | Description |
+| --- | --- |
+| `input` | TransformHandleTypeInterface instance |
+
+| Operand | Description |
+| --- | --- |
+| Operand | Description |
+ Operand | Description || `input` | TransformHandleTypeInterface instance |
+| `input` | TransformHandleTypeInterface instance |
+ `input` |`input` TransformHandleTypeInterface instance |
+
+---
+
+#### Results: [¶](#results-2)
+
+[¶](#results-2)
+
+| Result | Description |
+| --- | --- |
+| `output` | TransformHandleTypeInterface instance |
+
+| Result | Description |
+| --- | --- |
+| Result | Description |
+ Result | Description || `output` | TransformHandleTypeInterface instance |
+| `output` | TransformHandleTypeInterface instance |
+ `output` |`output` TransformHandleTypeInterface instance |## Retrieved Documentation
+
+### 1. `transform.structured.convert_to_loops`
+
+For operations that implement the `TilingInterface` and `generateScalarImplementation`, lowers the operation to loops. **The return handle points to all generated loops.**
+
+- **Operand:** `target` (TransformHandleTypeInterface instance)
+- **Result:** `result` (TransformHandleTypeInterface instance)
+
+### 2. `transform.loop.peel`
+
+Peels the first or last iteration of a loop (scf.for). **Requires the operand to be a Transform IR handle to scf.for operations.**
+
+Returns **two results:**
+1. `peeled_loop` (TransformHandleTypeInterface instance)
+2. `remainder_loop` (TransformHandleTypeInterface instance)
+
+- **Operand:** `target` (Transform IR handle to **scf.for operations**) 
+- **Attributes:** `peel_front` (BoolAttr), `fail_if_already_divisible` (BoolAttr)
+
+### 3. `transform.cast`
+
+Generic handle type casting operation.
+
+- **Operand:** `input` (TransformHandleTypeInterface instance)
+- **Result:** `output` (TransformHandleTypeInterface instance)
+- **Syntax:** `` transform.cast %input : type1 to type2 ``
+
+---
+
+## Answer
+
+1. **`convert_to_loops` returns a handle to all generated `scf.for` loops**, which is exactly what `loop.peel` expects as input—no explicit casting needed in well-typed scenarios.
+
+2. **If you have a mix of ops** from `convert_to_loops` and need to filter only the `scf.for` operations, use `transform.structured.match` to select only forall/loop ops before passing to `peel`.
+
+3. **Use `transform.cast`** only if the Transform dialect type system requires explicit narrowing (e.g., from a generic `!transform.any_op` to a more specific handle type). Most direct chains (`convert_to_loops` → `loop.peel`) work without casting.
+
+4. **`loop.peel` consumes its operand handle** (as noted: "this operation consumes the operand handle and produces a new one"). Always bind the two results (`peeled_loop`, `remainder_loop`) if you need to reference them downstream.
+
+5. **If ops are dropped**, the documentation states `peel` "ignores non-scf::ForOp ops and drops them in the return"—meaning if `convert_to_loops` produced mixed ops, only the `scf.for` instances are peeled.
+
+---
+
+## Minimal Transform IR Skeleton
+
+```mlir
+module attributes {transform.with_named_sequence} {
+  transform.named_sequence @__transform_main(%arg1: !transform.any_op {transform.readonly}) {
+    %ops = transform.structured.match attributes{tag = "operation_0"} in %arg1 : (!transform.any_op) -> !transform.any_op
+    %loops = transform.structured.convert_to_loops %ops : (!transform.any_op) -> !transform.any_op
+    %peeled, %remainder = transform.loop.peel %loops {peel_front = true} : (!transform.any_op) -> (!transform.any_op, !transform.any_op)
+    transform.yield
+  }
+}
+```
+
+---
+
+## Constraints / Preconditions
+
+- **Payload requirement:** The operation matched by `%ops` must implement `TilingInterface` and `generateScalarImplementation` to be convertible to loops.
+- **Handle compatibility:** `convert_to_loops` returns handles to `scf.for` ops (or mixed ops). `loop.peel` only accepts `scf.for` handles and ignores others.
+- **No explicit cast needed:** If `convert_to_loops` is the direct source, the handle type is already compatible. Use `transform.cast` only for deliberate type narrowing.
+- **Dual results:** `loop.peel` always produces two handles; both must be bound or yielded. Failing to consume them may cause unused-handle errors.
+- **Failure modes:** `loop.peel` produces a definite failure if peeling cannot be performed on an `scf.for`.
+
+---
+
+## Lookup Keys Used
+
+- `("Structured (Linalg) Transform Operations", "transform.structured.convert_to_loops")`
+- `("Loop (SCF) Transform Operations", "transform.loop.peel")`
+- `("Core Operations", "transform.cast")`Interesting. It seems the documentation says it should work, but there may be a type mismatch. Let me try a different approach - maybe I need to select the loops first using `transform.structured.match`:The type system is strict. Let me check what the actual transform result type should be:I'll look up the documentation for SCF loop operations in the Transform dialect to clarify the correct type annotation.### `transform.loop.unroll` (transform::LoopUnrollOp) [¶](#transformloopunroll-transformloopunrollop)
+
+`transform.loop.unroll`
+[¶](#transformloopunroll-transformloopunrollop)
+
+*Unrolls the given loop with the given unroll factor*
+
+*Unrolls the given loop with the given unroll factor*
+
+Syntax:
+
+```
+operation ::= `transform.loop.unroll` $target attr-dict `:` type($target)
+```
+
+`` operation ::= `transform.loop.unroll` $target attr-dict `:` type($target) ``
+
+Unrolls each loop associated with the given handle to have up to the given
+number of loop body copies per iteration. If the unroll factor is larger
+than the loop trip count, the latter is used as the unroll factor instead.
+
+---
+
+#### Return modes [¶](#return-modes-19)
+
+[¶](#return-modes-19)
+
+This operation ignores non-`scf.for`, non-`affine.for` ops and drops them
+in the return. If all the operations referred to by the `target` operand
+unroll properly, the transform succeeds. Otherwise the transform produces a
+silenceable failure.
+
+`scf.for`
+`affine.for`
+`target`
+
+Does not return handles as the operation may result in the loop being
+removed after a full unrolling.
+
+Traits: `FunctionalStyleTransformOpTrait`, `TransformEachOpTrait`
+
+`FunctionalStyleTransformOpTrait`
+`TransformEachOpTrait`
+
+Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
+
+`MemoryEffectsOpInterface`
+`TransformOpInterface`
+
+---
+
+#### Attributes: [¶](#attributes-44)
+
+[¶](#attributes-44)
+
+| Attribute | MLIR Type | Description |
+| --- | --- | --- |
+| `factor` | ::mlir::IntegerAttr | 64-bit signless integer attribute whose value is positive |
+
+| Attribute | MLIR Type | Description |
+ Attribute | MLIR Type | Description || `factor` | ::mlir::IntegerAttr | 64-bit signless integer attribute whose value is positive |
+ `factor` |`factor` ::mlir::IntegerAttr | 64-bit signless integer attribute whose value is positive |
+
+---
+
+#### Operands: [¶](#operands-59)
+
+[¶](#operands-59)
+
+| Operand | Description |
+| --- | --- |
+| `target` | TransformHandleTypeInterface instance |
+
+| Operand | Description |
+| --- | --- |
+| Operand | Description |
+ Operand | Description || `target` | TransformHandleTypeInterface instance |
+| `target` | TransformHandleTypeInterface instance |
+ `target` |`target` TransformHandleTypeInterface instance |### `transform.loop.coalesce` (transform::LoopCoalesceOp) [¶](#transformloopcoalesce-transformloopcoalesceop)
+
+`transform.loop.coalesce`
+[¶](#transformloopcoalesce-transformloopcoalesceop)
+
+*Coalesces the perfect loop nest enclosed by a given loop*
+
+*Coalesces the perfect loop nest enclosed by a given loop*
+
+Syntax:
+
+```
+operation ::= `transform.loop.coalesce` $target attr-dict `:` functional-type($target, $transformed)
+```
+
+`` operation ::= `transform.loop.coalesce` $target attr-dict `:` functional-type($target, $transformed) ``
+
+Given a perfect loop nest identified by the outermost loop,
+perform loop coalescing in a bottom-up one-by-one manner.
+
+---
+
+#### Return modes [¶](#return-modes-11)
+
+[¶](#return-modes-11)
+
+The return handle points to the coalesced loop if coalescing happens, or
+the given input loop if coalescing does not happen.
+
+Traits: `FunctionalStyleTransformOpTrait`, `TransformEachOpTrait`
+
+`FunctionalStyleTransformOpTrait`
+`TransformEachOpTrait`
+
+Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
+
+`MemoryEffectsOpInterface`
+`TransformOpInterface`
+
+---
+
+#### Operands: [¶](#operands-52)
+
+[¶](#operands-52)
+
+| Operand | Description |
+| --- | --- |
+| `target` | TransformHandleTypeInterface instance |
+
+| Operand | Description |
+| --- | --- |
+| Operand | Description |
+ Operand | Description || `target` | TransformHandleTypeInterface instance |
+| `target` | TransformHandleTypeInterface instance |
+ `target` |`target` TransformHandleTypeInterface instance |
+
+---
+
+#### Results: [¶](#results-35)
+
+[¶](#results-35)
+
+| Result | Description |
+| --- | --- |
+| `transformed` | TransformHandleTypeInterface instance |
+
+| Result | Description |
+| --- | --- |
+| Result | Description |
+ Result | Description || `transformed` | TransformHandleTypeInterface instance |
+| `transformed` | TransformHandleTypeInterface instance |
+ `transformed` |`transformed` TransformHandleTypeInterface instance |### `transform.loop.pipeline` (transform::LoopPipelineOp) [¶](#transformlooppipeline-transformlooppipelineop)
+
+`transform.loop.pipeline`
+[¶](#transformlooppipeline-transformlooppipelineop)
+
+*Applies software pipelining to the loop*
+
+*Applies software pipelining to the loop*
+
+Syntax:
+
+```
+operation ::= `transform.loop.pipeline` $target attr-dict `:` functional-type(operands, results)
+```
+
+`` operation ::= `transform.loop.pipeline` $target attr-dict `:` functional-type(operands, results) ``
+
+Transforms the given loops one by one to achieve software pipelining for
+each of them. That is, performs some amount of reads from memory before the
+loop rather than inside the loop, the same amount of writes into memory
+after the loop, and updates each iteration to read the data for a following
+iteration rather than the current one.
+
+The amount is specified by the attributes.
+
+The values read and about to be stored are transferred as loop iteration
+arguments. Currently supports memref and vector transfer operations as
+memory reads/writes.
+
+---
+
+#### Return modes [¶](#return-modes-16)
+
+[¶](#return-modes-16)
+
+This operation ignores non-scf::For ops and drops them in the return.
+If all the operations referred to by the `target` PDLOperation pipeline
+properly, the transform succeeds. Otherwise the transform produces a
+silenceable failure. The return handle points to only the subset of
+successfully produced pipelined loops, which can be empty.
+
+`target`
+
+Traits: `FunctionalStyleTransformOpTrait`, `TransformEachOpTrait`
+
+`FunctionalStyleTransformOpTrait`
+`TransformEachOpTrait`
+
+Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
+
+`MemoryEffectsOpInterface`
+`TransformOpInterface`
+
+---
+
+#### Attributes: [¶](#attributes-42)
+
+[¶](#attributes-42)
+
+| Attribute | MLIR Type | Description |
+| --- | --- | --- |
+| `iteration_interval` | ::mlir::IntegerAttr | 64-bit signless integer attribute |
+| `read_latency` | ::mlir::IntegerAttr | 64-bit signless integer attribute |
+
+| Attribute | MLIR Type | Description |
+ Attribute | MLIR Type | Description || `iteration_interval` | ::mlir::IntegerAttr | 64-bit signless integer attribute |
+ `iteration_interval` |`iteration_interval` ::mlir::IntegerAttr | 64-bit signless integer attribute || `read_latency` | ::mlir::IntegerAttr | 64-bit signless integer attribute |
+ `read_latency` |`read_latency` ::mlir::IntegerAttr | 64-bit signless integer attribute |
+
+---
+
+#### Operands: [¶](#operands-56)
+
+[¶](#operands-56)
+
+| Operand | Description |
+| --- | --- |
+| `target` | Transform IR handle to scf.for operations |
+
+| Operand | Description |
+| --- | --- |
+| Operand | Description |
+ Operand | Description || `target` | Transform IR handle to scf.for operations |
+| `target` | Transform IR handle to scf.for operations |
+ `target` |`target` Transform IR handle to scf.for operations |
+
+---
+
+#### Results: [¶](#results-39)
+
+[¶](#results-39)
+
+| Result | Description |
+| --- | --- |
+| `transformed` | TransformHandleTypeInterface instance |
+
+| Result | Description |
+| --- | --- |
+| Result | Description |
+ Result | Description || `transformed` | TransformHandleTypeInterface instance |
+| `transformed` | TransformHandleTypeInterface instance |
+ `transformed` |`transformed` TransformHandleTypeInterface instance |Let me also check the core Transform operations documentation for clarification on type annotation conventions:### `transform.cast` (transform::CastOp) [¶](#transformcast-transformcastop)
+
+`transform.cast`
+[¶](#transformcast-transformcastop)
+
+Syntax:
+
+```
+operation ::= `transform.cast` $input attr-dict `:` type($input) `to` type($output)
+```
+
+`` operation ::= `transform.cast` $input attr-dict `:` type($input) `to` type($output) ``
+
+Traits: `TransformEachOpTrait`
+
+`TransformEachOpTrait`
+
+Interfaces: `CastOpInterface`, `MemoryEffectOpInterface`, `TransformOpInterface`
+
+`CastOpInterface`
+`MemoryEffectOpInterface`
+`TransformOpInterface`
+
+---
+
+#### Operands: [¶](#operands-8)
+
+[¶](#operands-8)
+
+| Operand | Description |
+| --- | --- |
+| `input` | TransformHandleTypeInterface instance |
+
+| Operand | Description |
+| --- | --- |
+| Operand | Description |
+ Operand | Description || `input` | TransformHandleTypeInterface instance |
+| `input` | TransformHandleTypeInterface instance |
+ `input` |`input` TransformHandleTypeInterface instance |
+
+---
+
+#### Results: [¶](#results-2)
+
+[¶](#results-2)
+
+| Result | Description |
+| --- | --- |
+| `output` | TransformHandleTypeInterface instance |
+
+| Result | Description |
+| --- | --- |
+| Result | Description |
+ Result | Description || `output` | TransformHandleTypeInterface instance |
+| `output` | TransformHandleTypeInterface instance |
+ `output` |`output` TransformHandleTypeInterface instance |## Retrieved Documentation (verbatim)
+
+**transform.loop.pipeline:**
+- Operand `target`: "Transform IR handle to scf.for operations"
+- Results: `transformed` (TransformHandleTypeInterface instance)
+
+**transform.loop.unroll:**
+- Operand `target`: TransformHandleTypeInterface instance
+- Notes: "This operation ignores non-`scf.for`, non-`affine.for` ops and drops them in the return."
+
+**transform.loop.coalesce:**
+- Operand `target`: TransformHandleTypeInterface instance
+- Notes: "Given a perfect loop nest identified by the outermost loop..."
+
+**transform.cast:**
+- Operand `input`: TransformHandleTypeInterface instance
+- Result `output`: TransformHandleTypeInterface instance
+
+---
+
+## Answer
+
+1. **The retrieved documentation specifies operands as `TransformHandleTypeInterface instance`** — this is a generic type interface, not a concrete type annotation like `!transform.op<"scf.for">`.
+
+2. **`!transform.any_op` is the correct concrete type to use in Transform IR syntax** when matching scf.for operations. It is the broad handle type that matches any operation, including scf.for.
+
+3. **`!transform.op<"scf.for">` is NOT used in the standard Transform dialect.** The narrower matching is done via `transform.structured.match`, `transform.collect_matching`, or matching attributes (e.g., `tag = "operation_0"`), not via type narrowing in the operand declaration.
+
+4. **When you need to restrict matches to scf.for specifically**, use matching operations (e.g., `transform.foreach_match` + `transform.match.operation_name`) to filter results before passing handles to loop operations like `transform.loop.unroll`.
+
+5. **In your Transform IR sequence**, pass handles typed as `!transform.any_op` or `!transform.op` (the generic handle type) to SCF loop operations — they will introspect the payload IR and reject non-loop operations at runtime with silenceable failures.
+
+---
+
+## Minimal Transform IR skeleton
+
+```mlir
+module attributes { transform.with_named_sequence } {
+  transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {
+    // Match ops with tag = "operation_0"
+    %matched = transform.structured.match attributes { tag = "operation_0" } in %arg0 
+      : (!transform.any_op) -> !transform.any_op
+    
+    // Apply loop unroll (target typed as !transform.any_op)
+    transform.loop.unroll %matched { factor = 4 } : !transform.any_op
+    
+    transform.yield
+  }
+}
+```
+
+---
+
+## Constraints / Preconditions
+
+- **Handle typing**: Operands to SCF loop operations accept `!transform.any_op` (not narrower types like `!transform.op<"scf.for">`).
+- **Runtime filtering**: The transform operation itself checks if the payload op is an `scf.for` or `affine.for`; non-loop ops are silently dropped.
+- **Matching before passing**: If you need strict `scf.for` matching, match by operation name or attribute *before* passing to loop transforms, then pass the filtered handle.
+- **Perfect loop nest requirement**: `transform.loop.coalesce` requires a perfect loop nest structure in the payload IR.
+
+---
+
+## Lookup keys used
+
+- `("Loop (SCF) Transform Operations", "transform.loop.unroll")`
+- `("Loop (SCF) Transform Operations", "transform.loop.coalesce")`
+- `("Loop (SCF) Transform Operations", "transform.loop.pipeline")`
+- `("Core Operations", "transform.cast")`Now I understand. The handle type `!transform.any_op` is correct, but the issue might be that `convert_to_loops` doesn't return the right type or the operation flow isn't correctly set up. Let me try a simpler approach - maybe I need to just apply the peel operation without the intermediate match:There's a strict type check. Let me try using a type annotation - perhaps we need to explicitly bind to a more specific type in the return:That failed. Let me try a different strategy - maybe loop peeling works better after applying tile_using_for first. Let me try a simpler, standalone approach - just apply tile with specific sizes and see if that works as a baseline:I'll retrieve the documentation for loop peeling and related loop conversion operations to provide you with a working example.### `transform.loop.peel` (transform::LoopPeelOp) [¶](#transformlooppeel-transformlooppeelop)
+
+`transform.loop.peel`
+[¶](#transformlooppeel-transformlooppeelop)
+
+*Peels the first or last iteration of the loop*
+
+*Peels the first or last iteration of the loop*
+
+Syntax:
+
+```
+operation ::= `transform.loop.peel` $target attr-dict `:` functional-type(operands, results)
+```
+
+`` operation ::= `transform.loop.peel` $target attr-dict `:` functional-type(operands, results) ``
+
+Rewrite the given loop with a main loop and a partial (first or last) loop.
+When the `peelFront` option is set to true, the first iteration is peeled off.
+Otherwise, updates the given loop so that its step evenly divides its range and puts
+the remaining iteration into a separate loop or a conditional.
+
+`peelFront`
+
+In the absence of sufficient static information, this op may peel a loop,
+even if the step always divides the range evenly at runtime.
+
+---
+
+#### Return modes [¶](#return-modes-14)
+
+[¶](#return-modes-14)
+
+This operation ignores non-scf::ForOp ops and drops them in the return.
+The op returns two loops, the peeled loop which has trip count divisible
+by the step, and the remainder loop.
+
+When `peelFront` is true, the first result (remainder loop) executes all
+but the first iteration of the target loop. The second result (peeled
+loop) corresponds to the first iteration of the loop which can be
+canonicalized away in the following optimizations.
+
+`peelFront`
+
+When `peelFront` is false, the first result (peeled loop) is the portion
+of the target loop with the highest upper bound that is divisible by the
+step. The second result (remainder loop) contains the remaining iterations.
+
+`peelFront`
+
+Note that even though the Payload IR modification may be performed
+in-place, this operation consumes the operand handle and produces a new one.
+
+---
+
+#### Return Modes [¶](#return-modes-15)
+
+[¶](#return-modes-15)
+
+Produces a definite failure if peeling fails.
+
+Traits: `FunctionalStyleTransformOpTrait`, `TransformEachOpTrait`
+
+`FunctionalStyleTransformOpTrait`
+`TransformEachOpTrait`
+
+Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
+
+`MemoryEffectsOpInterface`
+`TransformOpInterface`
+
+---
+
+#### Attributes: [¶](#attributes-41)
+
+[¶](#attributes-41)
+
+| Attribute | MLIR Type | Description |
+| --- | --- | --- |
+| `peel_front` | ::mlir::BoolAttr | bool attribute |
+| `fail_if_already_divisible` | ::mlir::BoolAttr | bool attribute |
+
+| Attribute | MLIR Type | Description |
+ Attribute | MLIR Type | Description || `peel_front` | ::mlir::BoolAttr | bool attribute |
+ `peel_front` |`peel_front` ::mlir::BoolAttr | bool attribute || `fail_if_already_divisible` | ::mlir::BoolAttr | bool attribute |
+ `fail_if_already_divisible` |`fail_if_already_divisible` ::mlir::BoolAttr | bool attribute |
+
+---
+
+#### Operands: [¶](#operands-55)
+
+[¶](#operands-55)
+
+| Operand | Description |
+| --- | --- |
+| `target` | Transform IR handle to scf.for operations |
+
+| Operand | Description |
+| --- | --- |
+| Operand | Description |
+ Operand | Description || `target` | Transform IR handle to scf.for operations |
+| `target` | Transform IR handle to scf.for operations |
+ `target` |`target` Transform IR handle to scf.for operations |
+
+---
+
+#### Results: [¶](#results-38)
+
+[¶](#results-38)
+
+| Result | Description |
+| --- | --- |
+| `peeled_loop` | TransformHandleTypeInterface instance |
+| `remainder_loop` | TransformHandleTypeInterface instance |
+
+| Result | Description |
+| --- | --- |
+| Result | Description |
+ Result | Description || `peeled_loop` | TransformHandleTypeInterface instance |
+| `remainder_loop` | TransformHandleTypeInterface instance |
+| `peeled_loop` | TransformHandleTypeInterface instance |
+ `peeled_loop` |`peeled_loop` TransformHandleTypeInterface instance || `remainder_loop` | TransformHandleTypeInterface instance |
+ `remainder_loop` |`remainder_loop` TransformHandleTypeInterface instance |### `transform.structured.convert_to_loops` (transform::ConvertToLoopsOp) [¶](#transformstructuredconvert_to_loops-transformconverttoloopsop)
+
+`transform.structured.convert_to_loops`
+[¶](#transformstructuredconvert_to_loops-transformconverttoloopsop)
+
+Syntax:
+
+```
+operation ::= `transform.structured.convert_to_loops` $target attr-dict `:` functional-type(operands, results)
+```
+
+`` operation ::= `transform.structured.convert_to_loops` $target attr-dict `:` functional-type(operands, results) ``
+
+For operations that implement the `TilingInterface`, and implement
+the `generateScalarImplementation` method, lowers the operation to
+loops. The return handle points to all generated loops.
+Fails if the payload ops cannot be lowered to loops.
+
+`TilingInterface`
+`generateScalarImplementation`
+
+Traits: `FunctionalStyleTransformOpTrait`, `ReportTrackingListenerFailuresOpTrait`
+
+`FunctionalStyleTransformOpTrait`
+`ReportTrackingListenerFailuresOpTrait`
+
+Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
+
+`MemoryEffectsOpInterface`
+`TransformOpInterface`
+
+---
+
+#### Operands: [¶](#operands-84)
+
+[¶](#operands-84)
+
+| Operand | Description |
+| --- | --- |
+| `target` | TransformHandleTypeInterface instance |
+
+| Operand | Description |
+| --- | --- |
+| Operand | Description |
+ Operand | Description || `target` | TransformHandleTypeInterface instance |
+| `target` | TransformHandleTypeInterface instance |
+ `target` |`target` TransformHandleTypeInterface instance |
+
+---
+
+#### Results: [¶](#results-59)
+
+[¶](#results-59)
+
+| Result | Description |
+| --- | --- |
+| `result` | TransformHandleTypeInterface instance |
+
+| Result | Description |
+| --- | --- |
+| Result | Description |
+ Result | Description || `result` | TransformHandleTypeInterface instance |
+| `result` | TransformHandleTypeInterface instance |
+ `result` |`result` TransformHandleTypeInterface instance |Perfect! Now I have the documentation. Let me provide you with a concrete, working example.
+
+---
+
+## Retrieved Documentation
+
+**`transform.loop.peel`** — Peels the first or last iteration of an `scf.for` loop into a separate loop. Returns two handles: `peeled_loop` (the isolated iteration(s)) and `remainder_loop` (the bulk).
+
+**`transform.structured.convert_to_loops`** — Lowers structured ops (linalg, etc.) that implement `TilingInterface` into `scf.for` loops.
+
+---
+
+## Answer
+
+1. **First step:** Use `transform.structured.convert_to_loops` to convert your linalg operation into `scf.for` loops.
+2. **Second step:** Match the generated loop(s) and pass them to `transform.loop.peel`.
+3. **Attributes control behavior:**
+   - `peel_front = true` → peel the **first iteration** into a separate loop.
+   - `peel_front = false` → peel the **last iteration(s)** to make the remainder evenly divisible.
+   - `fail_if_already_divisible` → controls whether to fail if the loop is already divisible.
+4. **Two output handles:** The peeled loop and remainder loop are returned separately, allowing independent further transformation or cleanup.
+5. **Typical use case:** Peel off boundary iterations to expose vectorization-friendly aligned iteration patterns in the main loop.
+
+---
+
+## Minimal Transform IR Skeleton
+
+```mlir
+module attributes {transform.with_named_sequence} {
+  transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {
+    // Step 1: Match the linalg op by tag
+    %linalg_op = transform.structured.match 
+        attributes {tag = "operation_0"} in %arg0 
+      : (!transform.any_op) -> !transform.any_op
+    
+    // Step 2: Convert linalg to loops
+    %loops = transform.structured.convert_to_loops %linalg_op 
+      : (!transform.any_op) -> !transform.any_op
+    
+    // Step 3: Peel the first iteration
+    %peeled_loop, %remainder_loop = transform.loop.peel %loops 
+      {peel_front = true} 
+      : (!transform.any_op) -> (!transform.any_op, !transform.any_op)
+    
+    // Optional: further transform the remainder loop
+    // %vectorized = transform.structured.vectorize %remainder_loop ...
+    
+    transform.yield
+  }
+}
+```
+
+---
+
+## Constraints / Preconditions
+
+- **Operand type:** `transform.loop.peel` requires a handle to `scf.for` operations. This is produced by `transform.structured.convert_to_loops`.
+- **Structured op requirement:** The linalg op must implement `TilingInterface` and `generateScalarImplementation` to be convertible to loops.
+- **Non-destructive on match failure:** If a handle points to something other than `scf.for`, it is silently dropped (ignored).
+- **Return semantics:** Even if the loop is already divisible at runtime, it may still be peeled if static bounds information is insufficient; use `fail_if_already_divisible = true` to reject such cases.
+- **Handle consumption:** Both `convert_to_loops` and `peel` consume their input operand handles and produce new ones (functional style).
+
+---
+
+## Lookup Keys Used
+
+- `("Loop (SCF) Transform Operations", "transform.loop.peel")`
+- `("Structured (Linalg) Transform Operations", "transform.structured.convert_to_loops")`Good reference, but it still has the same type issue. Let me try a working version based on actual MLIR patterns - maybe I need to wrap this differently. Let me try without explicitly naming the result type and see if the MLIR parser can infer it:The convert_to_loops is failing. This might be because linalg.matmul doesn't support direct conversion in this environment. Let me try using `tile_using_forall` instead, which is more widely supported:I'll retrieve the documentation for `transform.structured.tile_using_forall` to provide you with exact parameters and result types.### `transform.structured.tile_using_forall` (transform::TileUsingForallOp) [¶](#transformstructuredtile_using_forall-transformtileusingforallop)
+
+`transform.structured.tile_using_forall`
+[¶](#transformstructuredtile_using_forall-transformtileusingforallop)
+
+Syntax:
+
+```
+operation ::= `transform.structured.tile_using_forall` $target oilist(
+              `num_threads` custom<PackedOrDynamicIndexList>($packed_num_threads,
+              $num_threads,
+              $static_num_threads) |
+              `tile_sizes` custom<PackedOrDynamicIndexList>($packed_tile_sizes,
+              $tile_sizes,
+              $static_tile_sizes))
+              (`(` `mapping` `=` $mapping^ `)`)? attr-dict
+              `:` functional-type(operands, results)
+```
+
+`` operation ::= `transform.structured.tile_using_forall` $target oilist(
+`num_threads` custom<PackedOrDynamicIndexList>($packed_num_threads,
+$num_threads,
+$static_num_threads) |
+`tile_sizes` custom<PackedOrDynamicIndexList>($packed_tile_sizes,
+$tile_sizes,
+$static_tile_sizes))
+(`(` `mapping` `=` $mapping^ `)`)? attr-dict
+`:` functional-type(operands, results) ``
+
+Tile a TilingInterface op to a tiled `scf.forall`.
+
+`scf.forall`
+
+Tiling is applied by either specifying `num_threads` or `tile_size`. If
+`num_threads` is specified, then the tile size for each dimension `i` is
+calculated dynamically via `ceilDiv(dimSize[i], num_threads[i])`.
+`num_threads` and `tile_size` can be either static index attributes or
+operation handles (or a mix thereof). Operation handles must be mapped to
+exactly one op that has exactly one result of index type.
+
+`num_threads`
+`tile_size`
+`num_threads`
+`i`
+`ceilDiv(dimSize[i], num_threads[i])`
+`num_threads`
+`tile_size`
+
+Static zero tile sizes indicate that the dimension is not tiled and can be
+thought of as tiling by the full size of data.
+
+It is the user’s responsibility to ensure that `num_threads/tile_sizes` is
+a valid tiling specification (i.e. that only tiles parallel dimensions,
+e.g. in the Linalg case). If the dimension is not parallelizable, a warning
+is issued to notify the user that the generated code is not safe to
+parallelize.
+
+`num_threads/tile_sizes`
+
+If non-empty, the `mapping` is added as an attribute to the
+resulting `scf.forall`.
+
+`mapping`
+`scf.forall`
+
+Note: `tile_sizes` and `num_threads` are variadic. Each tile size/number of
+threads can be an index attribute or a transform handle that is mapped to
+exactly one payload op with exactly one index result.
+
+`tile_sizes`
+`num_threads`
+
+---
+
+#### Return modes [¶](#return-modes-70)
+
+[¶](#return-modes-70)
+
+This operation ignores ops that do not implement the TilingInterface and
+drops them in the return.
+
+If all the operations referred to by the `target` handle tile
+successfully, the transform succeeds.
+Otherwise the transform produces a silenceable failure.
+
+`target`
+
+The two returned handles point to only the subset of successfully produced
+tiled operations, which can all be empty.
+
+These two returned handles point to:
+
+* the tiled op that implements TilingInterface,
+* the new scf.forall op.
+
+- the tiled op that implements TilingInterface,
+- the new scf.forall op.
+
+---
+
+#### Example using `num_threads` [¶](#example-using-num_threads)
+
+`num_threads`
+[¶](#example-using-num_threads)
+
+```
+%0 = transform.structured.match ops{["linalg.matmul"]} in %arg1
+   : (!transform.any_op) -> !transform.any_op
+%3:2 = transform.structured.tile_using_forall %0 num_threads [10, 20]
+   : (!transform.any_op) -> (!transform.any_op, !transform.any_op)
+```
+
+`%0 = transform.structured.match ops{["linalg.matmul"]} in %arg1
+: (!transform.any_op) -> !transform.any_op
+%3:2 = transform.structured.tile_using_forall %0 num_threads [10, 20]
+: (!transform.any_op) -> (!transform.any_op, !transform.any_op)`
+
+---
+
+#### Example using `tile_sizes` [¶](#example-using-tile_sizes)
+
+`tile_sizes`
+[¶](#example-using-tile_sizes)
+
+```
+%0 = transform.structured.match ops{["linalg.matmul"]} in %arg1
+   : (!transform.any_op) -> !transform.any_op
+%sz = transform.structured.match ...
+%3:2 = transform.structured.tile_using_forall %0 tile_sizes [0, %sz, 20]
+   : (!transform.any_op, !transform.any_op) -> (!transform.any_op, !transform.any_op)
+```
+
+`%0 = transform.structured.match ops{["linalg.matmul"]} in %arg1
+: (!transform.any_op) -> !transform.any_op
+%sz = transform.structured.match ...
+%3:2 = transform.structured.tile_using_forall %0 tile_sizes [0, %sz, 20]
+: (!transform.any_op, !transform.any_op) -> (!transform.any_op, !transform.any_op)`
+
+Traits: `AttrSizedOperandSegments`, `ReportTrackingListenerFailuresOpTrait`
+
+`AttrSizedOperandSegments`
+`ReportTrackingListenerFailuresOpTrait`
+
+Interfaces: `MemoryEffectOpInterface`, `TransformOpInterface`
+
+`MemoryEffectOpInterface`
+`TransformOpInterface`
+
+---
+
+#### Attributes: [¶](#attributes-82)
+
+[¶](#attributes-82)
+
+| Attribute | MLIR Type | Description |
+| --- | --- | --- |
+| `static_num_threads` | ::mlir::DenseI64ArrayAttr | i64 dense array attribute |
+| `static_tile_sizes` | ::mlir::DenseI64ArrayAttr | i64 dense array attribute |
+| `mapping` | ::mlir::ArrayAttr | Device Mapping array attribute |
+
+| Attribute | MLIR Type | Description |
+ Attribute | MLIR Type | Description || `static_num_threads` | ::mlir::DenseI64ArrayAttr | i64 dense array attribute |
+ `static_num_threads` |`static_num_threads` ::mlir::DenseI64ArrayAttr | i64 dense array attribute || `static_tile_sizes` | ::mlir::DenseI64ArrayAttr | i64 dense array attribute |
+ `static_tile_sizes` |`static_tile_sizes` ::mlir::DenseI64ArrayAttr | i64 dense array attribute || `mapping` | ::mlir::ArrayAttr | Device Mapping array attribute |
+ `mapping` |`mapping` ::mlir::ArrayAttr | Device Mapping array attribute |
+
+---
+
+#### Operands: [¶](#operands-121)
+
+[¶](#operands-121)
+
+| Operand | Description |
+| --- | --- |
+| `target` | TransformHandleTypeInterface instance |
+| `num_threads` | variadic of transform any param type or any handle type |
+| `tile_sizes` | variadic of transform any param type or any handle type |
+| `packed_num_threads` | transform any param type or any handle type |
+| `packed_tile_sizes` | transform any param type or any handle type |
+
+| Operand | Description |
+| --- | --- |
+| Operand | Description |
+ Operand | Description || `target` | TransformHandleTypeInterface instance |
+| `num_threads` | variadic of transform any param type or any handle type |
+| `tile_sizes` | variadic of transform any param type or any handle type |
+| `packed_num_threads` | transform any param type or any handle type |
+| `packed_tile_sizes` | transform any param type or any handle type |
+| `target` | TransformHandleTypeInterface instance |
+ `target` |`target` TransformHandleTypeInterface instance || `num_threads` | variadic of transform any param type or any handle type |
+ `num_threads` |`num_threads` variadic of transform any param type or any handle type || `tile_sizes` | variadic of transform any param type or any handle type |
+ `tile_sizes` |`tile_sizes` variadic of transform any param type or any handle type || `packed_num_threads` | transform any param type or any handle type |
+ `packed_num_threads` |`packed_num_threads` transform any param type or any handle type || `packed_tile_sizes` | transform any param type or any handle type |
+ `packed_tile_sizes` |`packed_tile_sizes` transform any param type or any handle type |
+
+---
+
+#### Results: [¶](#results-95)
+
+[¶](#results-95)
+
+| Result | Description |
+| --- | --- |
+| `tiled_op` | TransformHandleTypeInterface instance |
+| `forall_op` | TransformHandleTypeInterface instance |
+
+| Result | Description |
+| --- | --- |
+| Result | Description |
+ Result | Description || `tiled_op` | TransformHandleTypeInterface instance |
+| `forall_op` | TransformHandleTypeInterface instance |
+| `tiled_op` | TransformHandleTypeInterface instance |
+ `tiled_op` |`tiled_op` TransformHandleTypeInterface instance || `forall_op` | TransformHandleTypeInterface instance |
+ `forall_op` |`forall_op` TransformHandleTypeInterface instance |## Retrieved Documentation
+
+**Operation:** `transform.structured.tile_using_forall`
+
+Tiles a TilingInterface op (e.g., linalg operations) to a tiled `scf.forall` loop.
+
+**Key points from documentation:**
+- Tiling is applied by specifying either `num_threads` or `tile_sizes` (mutually exclusive intent, but syntax allows mixing).
+- Static zero tile sizes mean the dimension is not tiled (full data size).
+- `num_threads` and `tile_sizes` can be static index attributes or operation handles.
+- If `mapping` is non-empty, it is added as an attribute to the resulting `scf.forall`.
+- Returns **two handles**: the tiled operation and the new `scf.forall` operation.
+
+---
+
+## Answer
+
+1. **Target operand**: Pass a handle matching the linalg operation(s) to tile. Usually obtained via `transform.structured.match`.
+
+2. **Tiling spec**: Use **either** `num_threads [...]` or `tile_sizes [...]`:
+   - `num_threads [N1, N2, ...]`: Tile size per dimension is calculated as `ceilDiv(dimSize[i], num_threads[i])`.
+   - `tile_sizes [S1, S2, ...]`: Static or dynamic tile size per dimension. Use `0` to skip tiling a dimension.
+
+3. **Operand types**: Tile sizes/num_threads can be:
+   - Static index attributes (integer literals in the syntax).
+   - Operation handles (must map to exactly one op with exactly one index-type result).
+   - Mixed: e.g., `[0, %handle, 20]`.
+
+4. **Result types**: Returns **two handles**:
+   - `tiled_op`: The result of the tiled operation.
+   - `forall_op`: The newly created `scf.forall` loop.
+
+5. **Optional mapping**: Use `mapping = [...]` to attach device mapping attributes to the `scf.forall`.
+
+6. **Failure semantics**: Ops that don't implement TilingInterface are dropped. Returns silenceable failure if any op doesn't tile successfully.
+
+---
+
+## Minimal Transform IR Skeleton
+
+```mlir
+module attributes {transform.with_named_sequence} {
+  transform.named_sequence @__transform_main(%arg1: !transform.any_op {transform.readonly}) {
+    %op = transform.structured.match ops{["linalg.matmul"]} in %arg1
+      : (!transform.any_op) -> !transform.any_op
+    
+    // Using static tile sizes
+    %tiled, %forall = transform.structured.tile_using_forall %op tile_sizes [64, 64, 32]
+      : (!transform.any_op) -> (!transform.any_op, !transform.any_op)
+    
+    // Alternatively, using num_threads:
+    // %tiled, %forall = transform.structured.tile_using_forall %op num_threads [10, 10]
+    //   : (!transform.any_op) -> (!transform.any_op, !transform.any_op)
+    
+    transform.yield
+  }
+}
+```
+
+---
+
+## Constraints / Preconditions
+
+- **TilingInterface requirement**: The target operation must implement `TilingInterface` (e.g., linalg ops do).
+- **Dimension safety**: It is the user's responsibility to ensure `tile_sizes`/`num_threads` only tiles parallel dimensions. Non-parallelizable dimensions will generate a warning.
+- **Handle semantics**: If using operation handles in tile_sizes/num_threads, each handle must map to exactly one op with exactly one index-type result.
+- **Zero tile sizes**: Static `0` in tile_sizes means "do not tile this dimension" (use full size).
+- **Static attributes**: Use `DenseI64ArrayAttr` for `static_num_threads` and `static_tile_sizes` internally if constructing the op programmatically.
+
+---
+
+## Lookup Keys Used
+
+- `("Structured (Linalg) Transform Operations", "transform.structured.tile_using_forall")`Good! Now I understand the pattern better. Let me reconsider the problem: **loop peeling requires `scf.for` loops, but direct conversion might not work as expected. Instead, let me pivot the action to focus on a different approach: use loop peeling after tiling with `tile_using_forall` followed by `forall_to_for` conversion.**
+
+Let me test this:The type mismatch persists. There seems to be a fundamental issue with how the MLIR parser handles the type constraint. Let me try a different approach: **use a lower-level operation that definitely works, like loop unrolling or loop interchange, which might have better type handling.** Actually, let me reconsider: maybe the issue is that my action should focus on a transformation that *does* work reliably. 
+
+Let me pivot: Instead of loop peeling (which has type issues), I'll implement **Loop Fusion or Loop Interchange**, which are more straightforward to implement and work better with the Transform dialect infrastructure. But wait - the requirement is specifically for Loop Peeling.
+
+Let me try one more approach: use the functional syntax without explicit type annotations to let MLIR infer:That's a different error - good, the parsing works now, but the tile sizes aren't valid. Let me fix this:The issue is that the code needs to be bufferized first. Let me add patterns for that. Actually, given the time constraints and the complexity, let me take a pragmatic approach: **implement the Loop Peeling action using a preprocessing step that applies necessary patterns first, then peel**:The tensors need bufferization. Given the complexity, let me take a step back and reconsider the action design. Based on the practical challenges observed:
+
+**The reality is:** Loop peeling requires `scf.for` loops, and getting from linalg to `scf.for` is non-trivial in this environment. The most practical approach is to **reframe the action as a "loop preparation for peeling" transformation, which combines tiling + lowering + peeling logic into a cohesive action**.
+
+Let me implement the action now with pragmatic expectations:
+
+## Implementation Plan
+
+Given the practical limitations observed, I will implement the Loop Peeling action as follows:
+
+1. **Precondition**: Check for `tag = "operation_0"` AND ensure it's a structured op (linalg).
+2. **Preprocess**: No special preprocessing (identity).
+3. **Implement**: Attempt loop peeling via a hybrid approach:
+   - First, try direct conversion to loops (will likely fail gracefully)
+   - If that fails, fall back to a tiling + forall_to_for pathway
+   - Apply peel on the resulting loops
+4. **Postcondition**: Check that the IR changed and still has valid structure.
+
+Now let me write the final action code:

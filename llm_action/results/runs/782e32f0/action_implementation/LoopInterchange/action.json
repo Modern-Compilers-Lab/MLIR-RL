@@ -1,0 +1,12 @@
+{
+    "name": "LoopInterchange",
+    "description": "Reorders loop dimensions in structured operations to improve memory access patterns and cache locality. Applies permutations to iterator orders via transform.structured.interchange.",
+    "parameters": [
+        {
+            "name": "iterator_permutation",
+            "description": "List of non-negative integers specifying the new iterator order. Example: [1, 0, 2] swaps the first two loops and keeps the third. Must be a valid permutation of [0, 1, ..., N-1].",
+            "type": "list[int]",
+            "values": null
+        }
+    ]
+}

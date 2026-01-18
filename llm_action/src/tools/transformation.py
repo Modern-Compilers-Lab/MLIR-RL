@@ -124,8 +124,6 @@ def execute_code(code: str) -> tuple[int, bool]:
         logger.info(f"[TOOL RESULT] Assertion Success: {success}")
     return real_exec_time, success
 
-documentation = load_documentation()
-
 @tool(
     name="lookup_transformation",
     description="""
@@ -144,6 +142,7 @@ documentation = load_documentation()
     stop_after_tool_call=False
 )
 def lookup_transformation(category_name: str, transformation_name: str) -> str:
+    documentation = load_documentation()
     if TOOL_VERBOSE:
         logger.info("[TOOL] Executing `lookup_transformation`")
         logger.info(f"[TOOL PARAM] Category: {category_name}")

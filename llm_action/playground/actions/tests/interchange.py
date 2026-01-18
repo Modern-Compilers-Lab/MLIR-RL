@@ -1,25 +1,23 @@
 from llm_action.src.models import KernelType
 from llm_action.src.utils.persistence import load_kernel_code
 
-from llm_action.playground.actions.candidates.Tiling_af31 import TilingAction
-from llm_action.playground.actions.candidates.Tile import Tile
+from llm_action.playground.actions.candidates.LoopInterchange_2613 import LoopInterchange
 
 params_per_kernel = {
     KernelType.MATMUL: {
-        "tile_sizes": [8, 8],
+        "iterator_permutation": [1, 0, 2],
     },
     KernelType.CONV2D: {
-        "tile_sizes": [8, 8, 4, 4],
+        "iterator_permutation": [1, 0, 2, 3],
     },
     KernelType.GENERIC: {
-        "tile_sizes": [4, 4],
+        "iterator_permutation": [1, 0],
     },
 }
 
 if __name__ == "__main__":
     
-    ACTION = TilingAction
-    ACTION = Tile
+    ACTION = LoopInterchange
 
     for kernel_type in [KernelType.MATMUL, KernelType.CONV2D, KernelType.GENERIC]:
         print(f"--- Testing Tiling Action on {kernel_type.value} Kernel ---\n")

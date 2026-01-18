@@ -1,0 +1,12 @@
+{
+    "name": "Tile",
+    "description": "Partition loop nests into smaller rectangular blocks by tiling dimensions, such that intermediate results fit in L1/L2 cache. Applies transform.structured.tile_using_for to generate nested scf.for loops with tensor slicing.",
+    "parameters": [
+        {
+            "name": "tile_sizes",
+            "description": "List of tile sizes for each loop dimension. A value of 0 means 'no tiling for that dimension'. The length must match the loop rank of the target operation.",
+            "type": "list[int]",
+            "values": null
+        }
+    ]
+}

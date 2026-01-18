@@ -1,0 +1,12 @@
+{
+    "name": "TilingAction",
+    "description": "Partition a loop nest into cache-friendly tiles by introducing inner and outer loop levels using Transform dialect tile_using_for operation. Reduces working-set size and enables vectorization and parallelism of inner loops.",
+    "parameters": [
+        {
+            "name": "tile_sizes",
+            "description": "List of tile sizes (one per operation dimension). A value of 0 means no tiling for that dimension. Non-zero values specify the tile size.",
+            "type": "list[int]",
+            "values": null
+        }
+    ]
+}

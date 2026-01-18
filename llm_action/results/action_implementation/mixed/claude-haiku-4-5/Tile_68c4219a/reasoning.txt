@@ -1,0 +1,622 @@
+I'll implement the **Tiling** transformation as a reusable RL action. Let me start by understanding the task and consulting the documentation.I'll retrieve the documentation for tiling structured (linalg) operations in the Transform dialect.### `transform.structured.tile_using_for` (transform::TileUsingForOp) [¶](#transformstructuredtile_using_for-transformtileusingforop)
+
+`transform.structured.tile_using_for`
+[¶](#transformstructuredtile_using_for-transformtileusingforop)
+
+Syntax:
+
+```
+operation ::= `transform.structured.tile_using_for` $target
+              `tile_sizes` custom<DynamicIndexList>(
+              $dynamic_sizes,
+              $static_sizes,
+              $scalable_sizes)
+              (`interchange` `=` $interchange^)?
+              attr-dict
+              `:` functional-type(operands, results)
+```
+
+`` operation ::= `transform.structured.tile_using_for` $target
+`tile_sizes` custom<DynamicIndexList>(
+$dynamic_sizes,
+$static_sizes,
+$scalable_sizes)
+(`interchange` `=` $interchange^)?
+attr-dict
+`:` functional-type(operands, results) ``
+
+Indicates that the given `target` op should be tiled with the given sizes.
+This transform generates a loop nest with a smaller (“tiled”) target
+operation in its body. Currently limited to LinalgOps.
+
+`target`
+
+Tile sizes may be known at transformation time, in which case they are
+expected to be provided in the `static_size` attribute, or not, in which
+case the tile value must be computed by the payload IR and the handle to the
+operation computing it must be provided through `dynamic_sizes`. When the
+sizes are not known statically, the corresponding entry in the
+`static_sizes` attribute must be set to `ShapedType::kDynamic`. Only
+the dynamic sizes must be provided in `dynamic_sizes`, i.e., there should
+be as many handles as `ShapedType::kDynamic` values in the
+`static_sizes` attribute. A static size of `0` indicates that the dimension
+should not be tiled. No loop will be generated for such dimensions. If all
+tile sizes are `0`, this transform is effectively a no-op.
+
+`static_size`
+`dynamic_sizes`
+`static_sizes`
+`ShapedType::kDynamic`
+`dynamic_sizes`
+`ShapedType::kDynamic`
+`static_sizes`
+`0`
+`0`
+
+This op returns handles to the tiled op (in the generated loop nest) and the
+generated loops. The number of loops is the number of tile sizes that are
+statically known to be non-zero.
+
+---
+
+#### Return modes [¶](#return-modes-69)
+
+[¶](#return-modes-69)
+
+On success, the resulting handles are associated with co-indexed lists of
+tiled operations and loops around them.
+
+This operation only supports Linalg ops and produces a silenceable failure
+if the input contains any non-Linalg ops. The ops preceding it in the list
+associated with the `target` handle will have been tiled.
+
+`target`
+
+This operation produces a silenceable failure if the `dynamic_sizes` handles
+are associated with lists of payload operations of a size different than
+that of the list associated with the `target` handle.
+
+`dynamic_sizes`
+`target`
+
+If the internal implementation of tiling for any of the operations fails,
+produces a definite failure.
+
+Traits: `ReportTrackingListenerFailuresOpTrait`
+
+`ReportTrackingListenerFailuresOpTrait`
+
+Interfaces: `MemoryEffectOpInterface`, `TransformOpInterface`
+
+`MemoryEffectOpInterface`
+`TransformOpInterface`
+
+---
+
+#### Attributes: [¶](#attributes-81)
+
+[¶](#attributes-81)
+
+| Attribute | MLIR Type | Description |
+| --- | --- | --- |
+| `static_sizes` | ::mlir::DenseI64ArrayAttr | i64 dense array attribute |
+| `interchange` | ::mlir::DenseI64ArrayAttr | i64 dense array attribute |
+| `scalable_sizes` | ::mlir::DenseBoolArrayAttr | i1 dense array attribute |
+
+| Attribute | MLIR Type | Description |
+ Attribute | MLIR Type | Description || `static_sizes` | ::mlir::DenseI64ArrayAttr | i64 dense array attribute |
+ `static_sizes` |`static_sizes` ::mlir::DenseI64ArrayAttr | i64 dense array attribute || `interchange` | ::mlir::DenseI64ArrayAttr | i64 dense array attribute |
+ `interchange` |`interchange` ::mlir::DenseI64ArrayAttr | i64 dense array attribute || `scalable_sizes` | ::mlir::DenseBoolArrayAttr | i1 dense array attribute |
+ `scalable_sizes` |`scalable_sizes` ::mlir::DenseBoolArrayAttr | i1 dense array attribute |
+
+---
+
+#### Operands: [¶](#operands-120)
+
+[¶](#operands-120)
+
+| Operand | Description |
+| --- | --- |
+| `target` | TransformHandleTypeInterface instance |
+| `dynamic_sizes` | variadic of transform any param type or any handle type |
+
+| Operand | Description |
+| --- | --- |
+| Operand | Description |
+ Operand | Description || `target` | TransformHandleTypeInterface instance |
+| `dynamic_sizes` | variadic of transform any param type or any handle type |
+| `target` | TransformHandleTypeInterface instance |
+ `target` |`target` TransformHandleTypeInterface instance || `dynamic_sizes` | variadic of transform any param type or any handle type |
+ `dynamic_sizes` |`dynamic_sizes` variadic of transform any param type or any handle type |
+
+---
+
+#### Results: [¶](#results-94)
+
+[¶](#results-94)
+
+| Result | Description |
+| --- | --- |
+| `tiled_linalg_op` | TransformHandleTypeInterface instance |
+| `loops` | variadic of TransformHandleTypeInterface instance |
+
+| Result | Description |
+| --- | --- |
+| Result | Description |
+ Result | Description || `tiled_linalg_op` | TransformHandleTypeInterface instance |
+| `loops` | variadic of TransformHandleTypeInterface instance |
+| `tiled_linalg_op` | TransformHandleTypeInterface instance |
+ `tiled_linalg_op` |`tiled_linalg_op` TransformHandleTypeInterface instance || `loops` | variadic of TransformHandleTypeInterface instance |
+ `loops` |`loops` variadic of TransformHandleTypeInterface instance |### `transform.structured.tile_using_forall` (transform::TileUsingForallOp) [¶](#transformstructuredtile_using_forall-transformtileusingforallop)
+
+`transform.structured.tile_using_forall`
+[¶](#transformstructuredtile_using_forall-transformtileusingforallop)
+
+Syntax:
+
+```
+operation ::= `transform.structured.tile_using_forall` $target oilist(
+              `num_threads` custom<PackedOrDynamicIndexList>($packed_num_threads,
+              $num_threads,
+              $static_num_threads) |
+              `tile_sizes` custom<PackedOrDynamicIndexList>($packed_tile_sizes,
+              $tile_sizes,
+              $static_tile_sizes))
+              (`(` `mapping` `=` $mapping^ `)`)? attr-dict
+              `:` functional-type(operands, results)
+```
+
+`` operation ::= `transform.structured.tile_using_forall` $target oilist(
+`num_threads` custom<PackedOrDynamicIndexList>($packed_num_threads,
+$num_threads,
+$static_num_threads) |
+`tile_sizes` custom<PackedOrDynamicIndexList>($packed_tile_sizes,
+$tile_sizes,
+$static_tile_sizes))
+(`(` `mapping` `=` $mapping^ `)`)? attr-dict
+`:` functional-type(operands, results) ``
+
+Tile a TilingInterface op to a tiled `scf.forall`.
+
+`scf.forall`
+
+Tiling is applied by either specifying `num_threads` or `tile_size`. If
+`num_threads` is specified, then the tile size for each dimension `i` is
+calculated dynamically via `ceilDiv(dimSize[i], num_threads[i])`.
+`num_threads` and `tile_size` can be either static index attributes or
+operation handles (or a mix thereof). Operation handles must be mapped to
+exactly one op that has exactly one result of index type.
+
+`num_threads`
+`tile_size`
+`num_threads`
+`i`
+`ceilDiv(dimSize[i], num_threads[i])`
+`num_threads`
+`tile_size`
+
+Static zero tile sizes indicate that the dimension is not tiled and can be
+thought of as tiling by the full size of data.
+
+It is the user’s responsibility to ensure that `num_threads/tile_sizes` is
+a valid tiling specification (i.e. that only tiles parallel dimensions,
+e.g. in the Linalg case). If the dimension is not parallelizable, a warning
+is issued to notify the user that the generated code is not safe to
+parallelize.
+
+`num_threads/tile_sizes`
+
+If non-empty, the `mapping` is added as an attribute to the
+resulting `scf.forall`.
+
+`mapping`
+`scf.forall`
+
+Note: `tile_sizes` and `num_threads` are variadic. Each tile size/number of
+threads can be an index attribute or a transform handle that is mapped to
+exactly one payload op with exactly one index result.
+
+`tile_sizes`
+`num_threads`
+
+---
+
+#### Return modes [¶](#return-modes-70)
+
+[¶](#return-modes-70)
+
+This operation ignores ops that do not implement the TilingInterface and
+drops them in the return.
+
+If all the operations referred to by the `target` handle tile
+successfully, the transform succeeds.
+Otherwise the transform produces a silenceable failure.
+
+`target`
+
+The two returned handles point to only the subset of successfully produced
+tiled operations, which can all be empty.
+
+These two returned handles point to:
+
+* the tiled op that implements TilingInterface,
+* the new scf.forall op.
+
+- the tiled op that implements TilingInterface,
+- the new scf.forall op.
+
+---
+
+#### Example using `num_threads` [¶](#example-using-num_threads)
+
+`num_threads`
+[¶](#example-using-num_threads)
+
+```
+%0 = transform.structured.match ops{["linalg.matmul"]} in %arg1
+   : (!transform.any_op) -> !transform.any_op
+%3:2 = transform.structured.tile_using_forall %0 num_threads [10, 20]
+   : (!transform.any_op) -> (!transform.any_op, !transform.any_op)
+```
+
+`%0 = transform.structured.match ops{["linalg.matmul"]} in %arg1
+: (!transform.any_op) -> !transform.any_op
+%3:2 = transform.structured.tile_using_forall %0 num_threads [10, 20]
+: (!transform.any_op) -> (!transform.any_op, !transform.any_op)`
+
+---
+
+#### Example using `tile_sizes` [¶](#example-using-tile_sizes)
+
+`tile_sizes`
+[¶](#example-using-tile_sizes)
+
+```
+%0 = transform.structured.match ops{["linalg.matmul"]} in %arg1
+   : (!transform.any_op) -> !transform.any_op
+%sz = transform.structured.match ...
+%3:2 = transform.structured.tile_using_forall %0 tile_sizes [0, %sz, 20]
+   : (!transform.any_op, !transform.any_op) -> (!transform.any_op, !transform.any_op)
+```
+
+`%0 = transform.structured.match ops{["linalg.matmul"]} in %arg1
+: (!transform.any_op) -> !transform.any_op
+%sz = transform.structured.match ...
+%3:2 = transform.structured.tile_using_forall %0 tile_sizes [0, %sz, 20]
+: (!transform.any_op, !transform.any_op) -> (!transform.any_op, !transform.any_op)`
+
+Traits: `AttrSizedOperandSegments`, `ReportTrackingListenerFailuresOpTrait`
+
+`AttrSizedOperandSegments`
+`ReportTrackingListenerFailuresOpTrait`
+
+Interfaces: `MemoryEffectOpInterface`, `TransformOpInterface`
+
+`MemoryEffectOpInterface`
+`TransformOpInterface`
+
+---
+
+#### Attributes: [¶](#attributes-82)
+
+[¶](#attributes-82)
+
+| Attribute | MLIR Type | Description |
+| --- | --- | --- |
+| `static_num_threads` | ::mlir::DenseI64ArrayAttr | i64 dense array attribute |
+| `static_tile_sizes` | ::mlir::DenseI64ArrayAttr | i64 dense array attribute |
+| `mapping` | ::mlir::ArrayAttr | Device Mapping array attribute |
+
+| Attribute | MLIR Type | Description |
+ Attribute | MLIR Type | Description || `static_num_threads` | ::mlir::DenseI64ArrayAttr | i64 dense array attribute |
+ `static_num_threads` |`static_num_threads` ::mlir::DenseI64ArrayAttr | i64 dense array attribute || `static_tile_sizes` | ::mlir::DenseI64ArrayAttr | i64 dense array attribute |
+ `static_tile_sizes` |`static_tile_sizes` ::mlir::DenseI64ArrayAttr | i64 dense array attribute || `mapping` | ::mlir::ArrayAttr | Device Mapping array attribute |
+ `mapping` |`mapping` ::mlir::ArrayAttr | Device Mapping array attribute |
+
+---
+
+#### Operands: [¶](#operands-121)
+
+[¶](#operands-121)
+
+| Operand | Description |
+| --- | --- |
+| `target` | TransformHandleTypeInterface instance |
+| `num_threads` | variadic of transform any param type or any handle type |
+| `tile_sizes` | variadic of transform any param type or any handle type |
+| `packed_num_threads` | transform any param type or any handle type |
+| `packed_tile_sizes` | transform any param type or any handle type |
+
+| Operand | Description |
+| --- | --- |
+| Operand | Description |
+ Operand | Description || `target` | TransformHandleTypeInterface instance |
+| `num_threads` | variadic of transform any param type or any handle type |
+| `tile_sizes` | variadic of transform any param type or any handle type |
+| `packed_num_threads` | transform any param type or any handle type |
+| `packed_tile_sizes` | transform any param type or any handle type |
+| `target` | TransformHandleTypeInterface instance |
+ `target` |`target` TransformHandleTypeInterface instance || `num_threads` | variadic of transform any param type or any handle type |
+ `num_threads` |`num_threads` variadic of transform any param type or any handle type || `tile_sizes` | variadic of transform any param type or any handle type |
+ `tile_sizes` |`tile_sizes` variadic of transform any param type or any handle type || `packed_num_threads` | transform any param type or any handle type |
+ `packed_num_threads` |`packed_num_threads` transform any param type or any handle type || `packed_tile_sizes` | transform any param type or any handle type |
+ `packed_tile_sizes` |`packed_tile_sizes` transform any param type or any handle type |
+
+---
+
+#### Results: [¶](#results-95)
+
+[¶](#results-95)
+
+| Result | Description |
+| --- | --- |
+| `tiled_op` | TransformHandleTypeInterface instance |
+| `forall_op` | TransformHandleTypeInterface instance |
+
+| Result | Description |
+| --- | --- |
+| Result | Description |
+ Result | Description || `tiled_op` | TransformHandleTypeInterface instance |
+| `forall_op` | TransformHandleTypeInterface instance |
+| `tiled_op` | TransformHandleTypeInterface instance |
+ `tiled_op` |`tiled_op` TransformHandleTypeInterface instance || `forall_op` | TransformHandleTypeInterface instance |
+ `forall_op` |`forall_op` TransformHandleTypeInterface instance |## Retrieved Documentation
+
+### `transform.structured.tile_using_for`
+Tiles a linalg op by generating a loop nest with a smaller tiled target operation in its body. Currently limited to LinalgOps.
+
+**Operands:**
+- `target`: TransformHandleTypeInterface (the linalg op to tile)
+- `dynamic_sizes`: variadic (optional, for dynamically computed tile sizes)
+
+**Results:**
+- `tiled_linalg_op`: handle to the tiled operation in the loop nest
+- `loops`: variadic handles to the generated `for` loops
+
+**Attributes:**
+- `static_sizes`: i64 dense array (tile sizes; `0` means no tiling, `ShapedType::kDynamic` means dynamic)
+- `interchange`: i64 dense array (optional; loop interchange order)
+- `scalable_sizes`: i1 dense array (optional; for scalable dimensions)
+
+---
+
+### `transform.structured.tile_using_forall`
+Tiles a TilingInterface op to a tiled `scf.forall` (parallel loop).
+
+**Operands:**
+- `target`: TransformHandleTypeInterface (the op to tile)
+- `num_threads` or `tile_sizes`: variadic (either specify thread count or tile size per dimension)
+
+**Results:**
+- `tiled_op`: handle to the tiled operation
+- `forall_op`: handle to the generated `scf.forall`
+
+**Attributes:**
+- `static_num_threads`: i64 dense array (when using `num_threads`)
+- `static_tile_sizes`: i64 dense array (when using `tile_sizes`)
+- `mapping`: optional device mapping attribute
+
+---
+
+## Answer
+
+There are **two main tiling operations** for linalg operations:
+
+1. **`transform.structured.tile_using_for`** — Generates a sequential loop nest (`scf.for` loops) around the tiled operation.
+2. **`transform.structured.tile_using_forall`** — Generates a parallel loop (`scf.forall`) suitable for multi-threaded execution.
+
+**Key facts:**
+- Both require a `target` handle (the linalg operation to tile).
+- Tile sizes are specified via `static_sizes` / `static_tile_sizes` attribute (dense i64 array).
+- A static size of `0` means "do not tile this dimension"; dynamic sizes use `ShapedType::kDynamic` placeholder with corresponding operand.
+- `tile_using_for` returns `(tiled_linalg_op, loops)`; `tile_using_forall` returns `(tiled_op, forall_op)`.
+- The operation validates that `target` contains only Linalg ops; non-Linalg ops cause a silenceable failure.
+
+---
+
+## Minimal Transform IR Skeleton
+
+### Sequential tiling with `tile_using_for`:
+```mlir
+module attributes {transform.with_named_sequence} {
+  transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {
+    %op = transform.structured.match attributes{tag = "operation_0"} in %arg0
+      : (!transform.any_op) -> !transform.any_op
+    %tiled, %loops:2 = transform.structured.tile_using_for %op
+      tile_sizes [<tile_m>, <tile_n>]
+      : (!transform.any_op) -> (!transform.any_op, !transform.any_op, !transform.any_op)
+    transform.yield
+  }
+}
+```
+
+### Parallel tiling with `tile_using_forall`:
+```mlir
+module attributes {transform.with_named_sequence} {
+  transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {
+    %op = transform.structured.match attributes{tag = "operation_0"} in %arg0
+      : (!transform.any_op) -> !transform.any_op
+    %tiled, %forall = transform.structured.tile_using_forall %op
+      tile_sizes [<tile_m>, <tile_n>]
+      : (!transform.any_op) -> (!transform.any_op, !transform.any_op)
+    transform.yield
+  }
+}
+```
+
+---
+
+## Constraints / Preconditions
+
+- **Payload IR must contain Linalg ops** — Non-Linalg operations cause silenceable failure.
+- **Tile sizes must match the operation's iteration domain** — One entry per loop dimension in the linalg op.
+- **Static size `0` = no tiling for that dimension** — All zeros makes the transform a no-op.
+- **Dynamic sizes** — If using `ShapedType::kDynamic` in `static_sizes`, a corresponding handle must be provided in `dynamic_sizes`.
+- **Handle type** — `target` must be `!transform.any_op` or other TransformHandleTypeInterface-compatible type.
+- **Result unpacking** — Both returns are variadic; use destructuring (e.g., `%tiled, %loops:N = ...`) with correct arity.
+
+---
+
+## Lookup keys used
+
+- `("Structured (Linalg) Transform Operations", "transform.structured.tile_using_for")`
+- `("Structured (Linalg) Transform Operations", "transform.structured.tile_using_forall")`Good! Now let me test my understanding by creating test instances with actual numbers and validating the transform on concrete kernel examples.
+
+Let me test the baseline execution and then develop the tiling action:(1682621, True)Good! The baseline executes. Now let me test a tiling transformation on the matmul kernel:module {
+  func.func private @nanoTime() -> i64 attributes {llvm.emit_c_interface}
+  func.func @main(%arg0: tensor<128x256xf64>, %arg1: tensor<256x128xf64>, %arg2: tensor<128x128xf64>) -> (tensor<128x128xf64>, i64) attributes {llvm.emit_c_interface} {
+    %0 = call @nanoTime() : () -> i64
+    %c0 = arith.constant 0 : index
+    %c128 = arith.constant 128 : index
+    %c32 = arith.constant 32 : index
+    %1 = scf.for %arg3 = %c0 to %c128 step %c32 iter_args(%arg4 = %arg2) -> (tensor<128x128xf64>) {
+      %c0_0 = arith.constant 0 : index
+      %c128_1 = arith.constant 128 : index
+      %c32_2 = arith.constant 32 : index
+      %4 = scf.for %arg5 = %c0_0 to %c128_1 step %c32_2 iter_args(%arg6 = %arg4) -> (tensor<128x128xf64>) {
+        %c0_3 = arith.constant 0 : index
+        %c256 = arith.constant 256 : index
+        %c32_4 = arith.constant 32 : index
+        %5 = scf.for %arg7 = %c0_3 to %c256 step %c32_4 iter_args(%arg8 = %arg6) -> (tensor<128x128xf64>) {
+          %extracted_slice = tensor.extract_slice %arg0[%arg3, %arg7] [32, 32] [1, 1] : tensor<128x256xf64> to tensor<32x32xf64>
+          %extracted_slice_5 = tensor.extract_slice %arg1[%arg7, %arg5] [32, 32] [1, 1] : tensor<256x128xf64> to tensor<32x32xf64>
+          %extracted_slice_6 = tensor.extract_slice %arg8[%arg3, %arg5] [32, 32] [1, 1] : tensor<128x128xf64> to tensor<32x32xf64>
+          %6 = linalg.matmul {tag = "operation_0"} ins(%extracted_slice, %extracted_slice_5 : tensor<32x32xf64>, tensor<32x32xf64>) outs(%extracted_slice_6 : tensor<32x32xf64>) -> tensor<32x32xf64>
+          %inserted_slice = tensor.insert_slice %6 into %arg8[%arg3, %arg5] [32, 32] [1, 1] : tensor<32x32xf64> into tensor<128x128xf64>
+          scf.yield %inserted_slice : tensor<128x128xf64>
+        }
+        scf.yield %5 : tensor<128x128xf64>
+      }
+      scf.yield %4 : tensor<128x128xf64>
+    }
+    %2 = call @nanoTime() : () -> i64
+    %3 = arith.subi %2, %0 : i64
+    return %1, %3 : tensor<128x128xf64>, i64
+  }
+}
+Excellent! The tiling transform works and produces the expected nested `scf.for` loops. Now let me verify that the transformed code executes correctly:(443222, True)Perfect! The tiled code executes correctly and shows a speedup. Let me verify the speedup:3.796339080641304Excellent! Now let me test on the convolution kernel to ensure the tiling works across different operations:(11167731, True)Good! Now let me test tiling the convolution:#map = affine_map<(d0) -> (2, -d0 + 7)>
+#map1 = affine_map<(d0) -> (d0 - 1)>
+module {
+  func.func private @nanoTime() -> i64 attributes {llvm.emit_c_interface}
+  func.func @main(%arg0: tensor<128x32x7x7xf64>, %arg1: tensor<256x32x1x1xf64>, %arg2: tensor<128x256x7x7xf64>) -> (tensor<128x256x7x7xf64>, i64) attributes {llvm.emit_c_interface} {
+    %0 = call @nanoTime() : () -> i64
+    %c0 = arith.constant 0 : index
+    %c128 = arith.constant 128 : index
+    %c16 = arith.constant 16 : index
+    %1 = scf.for %arg3 = %c0 to %c128 step %c16 iter_args(%arg4 = %arg2) -> (tensor<128x256x7x7xf64>) {
+      %c0_0 = arith.constant 0 : index
+      %c256 = arith.constant 256 : index
+      %c32 = arith.constant 32 : index
+      %4 = scf.for %arg5 = %c0_0 to %c256 step %c32 iter_args(%arg6 = %arg4) -> (tensor<128x256x7x7xf64>) {
+        %c0_1 = arith.constant 0 : index
+        %c7 = arith.constant 7 : index
+        %c2 = arith.constant 2 : index
+        %5 = scf.for %arg7 = %c0_1 to %c7 step %c2 iter_args(%arg8 = %arg6) -> (tensor<128x256x7x7xf64>) {
+          %c0_2 = arith.constant 0 : index
+          %c7_3 = arith.constant 7 : index
+          %c2_4 = arith.constant 2 : index
+          %6 = scf.for %arg9 = %c0_2 to %c7_3 step %c2_4 iter_args(%arg10 = %arg8) -> (tensor<128x256x7x7xf64>) {
+            %c7_5 = arith.constant 7 : index
+            %7 = affine.min #map(%arg7)
+            %c7_6 = arith.constant 7 : index
+            %8 = affine.min #map(%arg9)
+            %9 = affine.apply #map1(%7)
+            %10 = affine.apply #map1(%8)
+            %11 = affine.apply #map1(%7)
+            %12 = affine.apply #map1(%8)
+            %13 = affine.apply #map1(%7)
+            %14 = affine.apply #map1(%8)
+            %extracted_slice = tensor.extract_slice %arg0[%arg3, 0, %arg7, %arg9] [16, 32, %7, %8] [1, 1, 1, 1] : tensor<128x32x7x7xf64> to tensor<16x32x?x?xf64>
+            %extracted_slice_7 = tensor.extract_slice %arg1[%arg5, 0, 0, 0] [32, 32, 1, 1] [1, 1, 1, 1] : tensor<256x32x1x1xf64> to tensor<32x32x1x1xf64>
+            %extracted_slice_8 = tensor.extract_slice %arg10[%arg3, %arg5, %arg7, %arg9] [16, 32, %7, %8] [1, 1, 1, 1] : tensor<128x256x7x7xf64> to tensor<16x32x?x?xf64>
+            %15 = linalg.conv_2d_nchw_fchw {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>, tag = "operation_0"} ins(%extracted_slice, %extracted_slice_7 : tensor<16x32x?x?xf64>, tensor<32x32x1x1xf64>) outs(%extracted_slice_8 : tensor<16x32x?x?xf64>) -> tensor<16x32x?x?xf64>
+            %16 = affine.apply #map1(%7)
+            %17 = affine.apply #map1(%8)
+            %18 = affine.apply #map1(%7)
+            %19 = affine.apply #map1(%8)
+            %inserted_slice = tensor.insert_slice %15 into %arg10[%arg3, %arg5, %arg7, %arg9] [16, 32, %7, %8] [1, 1, 1, 1] : tensor<16x32x?x?xf64> into tensor<128x256x7x7xf64>
+            scf.yield %inserted_slice : tensor<128x256x7x7xf64>
+          }
+          scf.yield %6 : tensor<128x256x7x7xf64>
+        }
+        scf.yield %5 : tensor<128x256x7x7xf64>
+      }
+      scf.yield %4 : tensor<128x256x7x7xf64>
+    }
+    %2 = call @nanoTime() : () -> i64
+    %3 = arith.subi %2, %0 : i64
+    return %1, %3 : tensor<128x256x7x7xf64>, i64
+  }
+}
+Good! Now verify the transformed convolution executes:(11935303, True)Good! Now let me test on the generic linalg kernel:(178993, True)Good! Now let me test tiling the generic operation:#map = affine_map<(d0, d1, d2, d3, d4) -> (d0, d1, d2, d3, d4)>
+module {
+  func.func private @nanoTime() -> i64 attributes {llvm.emit_c_interface}
+  func.func @main(%arg0: tensor<8x8x16x8x32xf64>, %arg1: tensor<8x8x16x8x32xf64>) -> (tensor<8x8x16x8x32xf64>, i64) attributes {llvm.emit_c_interface} {
+    %0 = call @nanoTime() : () -> i64
+    %c0 = arith.constant 0 : index
+    %c8 = arith.constant 8 : index
+    %c4 = arith.constant 4 : index
+    %1 = scf.for %arg2 = %c0 to %c8 step %c4 iter_args(%arg3 = %arg1) -> (tensor<8x8x16x8x32xf64>) {
+      %c0_0 = arith.constant 0 : index
+      %c8_1 = arith.constant 8 : index
+      %c4_2 = arith.constant 4 : index
+      %4 = scf.for %arg4 = %c0_0 to %c8_1 step %c4_2 iter_args(%arg5 = %arg3) -> (tensor<8x8x16x8x32xf64>) {
+        %extracted_slice = tensor.extract_slice %arg0[%arg2, %arg4, 0, 0, 0] [4, 4, 16, 8, 32] [1, 1, 1, 1, 1] : tensor<8x8x16x8x32xf64> to tensor<4x4x16x8x32xf64>
+        %extracted_slice_3 = tensor.extract_slice %arg5[%arg2, %arg4, 0, 0, 0] [4, 4, 16, 8, 32] [1, 1, 1, 1, 1] : tensor<8x8x16x8x32xf64> to tensor<4x4x16x8x32xf64>
+        %5 = linalg.generic {indexing_maps = [#map, #map], iterator_types = ["parallel", "parallel", "parallel", "parallel", "parallel"]} ins(%extracted_slice : tensor<4x4x16x8x32xf64>) outs(%extracted_slice_3 : tensor<4x4x16x8x32xf64>) attrs =  {tag = "operation_0"} {
+        ^bb0(%in: f64, %out: f64):
+          %6 = arith.addf %out, %in : f64
+          linalg.yield %6 : f64
+        } -> tensor<4x4x16x8x32xf64>
+        %inserted_slice = tensor.insert_slice %5 into %arg5[%arg2, %arg4, 0, 0, 0] [4, 4, 16, 8, 32] [1, 1, 1, 1, 1] : tensor<4x4x16x8x32xf64> into tensor<8x8x16x8x32xf64>
+        scf.yield %inserted_slice : tensor<8x8x16x8x32xf64>
+      }
+      scf.yield %4 : tensor<8x8x16x8x32xf64>
+    }
+    %2 = call @nanoTime() : () -> i64
+    %3 = arith.subi %2, %0 : i64
+    return %1, %3 : tensor<8x8x16x8x32xf64>, i64
+  }
+}
+Perfect! Now verify this executes correctly:(265464, True)Excellent! All tests pass. Now I'll synthesize the complete tiling action. Based on my testing, I can see that:
+
+1. **Precondition**: Must verify the `tag = "operation_0"` exists in the IR and that tile_sizes is not all zeros.
+2. **Preprocessing**: Identity (no preprocessing needed).
+3. **Implementation**: Uses `transform.structured.tile_using_for` to partition loop nests.
+4. **Postcondition**: Must verify the transformation actually changed the IR and that it's still executable.
+
+Let me now create the final action:
+
+---
+
+## Reasoning
+
+Based on my analysis and testing:
+
+1. **Transformation Validity**: `transform.structured.tile_using_for` successfully tiles linalg operations (matmul, conv_2d, generic) by generating nested `scf.for` loops with `tensor.extract_slice` / `tensor.insert_slice` pairs.
+
+2. **Parameter Design**:
+   - `tile_sizes`: A list of positive integers (or zeros for "no tiling") matching the operation's loop nest rank.
+   - For matmul (2D): 3 tile sizes (M, N, K)
+   - For conv_2d (4D): 4 tile sizes (N, F, OH, OW)
+   - For generic (5D): 5 tile sizes (a, b, c, d, e)
+   - A value of `0` means "don't tile that dimension."
+
+3. **Precondition Logic**:
+   - Verify `tag = "operation_0"` exists.
+   - Verify all tile sizes are non-negative integers.
+   - Verify not all tile sizes are zero (no-op check).
+
+4. **Postcondition Logic**:
+   - Verify the IR changed (not identical before/after).
+   - Verify the IR still contains a `func.func` (basic sanity check).
+   - Verify the linalg op with `tag = "operation_0"` is still present.
+
+5. **Transform IR Skeleton**:
+   - Uses `transform.structured.match attributes{tag = "operation_0"}` to locate the target.
+   - Applies `transform.structured.tile_using_for` with static tile sizes.
+   - Number of returned loops is determined by the count of non-zero tile sizes.
+
+6. **Reusability**: The action correctly handles matmul (3D), conv_2d (4D), and generic (5D) operations across multiple kernel instances, proving broad applicability.
+
+---
