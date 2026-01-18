@@ -2,7 +2,7 @@ import json
 from pprint import pprint
 from typing import AsyncGenerator, Optional, Tuple
 
-from agno.agent import Agent, RunResponseEvent
+from agno.agent import Agent
 
 from llm_action.src.config import CLAUDE_LLM_MODEL
 from llm_action.src.llm import get_claude_llm
@@ -28,16 +28,11 @@ class ActionImplementationAgent:
             model=self.model,
             instructions=get_layer2_system_prompt(),
             tools=[transform_code, execute_code, measure_speedup],
-            memory=None,
-            storage=None,
-            add_history_to_messages=False,
+            add_history_to_context=False,
             num_history_runs=0,
-            show_tool_calls=True,
             markdown=True,
         )
         
-        self.tool_execution = False
-
 class ActionImplementationAgentWrapper:
     def __init__(self, llm_model: ClaudeModel = CLAUDE_LLM_MODEL, use_cache: bool = False):
         self.action_implementation_agent = ActionImplementationAgent(llm_model=llm_model)
@@ -58,133 +53,6 @@ class ActionImplementationAgentWrapper:
             reasoning, action_package, action_python_implementation = parse_action_implementation_output(raw_content)
             
         return reasoning, action_package, action_python_implementation
-
-    async def run_stream(self, benchmark_code: str) -> AsyncGenerator[str, None]:
-        """
-        Run the Action Enumeration Agent for a benchmark_code
-        """
-        
-        response_stream = await self.action_enumeration_agent.agent.arun(
-            message=benchmark_code,
-            stream=True,
-            stream_intermediate_steps=True,
-        )
-
-        agent_response = ""
-        
-        async for event in response_stream:
-            output = self._format_event(event)
-            if output:
-                if output.get('type') == 'content':
-                    agent_response += output['content']
-                yield output
-        
-        # logger.info(f"[Agent]: Response: {agent_response}")
-
-    def _format_event(self, event: RunResponseEvent) -> Optional[str]:
-        """
-        Converts an agent event into a string for streaming/yielding.
-        """
-        match event.event:
-            
-            # Run Events
-            case "RunStarted":
-                return {
-                    "type": "run",
-                    "status": "started"
-                }
-            case "RunResponseContent":
-                if not self.mlir_llm_agent.tool_execution:
-                    return {
-                        "type": "content",
-                        "content": event.content
-                    }
-            case "RunCompleted":
-                return {
-                    "type": "run",
-                    "status": "completed"
-                }
-            case "RunError":
-                return {
-                    "type": "error",
-                    "error": f"{event.content}"
-                }
-            case "RunCanceled":
-                return {
-                    "type": "run",
-                    "status": f"canceled"
-                }
-            case "RunPaused":
-                return {
-                    "type": "run",
-                    "status": "paused"
-                }
-            case "RunContinued":
-                return {
-                    "type": "run",
-                    "status": "continued"
-                }
-
-            # Tool Events
-            case "ToolCallStarted":
-
-                self.mlir_llm_agent.tool_execution = True
-                return {
-                    "type": "tool",
-                    "status": "started",
-                    "name": event.tool.tool_name,
-                    "arguments": event.tool.tool_args,
-                }
-            case "ToolCallCompleted":
-                self.mlir_llm_agent.tool_execution = False
-
-                try:
-                    tool_result = json.loads(event.tool.result)
-                except json.JSONDecodeError:
-                    tool_result = event.tool.result
-                    
-                return {
-                    "type": "tool",
-                    "status": "completed",
-                    "name": event.tool.tool_name,
-                    "result": tool_result,
-                }
-                
-            # Reasoning Events
-            case "ReasoningStarted":
-                return {
-                    "type": "reasoning",
-                    "status": "started",
-                }
-            case "ReasoningStep":
-                return {
-                    "type": "reasoning",
-                    "status": "step",
-                    "content": event.content
-                }
-            case "ReasoningCompleted":
-                return {
-                    "type": "reasoning",
-                    "status": "completed",
-                    "content": event.content
-                }
-
-            # Memory Events
-            case "MemoryUpdateStarted":
-                return {
-                    "type": "memory_update",
-                    "status": "started",
-                }
-            case "MemoryUpdateCompleted":
-                return {
-                    "type": "memory_update",
-                    "status": "completed",
-                    "content": event.content
-                }
-            
-            # Default case
-            case _:
-                return f"Unhandled event: {event.event}"
 
 if __name__ == "__main__":
     llm_model = ClaudeModel.HAIKU
