@@ -37,6 +37,7 @@ echo "Execution time (ns): $TIME_OPT"
 echo "PyTorch:"
 conda activate torch-cpu
 TIME_TORCH=$(python torch_matmul.py)
+# TIME_TORCH=19321849
 echo "Execution time (ns): $TIME_TORCH"
 echo "--------------------------"
 echo "Speedup over Base: $(echo "scale=4; $TIME_BASE / $TIME_OPT" | bc)x"
