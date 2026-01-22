@@ -31,7 +31,7 @@ TIME_BASE=17707650426
 echo "Execution time (ns): $TIME_BASE"
 
 echo "Optimized:"
-TIME_OPT=$(mlir-opt n_matmul.mlir -transform-interpreter -test-transform-dialect-erase-schedule | python run.py)
+TIME_OPT=$(mlir-opt matmul.mlir -transform-interpreter -test-transform-dialect-erase-schedule | python run.py)
 echo "Execution time (ns): $TIME_OPT"
 
 echo "PyTorch:"

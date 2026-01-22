@@ -1,5 +1,5 @@
 #!/bin/bash
 
-mlir-opt n_matmul.mlir -transform-interpreter -test-transform-dialect-erase-schedule -o out/output.mlir
+mlir-opt matmul.mlir -transform-interpreter -test-transform-dialect-erase-schedule -o out/output.mlir
 python lower.py out/output.mlir | mlir-translate --mlir-to-llvmir -o out/output.ll
 llc -mcpu=native -o out/output.s out/output.ll
