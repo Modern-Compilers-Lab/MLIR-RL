@@ -1,0 +1,29 @@
+#!/bin/bash
+
+# 1. Submit and get ID
+JOB_ID=$(sbatch --parsable run.sh)
+LOG_FILE="logs/eval_matmul_$JOB_ID.out"
+
+echo "Job $JOB_ID submitted. Waiting for log file..."
+
+# 2. Wait for the log file to actually exist (Slurm might take a moment)
+while [ ! -f "$LOG_FILE" ]; do
+  sleep .1
+done
+
+# 3. Start tail in the background (&) and capture its Process ID ($!)
+tail -f "$LOG_FILE" &
+TAIL_PID=$!
+
+# 4. Set up a trap: if you Ctrl+C this script, kill the background tail
+trap "kill $TAIL_PID; exit" SIGINT SIGTERM
+
+# 5. Monitor loop: Check squeue every few seconds
+# 'squeue -h -j' returns the job line without header. If empty, job is done.
+while [ -n "$(squeue -h -j $JOB_ID 2>/dev/null)" ]; do
+  sleep 1
+done
+
+# 6. Job is finished: Kill the tail process
+kill $TAIL_PID
+echo -e "\nJob $JOB_ID finished."
