@@ -1,17 +1,17 @@
 from llm_action.src.models import KernelType
 from llm_action.src.utils.persistence import load_kernel_code
 
-from llm_action.playground.actions.candidates.LoopInterchange_2613 import LoopInterchange
+from llm_action.playground.actions.candidates.InterchangeSonnet import LoopInterchange
 
 params_per_kernel = {
     KernelType.MATMUL: {
-        "iterator_permutation": [1, 0, 2],
+        "iterator_interchange": [1, 0, 2],
     },
     KernelType.CONV2D: {
-        "iterator_permutation": [1, 0, 2, 3],
+        "iterator_interchange": [1, 0, 2, 3],
     },
     KernelType.GENERIC: {
-        "iterator_permutation": [1, 0],
+        "iterator_interchange": [1, 0],
     },
 }
 
@@ -20,7 +20,7 @@ if __name__ == "__main__":
     ACTION = LoopInterchange
 
     for kernel_type in [KernelType.MATMUL, KernelType.CONV2D, KernelType.GENERIC]:
-        print(f"--- Testing Tiling Action on {kernel_type.value} Kernel ---\n")
+        print(f"--- Testing {ACTION.__name__} Action on {kernel_type.value} Kernel ---\n")
         code = load_kernel_code(kernel_type)
         print(f"Original Code:\n{code}\n")
 

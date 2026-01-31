@@ -1,0 +1,35 @@
+# Reasoning
+
+Analyzing the three kernel templates (matmul, 2D convolution, and generic element-wise with linalg), I must identify compiler optimization opportunities that are broadly applicable across these compute-intensive loop-nest kernels on the target CPU (Intel Xeon Broadwell: 28 cores, AVX2, no AVX-512, NUMA-aware).
+
+## Key Observations
+
+1. **Matmul (I×J·J×K→I×K)**: Classic 3D loop nest with reduction dimension (J). Highly amenable to blocking/tiling for cache locality, register-level reuse, and outer-loop parallelization.
+
+2. **2D Convolution (N×C×H×W kernel F×C×KH×KW)**: Decomposes into nested loops over batch, output spatial dims, filter count, input spatial dims, and channels. Can be lowered to matmul-like loop nests (im2col) or optimized directly via tiling and fusion.
+
+3. **Generic linalg**: 5D element-wise operation with all-parallel iterator types. Memory-bound but benefits from SIMD, cache-aware iteration, and parallelization.
+
+## Target Hardware Constraints
+
+- **28 cores, 2 NUMA nodes**: coarse-grain parallelization is critical; avoid oversubscription.
+- **AVX2 (256-bit SIMD)**: FP64 → 4 lanes/vector; FP32 → 8 lanes/vector.
+- **Cache hierarchy (L1/L2/L3)**: multi-level tiling essential for reuse and bandwidth.
+- **No SMT**: each thread is a full core; synchronization costs are non-trivial.
+
+## Primary Optimization Intents
+
+For loop-nest dominated kernels on this CPU, three high-impact intents emerge:
+
+### Intent 1: **Cache-Aware Data Reuse & Locality**
+Loop nests have nested memory access patterns with varying stride/reuse. Multi-level tiling (L1, L2, L3-aware) is a canonical, high-impact transformation. This intent captures **blocking and permutation** to reshape iteration space for spatial/temporal locality.
+
+### Intent 2: **Vectorization & SIMD Exposure**
+Modern CPUs require explicit vectorization to achieve peak arithmetic throughput. The iteration space and memory strides must be restructured to align with vector width (4–8 lanes for FP64/FP32 on AVX2). Includes both **innermost-loop vectorization** and **data layout / packing** to enable contiguous SIMD loads.
+
+### Intent 3: **Parallelization & Work Distribution**
+Multi-core CPUs benefit from explicit loop-level parallelism. Outer loops (especially parallel iterations) must be distributed across cores while respecting NUMA and avoiding contention. This includes **coarse-grain outer-loop parallelization**, **work distribution strategies**, and **synchronization** minimization.
+
+---
+
+# Output (JSON)

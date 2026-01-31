@@ -1,0 +1,12 @@
+{
+    "name": "LoopInterchange",
+    "description": "Reorders loop nesting to improve memory stride patterns, expose vectorizable dimensions to the innermost loop, and increase data reuse. This action first generalizes named linalg operations to linalg.generic, then applies the specified iterator interchange permutation.",
+    "parameters": [
+        {
+            "name": "iterator_interchange",
+            "description": "A permutation array specifying the new order of loop iterators. For example, [1, 0, 2] swaps the first two loops. Must be a valid permutation (no duplicates, all indices within range 0..N-1 where N is the number of iterators).",
+            "type": "list[int]",
+            "values": null
+        }
+    ]
+}

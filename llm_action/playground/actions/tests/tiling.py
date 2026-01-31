@@ -3,6 +3,7 @@ from llm_action.src.utils.persistence import load_kernel_code
 
 from llm_action.playground.actions.candidates.Tiling_af31 import TilingAction
 from llm_action.playground.actions.candidates.Tile import Tile
+from llm_action.playground.actions.candidates.Tiling4 import Tiling
 
 params_per_kernel = {
     KernelType.MATMUL: {
@@ -18,8 +19,9 @@ params_per_kernel = {
 
 if __name__ == "__main__":
     
-    ACTION = TilingAction
-    ACTION = Tile
+    # ACTION = TilingAction
+    # ACTION = Tile
+    ACTION = Tiling
 
     for kernel_type in [KernelType.MATMUL, KernelType.CONV2D, KernelType.GENERIC]:
         print(f"--- Testing Tiling Action on {kernel_type.value} Kernel ---\n")

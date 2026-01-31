@@ -194,7 +194,7 @@ def execute_bufferized_code(code: str, timeout: int = CODE_EXECUTION_TIMEOUT) ->
         timeout (int): The maximum time to allow for code execution in seconds.
 
     Returns:
-        int: the execution time in seconds.
+        int: the execution time in milliseconds.
         bool: the assertion result.
     """
 

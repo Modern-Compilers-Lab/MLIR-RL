@@ -59,7 +59,7 @@ if __name__ == "__main__":
     print(f"=== Running Action Enumeration Agent using {llm_model.value} Model ===")
     # code_template = load_kernel_code_template(KernelType.CONV2D)
     # response = agent_wrapper.run(code_template)
-    reasoning, action_enumeration = agent_wrapper.run(get_training_code_templates_representation())
+    reasoning, action_enumeration = agent_wrapper.run(get_training_code_templates_representation(include_instances=False))
     print("=== Agent Response Reasoning ===")
     pprint(reasoning)
     print("=== Agent Response Action Enumeration ===")
