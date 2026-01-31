@@ -33,8 +33,8 @@ from llm_action.src.config import TOOL_VERBOSE
 def measure_speedup(base_execution_time: float, execution_time: float) -> float:
     if TOOL_VERBOSE:
         logger.info("[TOOL] Executing `measure_speedup`")
-        logger.info(f"[TOOL PARAM] Base Execution Time (ns): {base_execution_time}")
-        logger.info(f"[TOOL PARAM] Transformed Execution Time (ns): {execution_time}")
+        logger.info(f"[TOOL PARAM] Base Execution Time (ms): {base_execution_time}")
+        logger.info(f"[TOOL PARAM] Transformed Execution Time (ms): {execution_time}")
     speedup = base_execution_time / execution_time
     if TOOL_VERBOSE:
         logger.info(f"[TOOL RESULT] Speedup: {speedup}")
@@ -105,14 +105,13 @@ def transform_code(code: str, transformation_code: str) -> str:
     stop_after_tool_call=False
 )
 def execute_code(code: str) -> tuple[int, bool]:
-    """Evaluates the given MLIR code with a timeout.
+    """Executes a given MLIR code with a timeout.
 
     Args:
-        state (OperationState): The operation state to evaluate.
-        tmp_exec_data_file (str): The path to the temporary execution data file.
+        code (str): The MLIR code to execute
 
     Returns:
-        tuple[int, bool]: (execution time in nanoseconds, assertion result)
+        tuple[int, bool]: (execution time in milliseconds, assertion result)
     """
     if TOOL_VERBOSE:
         logger.info("[TOOL] Executing `execute_code`")
@@ -120,7 +119,7 @@ def execute_code(code: str) -> tuple[int, bool]:
     bufferized_code = transform_bufferize_and_lower_v(code)
     real_exec_time, success = execute_bufferized_code(bufferized_code)
     if TOOL_VERBOSE:
-        logger.info(f"[TOOL RESULT] Execution Time (ns): {real_exec_time}")
+        logger.info(f"[TOOL RESULT] Execution Time (ms): {real_exec_time/1000000}")
         logger.info(f"[TOOL RESULT] Assertion Success: {success}")
     return real_exec_time, success
 

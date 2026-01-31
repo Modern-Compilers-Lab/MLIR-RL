@@ -14,7 +14,7 @@ if __name__ == "__main__":
     action_enumeration_agent_wrapper = ActionEnumerationAgentWrapper()
     
     print("=== Running Action Enumeration Agent ===")
-    reasoning, action_enumeration = action_enumeration_agent_wrapper.run(get_training_code_templates_representation())
+    reasoning, action_enumeration = action_enumeration_agent_wrapper.run(get_training_code_templates_representation(include_instances=False))
     print("===== Reasoning =====")
     print(reasoning)
     print("=== Action Enumeration Agent Response ===")

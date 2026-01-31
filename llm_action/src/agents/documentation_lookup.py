@@ -3,10 +3,8 @@ from pprint import pprint
 from typing import AsyncGenerator, Optional, Tuple
 
 from agno.agent import Agent
-from agno.tools.firecrawl import FirecrawlTools
 
 from llm_action.src.config import CLAUDE_LLM_MODEL
-from llm_action.src.keys import FIRECRAWL_API_KEY
 from llm_action.src.llm import get_claude_llm
 from llm_action.src.prompts.documentation_lookup import get_documentation_lookup_system_prompt
 from llm_action.src.prompts.representation import get_optimization_intent_representation, get_transformation_representation, get_training_code_templates_representation

@@ -134,7 +134,7 @@ You may use the following tool to validate the MLIR transform while synthesizing
   Applies Transform dialect code and returns transformed MLIR.
 
 - `execute_code(code: str) -> tuple[int, bool]`
-  Executes the payload and returns (execution_time in ns, success_flag).
+  Executes the payload and returns (execution_time in ms, success_flag).
   
 - `measure_speedup(base_execution_time: float, execution_time: float) -> float`
   Computes the relative speedup between baseline and transformed execution times.

@@ -56,11 +56,11 @@ class ActionImplementationAgentWrapper:
         return reasoning, action_package, action_python_implementation
 
 if __name__ == "__main__":
-    llm_model = ClaudeModel.HAIKU
+    llm_model = ClaudeModel.SONNET
     agent_wrapper = ActionImplementationAgentWrapper(llm_model=llm_model)
     # code_template = load_kernel_code_template(KernelType.CONV2D)
     cached_action_enumeration: ActionEnumeration = load_cached_action_enumeration()
-    optimization_intent = cached_action_enumeration.intents[0]
+    optimization_intent = cached_action_enumeration.intents[1]
     transformation = optimization_intent.transformations[0]
     
     print(f"=== Running Action Implementation Agent using {llm_model.value} Model ===")

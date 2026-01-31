@@ -1,0 +1,82 @@
+{
+    "intents": [
+        {
+            "name": "Cache-Aware Data Reuse & Locality",
+            "description": "Restructure iteration space via multi-level loop blocking/tiling to improve temporal and spatial locality, reduce memory bandwidth, and maximize L1/L2/L3 cache utilization.",
+            "rationale": "Loop nests exhibit complex reuse patterns across iteration dimensions. Multi-level tiling (e.g., L3-tile \u2192 L2-tile \u2192 L1-tile) directly reduces cache misses and memory stalls, which dominate execution time on CPU. For matmul and convolution, this is the single highest-impact optimization on Broadwell hardware.",
+            "priority": "high",
+            "transformations": [
+                {
+                    "name": "Tiling",
+                    "description": "Partition iteration space into rectangular blocks (tiles) over one or more loop bands, creating nested loop structure that fits working set into target cache level.",
+                    "rationale": "Tiling is fundamental for cache locality. By blocking computations into cache-friendly chunk sizes, reuse distance shortens and fewer loads/stores escape to memory. Essential for matmul (tile for I,K reuse in L1; J in L2), convolution (tile spatial and filter dimensions), and generic kernels (tile over iteration dimensions to fit in cache).",
+                    "action_template": "Tiling(tile_sizes) OR Tiling(loop_band, tile_sizes) \u2014 tile_sizes is a vector where each element is the block size for a loop; 0 means no tiling for that dimension."
+                },
+                {
+                    "name": "Loop Interchange",
+                    "description": "Permute the order of nested loops to improve memory access patterns, enable vectorization, or expose parallelism.",
+                    "rationale": "Loop order dramatically affects stride and reuse. For example, interchanging to align innermost loop with unit stride enables vectorization. Swapping outer loops exposes parallelizable iterations earlier. In matmul, J (reduction) interchanged closer to innermost enables vectorized dot products.",
+                    "action_template": "LoopInterchange(loop_band, permutation) OR LoopInterchangeSwap(loop_indices) \u2014 permutation is a reordering of loop positions; indices identify adjacent/selected loops to swap."
+                },
+                {
+                    "name": "Packing / Layout Transformation",
+                    "description": "Restructure data layout or insert explicit packing kernels to regularize memory access patterns, e.g., to convert irregular strides into contiguous blocks.",
+                    "rationale": "Some access patterns (e.g., in matmul B matrix, convolution filter layout) may have poor stride. Packing densifies and aligns data in memory, enabling efficient vector loads and reducing prefetch overhead. Conceptually inseparable from tiling in high-performance libraries.",
+                    "action_template": "Packing(target_tensor, layout_spec) OR PackingWithTile(loop_band, pack_size) \u2014 layout_spec describes desired memory order or contiguity; pack_size specifies block granularity for reorganization."
+                }
+            ]
+        },
+        {
+            "name": "Vectorization & SIMD Exposure",
+            "description": "Restructure computation to expose vector operations, align data access to SIMD widths, and enable hardware vector instructions (AVX2 on Broadwell).",
+            "rationale": "Scalar code leaves ~4\u20138\u00d7 arithmetic throughput on the table (AVX2, 4\u20138 lanes). Vectorization requires: (1) innermost loop with unit stride, (2) data alignment, and (3) absence of loop-carried dependencies. Modern CPUs (Broadwell) achieve 2\u20133 FMA/cycle per core; vectorization is essential for utilization. Convolution and matmul have strong vectorization opportunities; generic element-wise operations are highly vectorizable.",
+            "priority": "high",
+            "transformations": [
+                {
+                    "name": "Vectorization",
+                    "description": "Transform a scalar loop into vector operations by exposing data parallelism and generating SIMD instructions at a chosen vector width.",
+                    "rationale": "Vectorization maps scalar operations to SIMD instructions (e.g., FP64 add \u2192 PADDQ on AVX2). Requires innermost loop with unit stride and no reduction across lanes. Typical targets: innermost spatial/element loops in convolution and matmul; all parallel loops in generic element-wise kernels.",
+                    "action_template": "Vectorization(target_loop, vector_width) OR Vectorization(loop_band, vector_width) \u2014 target_loop is the loop to vectorize (typically innermost); vector_width is the number of SIMD lanes (4 for FP64, 8 for FP32 on AVX2)."
+                },
+                {
+                    "name": "Unrolling",
+                    "description": "Replicate loop body multiple times (unroll factor) to increase instruction-level parallelism and amortize loop overhead.",
+                    "rationale": "Unrolling exposes more independent operations to superscalar execution, hiding latency of FMA chains and memory operations. On Broadwell, unroll factors of 2\u20134 are typical before register pressure becomes limiting. Especially beneficial for reduction loops (matmul J dimension) where latency-hiding is critical.",
+                    "action_template": "Unrolling(target_loop, unroll_factor) OR Unrolling(loop_band, unroll_factor) \u2014 unroll_factor is the number of iterations to unroll (typically 2\u20138)."
+                },
+                {
+                    "name": "Data Layout & Alignment",
+                    "description": "Ensure tensors are stored in memory layouts that enable efficient vector loads (contiguous, properly aligned).",
+                    "rationale": "SIMD loads require aligned, contiguous data. If tensors have poor stride or misaligned base addresses, vector loads stall or require gather operations (expensive). Alignment to 64B cache-line or vector width (32B for AVX2) is target-dependent. Particularly important for convolution filter layout and matmul B matrix.",
+                    "action_template": "DataLayoutTransform(target_tensor, alignment_bytes) OR ContiguityReduction(loop_band, innermost_stride_target) \u2014 alignment_bytes specifies required boundary; stride_target indicates desired unit stride."
+                }
+            ]
+        },
+        {
+            "name": "Parallelization & Work Distribution",
+            "description": "Expose and distribute loop-level parallelism across multiple CPU cores, respecting NUMA topology and minimizing synchronization overhead.",
+            "rationale": "The target CPU has 28 cores across 2 NUMA nodes. Loop-level parallelism must be explicitly extracted (e.g., via parallel loops or work-stealing) and distributed to achieve multi-core speedup. Naive parallelization without locality awareness or excessive synchronization can cause severe slowdown. For matmul, outer loops (I, K) are parallelizable; convolution's batch/filter/output-spatial dimensions are naturally parallel; generic kernels have all-parallel iterators.",
+            "priority": "high",
+            "transformations": [
+                {
+                    "name": "Parallelization",
+                    "description": "Annotate or restructure parallel loops to enable multi-threaded execution, distributing work across CPU cores.",
+                    "rationale": "Parallel loops (especially outer, coarse-grain loops) directly map to thread-level work. MLIR/LLVM can lower parallel annotations (e.g., scf.parallel or omp.parallel) to threading libraries (OpenMP, pthreads). Essential for scaling beyond single-core performance. Matmul I,K loops; convolution batch/filter/spatial loops; all dimensions in generic kernels.",
+                    "action_template": "Parallelization(loop_band, scheduling_strategy) OR ParallelizeLoop(target_loop) \u2014 scheduling_strategy is optional (static, dynamic, guided); target_loop identifies which loop band to parallelize."
+                },
+                {
+                    "name": "Work Distribution & Scheduling",
+                    "description": "Choose and apply a work-distribution strategy (static, dynamic, guided) for parallel loops to balance load and minimize synchronization.",
+                    "rationale": "Poor work distribution causes load imbalance and synchronization bottlenecks. Static scheduling (equal blocks per thread) is low-overhead but can imbalance if iterations have variable cost. Dynamic/guided scheduling adapts but adds overhead. On 28-core Broadwell, outer-loop static distribution is typical unless iterations have highly variable cost.",
+                    "action_template": "WorkDistribution(loop_band, schedule_type) \u2014 schedule_type is one of: static, dynamic, guided, or guided_with_chunk_size."
+                },
+                {
+                    "name": "Prefetching & Memory Optimization",
+                    "description": "Insert hints or explicit prefetch operations to improve memory subsystem efficiency, reducing load latency and cache misses.",
+                    "rationale": "On Broadwell, L2/L3 load latency is ~5\u201320 cycles. Prefetching (software or hardware-assisted) can hide latency by bringing data to cache before use. Particularly valuable in memory-bound phases (e.g., convolution input/output traversal). Layer 2 will define specific prefetch strategy and applicability constraints.",
+                    "action_template": "Prefetching(target_loop, prefetch_hint) \u2014 prefetch_hint describes data streams to prefetch (e.g., next iteration's input data, next tile's working set)."
+                }
+            ]
+        }
+    ]
+}

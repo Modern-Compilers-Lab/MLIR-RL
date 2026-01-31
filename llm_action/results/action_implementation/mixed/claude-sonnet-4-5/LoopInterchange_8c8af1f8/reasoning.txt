@@ -1,0 +1,467 @@
+# Reasoning
+
+I need to synthesize a **Loop Interchange** action for MLIR structured operations targeting the `operation_0` tag.
+
+## Analysis of the Transformation
+
+**Loop Interchange** reorders loop nesting to:
+- Improve memory access patterns (unit-stride access)
+- Expose vectorizable dimensions to innermost positions
+- Increase data reuse and cache efficiency
+- Enable better SIMD utilization on AVX2 hardware
+
+## Key Challenges
+
+1. **MLIR Transform Dialect Support**: I need to verify what Transform dialect operations exist for loop interchange.
+2. **Structured Operations**: The target operations are `linalg.matmul`, `linalg.conv_2d_nchw_fchw`, and `linalg.generic`. Loop interchange on structured ops typically requires first lowering to `scf.for` loops, then applying interchange, OR using structured transform ops if available.
+3. **Parameterization**: The action must accept a permutation of loop indices.
+4. **Deterministic Targeting**: Must match via `tag = "operation_0"` only.
+
+Let me first consult the documentation to understand the correct Transform dialect operations.I'll look up the loop interchange and loop reordering operations available in the Transform dialect.### `transform.structured.interchange` (transform::InterchangeOp) [¶](#transformstructuredinterchange-transforminterchangeop)
+
+`transform.structured.interchange`
+[¶](#transformstructuredinterchange-transforminterchangeop)
+
+Syntax:
+
+```
+operation ::= `transform.structured.interchange` $target
+              (`iterator_interchange` `=` $iterator_interchange^)? attr-dict
+              `:` custom<SemiFunctionType>(type($target), type($transformed), "false")
+```
+
+`` operation ::= `transform.structured.interchange` $target
+(`iterator_interchange` `=` $iterator_interchange^)? attr-dict
+`:` custom<SemiFunctionType>(type($target), type($transformed), "false") ``
+
+Interchanges the iterators of the operations pointed to by the target handle
+using the iterator interchange attribute.
+
+---
+
+#### Return modes [¶](#return-modes-51)
+
+[¶](#return-modes-51)
+
+This operation ignores non-linalg::Generic ops and drops them in the return.
+This operation fails if the interchange attribute is invalid.
+If all the operations referred to by the `target` handle interchange
+properly, the transform succeeds.
+If any interchange fails, the transform produces a definite failure.
+The return handle points to only the subset of successfully produced
+interchanged operations, which can be empty.
+
+`target`
+
+Traits: `FunctionalStyleTransformOpTrait`, `ReportTrackingListenerFailuresOpTrait`, `TransformEachOpTrait`
+
+`FunctionalStyleTransformOpTrait`
+`ReportTrackingListenerFailuresOpTrait`
+`TransformEachOpTrait`
+
+Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
+
+`MemoryEffectsOpInterface`
+`TransformOpInterface`
+
+---
+
+#### Attributes: [¶](#attributes-64)
+
+[¶](#attributes-64)
+
+| Attribute | MLIR Type | Description |
+| --- | --- | --- |
+| `iterator_interchange` | ::mlir::DenseI64ArrayAttr | i64 dense array attribute whose value is non-negative |
+
+| Attribute | MLIR Type | Description |
+ Attribute | MLIR Type | Description || `iterator_interchange` | ::mlir::DenseI64ArrayAttr | i64 dense array attribute whose value is non-negative |
+ `iterator_interchange` |`iterator_interchange` ::mlir::DenseI64ArrayAttr | i64 dense array attribute whose value is non-negative |
+
+---
+
+#### Operands: [¶](#operands-98)
+
+[¶](#operands-98)
+
+| Operand | Description |
+| --- | --- |
+| `target` | TransformHandleTypeInterface instance |
+
+| Operand | Description |
+| --- | --- |
+| Operand | Description |
+ Operand | Description || `target` | TransformHandleTypeInterface instance |
+| `target` | TransformHandleTypeInterface instance |
+ `target` |`target` TransformHandleTypeInterface instance |
+
+---
+
+#### Results: [¶](#results-72)
+
+[¶](#results-72)
+
+| Result | Description |
+| --- | --- |
+| `transformed` | TransformHandleTypeInterface instance |
+
+| Result | Description |
+| --- | --- |
+| Result | Description |
+ Result | Description || `transformed` | TransformHandleTypeInterface instance |
+| `transformed` | TransformHandleTypeInterface instance |
+ `transformed` |`transformed` TransformHandleTypeInterface instance |### `transform.loop.coalesce` (transform::LoopCoalesceOp) [¶](#transformloopcoalesce-transformloopcoalesceop)
+
+`transform.loop.coalesce`
+[¶](#transformloopcoalesce-transformloopcoalesceop)
+
+*Coalesces the perfect loop nest enclosed by a given loop*
+
+*Coalesces the perfect loop nest enclosed by a given loop*
+
+Syntax:
+
+```
+operation ::= `transform.loop.coalesce` $target attr-dict `:` functional-type($target, $transformed)
+```
+
+`` operation ::= `transform.loop.coalesce` $target attr-dict `:` functional-type($target, $transformed) ``
+
+Given a perfect loop nest identified by the outermost loop,
+perform loop coalescing in a bottom-up one-by-one manner.
+
+---
+
+#### Return modes [¶](#return-modes-11)
+
+[¶](#return-modes-11)
+
+The return handle points to the coalesced loop if coalescing happens, or
+the given input loop if coalescing does not happen.
+
+Traits: `FunctionalStyleTransformOpTrait`, `TransformEachOpTrait`
+
+`FunctionalStyleTransformOpTrait`
+`TransformEachOpTrait`
+
+Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
+
+`MemoryEffectsOpInterface`
+`TransformOpInterface`
+
+---
+
+#### Operands: [¶](#operands-52)
+
+[¶](#operands-52)
+
+| Operand | Description |
+| --- | --- |
+| `target` | TransformHandleTypeInterface instance |
+
+| Operand | Description |
+| --- | --- |
+| Operand | Description |
+ Operand | Description || `target` | TransformHandleTypeInterface instance |
+| `target` | TransformHandleTypeInterface instance |
+ `target` |`target` TransformHandleTypeInterface instance |
+
+---
+
+#### Results: [¶](#results-35)
+
+[¶](#results-35)
+
+| Result | Description |
+| --- | --- |
+| `transformed` | TransformHandleTypeInterface instance |
+
+| Result | Description |
+| --- | --- |
+| Result | Description |
+ Result | Description || `transformed` | TransformHandleTypeInterface instance |
+| `transformed` | TransformHandleTypeInterface instance |
+ `transformed` |`transformed` TransformHandleTypeInterface instance |## Retrieved Documentation
+
+### 1. `transform.structured.interchange`
+
+Interchanges the iterators of linalg operations using the `iterator_interchange` attribute. This operation applies loop interchange directly to `linalg::Generic` ops and similar structured operations.
+
+**Key attributes:**
+- `iterator_interchange`: A dense i64 array attribute specifying the permutation of iterator positions (must be non-negative values).
+
+**Return modes:**
+- Ignores non-linalg ops and drops them.
+- Fails if the interchange attribute is invalid.
+- Returns a handle to successfully interchanged operations only.
+
+### 2. `transform.loop.coalesce`
+
+Coalesces perfect loop nests by merging multiple nested loops into fewer loops (bottom-up, one-by-one manner). While not a direct interchange, it reorders/simplifies loop structure.
+
+---
+
+## Answer
+
+- **Primary operation for loop interchange**: Use `transform.structured.interchange` with the `iterator_interchange` attribute to permute loop orders in linalg operations.
+- **Attribute specification**: The `iterator_interchange` attribute is a dense i64 array defining a permutation. For example, `[1, 0]` swaps the first two loop dimensions.
+- **Applicability**: Works on linalg::Generic and compatible structured ops; non-linalg ops are silently ignored.
+- **Complementary operation**: Use `transform.loop.coalesce` if you need to merge adjacent loop nests after interchange or other transformations.
+- **Handle requirements**: Both ops consume and return `TransformHandleTypeInterface` instances; the result handle points only to successfully transformed ops.
+- **Failure handling**: If interchange fails on any op, the transform produces a definite failure; partial success is reflected in the returned handle subset.
+
+---
+
+## Minimal Transform IR Skeleton
+
+```mlir
+module attributes { transform.with_named_sequence } {
+  transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {
+    %matched = transform.structured.match attributes { tag = "operation_0" } in %arg0 : (!transform.any_op) -> !transform.any_op
+    %interchanged = transform.structured.interchange %matched iterator_interchange = [1, 0, 2] : (!transform.any_op) -> !transform.any_op
+    transform.yield
+  }
+}
+```
+
+---
+
+## Constraints / Preconditions
+
+- **Loop nesting structure**: Target operation must have nested loop structure compatible with the interchange permutation.
+- **Iterator count**: The `iterator_interchange` array length must match the number of loops/iterators in the target op.
+- **Permutation validity**: Array values must form a valid permutation (no duplicates, all indices valid).
+- **Op type**: `transform.structured.interchange` only works on linalg::Generic and similar structured ops; drops unrelated ops silently.
+- **Perfect loop nests**: For `transform.loop.coalesce`, the loop nest must be perfect (all innermost iterations reach leaf ops uniformly).
+
+---
+
+## Lookup Keys Used
+
+- `("Structured (Linalg) Transform Operations", "transform.structured.interchange")`
+- `("Loop (SCF) Transform Operations", "transform.loop.coalesce")`Perfect! The `transform.structured.interchange` operation is exactly what I need. It works directly on `linalg` operations and accepts an `iterator_interchange` attribute as a permutation array.
+
+## Action Design
+
+**Parameters:**
+- `iterator_interchange`: A list of integers representing the permutation of loop indices.
+
+**Preconditions:**
+1. The `tag = "operation_0"` must exist in the code.
+2. The `iterator_interchange` parameter must be a valid permutation (no duplicates, all indices within range).
+3. Must not be a no-op (identity permutation like `[0, 1, 2]`).
+4. The length of the permutation must match the number of iterators in the target operation.
+
+**Implementation:**
+- Use `transform.structured.interchange` with the provided `iterator_interchange` attribute.
+
+**Postconditions:**
+1. The transformed code must differ from the original.
+2. The IR must remain valid (non-empty, contains `func.func`).
+
+Let me now test this on the provided concrete instances to validate the implementation.(8899081, True)Good, baseline executes successfully. Now let me test loop interchange on this matmul. For a matmul with 3 loops (I, J, K), let me try permutation `[1, 0, 2]` which swaps the first two loops.Interesting! The `transform.structured.interchange` operation seems to only work on `linalg.generic` operations, not on named operations like `linalg.matmul`. Let me consult the documentation again for clarification.I'll look up the documentation for `transform.structured.interchange` to clarify its applicability to named operations like `linalg.matmul` and `linalg.conv_2d`.### `transform.structured.interchange` (transform::InterchangeOp) [¶](#transformstructuredinterchange-transforminterchangeop)
+
+`transform.structured.interchange`
+[¶](#transformstructuredinterchange-transforminterchangeop)
+
+Syntax:
+
+```
+operation ::= `transform.structured.interchange` $target
+              (`iterator_interchange` `=` $iterator_interchange^)? attr-dict
+              `:` custom<SemiFunctionType>(type($target), type($transformed), "false")
+```
+
+`` operation ::= `transform.structured.interchange` $target
+(`iterator_interchange` `=` $iterator_interchange^)? attr-dict
+`:` custom<SemiFunctionType>(type($target), type($transformed), "false") ``
+
+Interchanges the iterators of the operations pointed to by the target handle
+using the iterator interchange attribute.
+
+---
+
+#### Return modes [¶](#return-modes-51)
+
+[¶](#return-modes-51)
+
+This operation ignores non-linalg::Generic ops and drops them in the return.
+This operation fails if the interchange attribute is invalid.
+If all the operations referred to by the `target` handle interchange
+properly, the transform succeeds.
+If any interchange fails, the transform produces a definite failure.
+The return handle points to only the subset of successfully produced
+interchanged operations, which can be empty.
+
+`target`
+
+Traits: `FunctionalStyleTransformOpTrait`, `ReportTrackingListenerFailuresOpTrait`, `TransformEachOpTrait`
+
+`FunctionalStyleTransformOpTrait`
+`ReportTrackingListenerFailuresOpTrait`
+`TransformEachOpTrait`
+
+Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
+
+`MemoryEffectsOpInterface`
+`TransformOpInterface`
+
+---
+
+#### Attributes: [¶](#attributes-64)
+
+[¶](#attributes-64)
+
+| Attribute | MLIR Type | Description |
+| --- | --- | --- |
+| `iterator_interchange` | ::mlir::DenseI64ArrayAttr | i64 dense array attribute whose value is non-negative |
+
+| Attribute | MLIR Type | Description |
+ Attribute | MLIR Type | Description || `iterator_interchange` | ::mlir::DenseI64ArrayAttr | i64 dense array attribute whose value is non-negative |
+ `iterator_interchange` |`iterator_interchange` ::mlir::DenseI64ArrayAttr | i64 dense array attribute whose value is non-negative |
+
+---
+
+#### Operands: [¶](#operands-98)
+
+[¶](#operands-98)
+
+| Operand | Description |
+| --- | --- |
+| `target` | TransformHandleTypeInterface instance |
+
+| Operand | Description |
+| --- | --- |
+| Operand | Description |
+ Operand | Description || `target` | TransformHandleTypeInterface instance |
+| `target` | TransformHandleTypeInterface instance |
+ `target` |`target` TransformHandleTypeInterface instance |
+
+---
+
+#### Results: [¶](#results-72)
+
+[¶](#results-72)
+
+| Result | Description |
+| --- | --- |
+| `transformed` | TransformHandleTypeInterface instance |
+
+| Result | Description |
+| --- | --- |
+| Result | Description |
+ Result | Description || `transformed` | TransformHandleTypeInterface instance |
+| `transformed` | TransformHandleTypeInterface instance |
+ `transformed` |`transformed` TransformHandleTypeInterface instance |---
+
+## Answer
+
+**`transform.structured.interchange` works ONLY on `linalg.generic` operations**, not on named ops like `linalg.matmul` or `linalg.conv_2d`.
+
+From the retrieved documentation:
+> "This operation **ignores non-linalg::Generic ops** and drops them in the return."
+
+**To interchange loops on named linalg operations, you must first generalize them:**
+
+1. **Generalize the named operation** to `linalg.generic` using `transform.structured.generalize`.
+2. **Then apply `transform.structured.interchange`** on the resulting `linalg.generic`.
+
+---
+
+## Minimal Transform IR Skeleton
+
+```mlir
+module attributes { transform.with_named_sequence } {
+  transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {
+    // Match the named linalg op (e.g., linalg.matmul with tag)
+    %matched = transform.structured.match attributes { tag = "operation_0" } in %arg0 
+      : (!transform.any_op) -> !transform.any_op
+    
+    // Generalize to linalg.generic
+    %generalized = transform.structured.generalize %matched 
+      : (!transform.any_op) -> !transform.any_op
+    
+    // Now interchange on the generic form
+    %interchanged = transform.structured.interchange %generalized 
+      iterator_interchange = [1, 0, 2]  // Swap first two iterator dimensions
+      : (!transform.any_op) -> !transform.any_op
+    
+    transform.yield
+  }
+}
+```
+
+---
+
+## Constraints / Preconditions
+
+- **Input ops must be generalized to `linalg.generic` first.** Named ops like `linalg.matmul`, `linalg.conv_2d` are silently dropped (no error, just ignored).
+- **`iterator_interchange` attribute:** dense i64 array specifying the permutation. Must be valid and non-negative.
+- If any interchange fails, the entire operation produces **definite failure**.
+- The returned handle points only to successfully interchanged ops (may be empty).
+
+---
+
+## Lookup Keys Used
+
+- `("Structured (Linalg) Transform Operations", "transform.structured.interchange")`Excellent! The documentation confirms that `transform.structured.interchange` only works on `linalg.generic` operations. For named operations like `linalg.matmul` or `linalg.conv_2d`, I must first **generalize** them using `transform.structured.generalize`.
+
+Let me test this two-step approach:#map = affine_map<(d0, d1, d2) -> (d1, d2)>
+#map1 = affine_map<(d0, d1, d2) -> (d2, d0)>
+#map2 = affine_map<(d0, d1, d2) -> (d1, d0)>
+module {
+  func.func private @nanoTime() -> i64 attributes {llvm.emit_c_interface}
+  func.func @main(%arg0: tensor<128x256xf64>, %arg1: tensor<256x128xf64>, %arg2: tensor<128x128xf64>) -> (tensor<128x128xf64>, i64) attributes {llvm.emit_c_interface} {
+    %0 = call @nanoTime() : () -> i64
+    %1 = linalg.generic {indexing_maps = [#map, #map1, #map2], iterator_types = ["parallel", "parallel", "reduction"]} ins(%arg0, %arg1 : tensor<128x256xf64>, tensor<256x128xf64>) outs(%arg2 : tensor<128x128xf64>) {
+    ^bb0(%in: f64, %in_0: f64, %out: f64):
+      %4 = arith.mulf %in, %in_0 : f64
+      %5 = arith.addf %out, %4 : f64
+      linalg.yield %5 : f64
+    } -> tensor<128x128xf64>
+    %2 = call @nanoTime() : () -> i64
+    %3 = arith.subi %2, %0 : i64
+    return %1, %3 : tensor<128x128xf64>, i64
+  }
+}
+Perfect! The transform succeeded. The `linalg.matmul` was generalized to `linalg.generic` and then the loops were interchanged. I can see the iterator types are now `["parallel", "parallel", "reduction"]` with different indexing maps. Let me verify this transformed code executes correctly:(9156644, True)Excellent! The transformed code executes successfully. Now let me test the conv_2d case:(41813627, True)#map = affine_map<(d0, d1, d2, d3, d4, d5, d6) -> (d1, d4, d2 + d5, d3 + d6)>
+#map1 = affine_map<(d0, d1, d2, d3, d4, d5, d6) -> (d0, d4, d5, d6)>
+#map2 = affine_map<(d0, d1, d2, d3, d4, d5, d6) -> (d1, d0, d2, d3)>
+module {
+  func.func private @nanoTime() -> i64 attributes {llvm.emit_c_interface}
+  func.func @main(%arg0: tensor<128x32x7x7xf64>, %arg1: tensor<256x32x1x1xf64>, %arg2: tensor<128x256x7x7xf64>) -> (tensor<128x256x7x7xf64>, i64) attributes {llvm.emit_c_interface} {
+    %0 = call @nanoTime() : () -> i64
+    %1 = linalg.generic {indexing_maps = [#map, #map1, #map2], iterator_types = ["parallel", "parallel", "parallel", "parallel", "reduction", "reduction", "reduction"]} ins(%arg0, %arg1 : tensor<128x32x7x7xf64>, tensor<256x32x1x1xf64>) outs(%arg2 : tensor<128x256x7x7xf64>) {
+    ^bb0(%in: f64, %in_0: f64, %out: f64):
+      %4 = arith.mulf %in, %in_0 : f64
+      %5 = arith.addf %out, %4 : f64
+      linalg.yield %5 : f64
+    } -> tensor<128x256x7x7xf64>
+    %2 = call @nanoTime() : () -> i64
+    %3 = arith.subi %2, %0 : i64
+    return %1, %3 : tensor<128x256x7x7xf64>, i64
+  }
+}
+(46475989, True)Great! Now let me test the `linalg.generic` case:(267416, True)#map = affine_map<(d0, d1, d2, d3, d4) -> (d4, d3, d2, d1, d0)>
+module {
+  func.func private @nanoTime() -> i64 attributes {llvm.emit_c_interface}
+  func.func @main(%arg0: tensor<8x8x16x8x32xf64>, %arg1: tensor<8x8x16x8x32xf64>) -> (tensor<8x8x16x8x32xf64>, i64) attributes {llvm.emit_c_interface} {
+    %0 = call @nanoTime() : () -> i64
+    %1 = linalg.generic {indexing_maps = [#map, #map], iterator_types = ["parallel", "parallel", "parallel", "parallel", "parallel"]} ins(%arg0 : tensor<8x8x16x8x32xf64>) outs(%arg1 : tensor<8x8x16x8x32xf64>) attrs =  {tag = "operation_0"} {
+    ^bb0(%in: f64, %out: f64):
+      %4 = arith.addf %out, %in : f64
+      linalg.yield %4 : f64
+    } -> tensor<8x8x16x8x32xf64>
+    %2 = call @nanoTime() : () -> i64
+    %3 = arith.subi %2, %0 : i64
+    return %1, %3 : tensor<8x8x16x8x32xf64>, i64
+  }
+}
+(2690154, True)Perfect! All three test cases work correctly. The action successfully:
+1. Generalizes named operations (`linalg.matmul`, `linalg.conv_2d`) to `linalg.generic`
+2. Applies loop interchange with the specified permutation
+3. Executes correctly and produces different IR
+
+Now let me implement the full action with proper preconditions and postconditions:
+
+## Action Implementation
