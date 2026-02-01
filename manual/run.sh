@@ -13,6 +13,35 @@
 #SBATCH -t 1-00
 #SBATCH -o logs/%x_%j.out
 
+# Parse arguments
+BUFFERIZE=true
+
+# Loop through arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -no-bufferize)
+      BUFFERIZE=false
+      shift
+      ;;
+    -[0-9]*)
+      MATMUL_TYPE="${1:1}"
+      shift
+      ;;
+    *)
+      # Assume any other argument is the SCHED_NAME
+      SCHED_NAME=$1
+      shift
+      ;;
+  esac
+done
+
+# Check if SCHED_NAME was provided
+if [ -z "$SCHED_NAME" ]; then
+    echo "Error: SCHED_NAME variable is missing."
+    echo "Usage: sbatch run.sh [-bufferize] <SCHED_NAME>"
+    exit 1
+fi
+
 # Resource requiremenmt commands end here
 
 #Add the lines for running your code/application
@@ -22,21 +51,55 @@ eval "$(conda shell.bash hook)"
 # Activate any environments if required
 conda activate main
 
-# Execute the code
-# export OMP_NUM_THREADS=12
+# Environment variables
+export OMP_NUM_THREADS=$(nproc)
+export OMP_PROC_BIND=close
+export OMP_PLACES=cores
+export OMP_SCHEDULE=static
+export OMP_DYNAMIC=FALSE
+export OMP_WAIT_POLICY=passive
+export KMP_BLOCKTIME=0
 
+# Execute the code
 echo "Base:"
 # TIME_BASE=$(mlir-opt matmul.mlir -test-transform-dialect-erase-schedule | python run.py)
 TIME_BASE=17707650426
 echo "Execution time (ns): $TIME_BASE"
 
 echo "Optimized:"
-TIME_OPT=$(mlir-opt matmul.mlir -transform-interpreter -test-transform-dialect-erase-schedule | python run.py)
+INPUT_SRC="matmul_${MATMUL_TYPE}.mlir"
+
+TRANSFORM_CMD=(
+  mlir-opt
+  -transform-preload-library="transform-library-paths=schedules/${SCHED_NAME}_${MATMUL_TYPE}.mlir"
+  -transform-interpreter
+)
+
+TIME_OPT=$(
+  if [ "$BUFFERIZE" = true ]; then
+    mlir-opt "${INPUT_SRC}" \
+    -eliminate-empty-tensors -empty-tensor-to-alloc-tensor \
+    -one-shot-bufferize="unknown-type-conversion=identity-layout-map function-boundary-type-conversion=identity-layout-map bufferize-function-boundaries" \
+    -buffer-results-to-out-params="hoist-static-allocs add-result-attr" \
+    -canonicalize -cse | "${TRANSFORM_CMD[@]}" -
+  else
+    "${TRANSFORM_CMD[@]}" "${INPUT_SRC}"
+  fi | python run.py
+)
+
+re='^[0-9]+$'
+if ! [[ $TIME_OPT =~ $re ]]; then
+   echo "Error: TIME_OPT is not a number" >&2; exit 1
+fi
 echo "Execution time (ns): $TIME_OPT"
 
 echo "PyTorch:"
 conda activate torch-cpu
-TIME_TORCH=$(python torch_matmul.py)
+TIME_TORCH=$(python torch_matmul.py ${MATMUL_TYPE})
+re='^[0-9]+$'
+if ! [[ $TIME_TORCH =~ $re ]]; then
+   echo "Error: TIME_TORCH is not a number" >&2; exit 1
+fi
 # TIME_TORCH=19321849
 echo "Execution time (ns): $TIME_TORCH"
 echo "--------------------------"

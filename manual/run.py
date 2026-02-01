@@ -5,43 +5,12 @@ from statistics import median
 import numpy as np
 from mlir._mlir_libs._mlir.ir import Context, Module, MemRefType, IntegerType, F64Type, F32Type  # type: ignore
 from mlir.execution_engine import ExecutionEngine
-from mlir.runtime import get_ranked_memref_descriptor, make_nd_memref_descriptor, as_ctype, ranked_memref_to_numpy
-from mlir.passmanager import PassManager
+from mlir.runtime import get_ranked_memref_descriptor
+from utils import bufferize, lower
 from mlir.dialects.func import FuncOp
-from mlir.dialects.transform import interpreter
-from typing import Optional
 
 
 def main():
-    pass_pipeline = """builtin.module(
-        canonicalize,
-        buffer-deallocation-pipeline,
-        convert-bufferization-to-memref,
-        convert-linalg-to-loops,
-        loop-invariant-code-motion,
-        scf-forall-to-parallel,
-        convert-scf-to-openmp,
-        expand-strided-metadata,
-        finalize-memref-to-llvm,
-        convert-scf-to-cf,
-        lower-affine,
-
-        convert-openmp-to-llvm,
-        convert-vector-to-llvm,
-        convert-math-to-llvm,
-        convert-math-to-libm,
-        finalize-memref-to-llvm,
-        mem2reg,
-        convert-func-to-llvm,
-        convert-index-to-llvm,
-        convert-arith-to-llvm,
-        convert-cf-to-llvm,
-
-        reconcile-unrealized-casts,
-        canonicalize,
-        cse
-    )"""
-
     code = sys.stdin.read()
     if not code:
         with open(sys.argv[1], 'r') as f:
@@ -49,38 +18,36 @@ def main():
 
     with Context():
         module = Module.parse(code)
-        pm = PassManager.parse(pass_pipeline)
 
     bufferize(module)
 
-    inputs, outs_struct = create_params(module)
-    args = convert_to_args(inputs, outs_struct)
+    inputs, outputs, exec_time = create_params(module)
+    expected = np.matmul(inputs[0], inputs[1])
+    args = convert_to_args(inputs, outputs, exec_time)
 
-    pm.run(module.operation)
+    lower(module)
 
     execution_engine = ExecutionEngine(
         module,
         opt_level=3,
         shared_libs=[
-            "/scratch/mt5383/llvm-project/build/lib//libmlir_runner_utils.so",
-            "/scratch/mt5383/llvm-project/build/lib//libmlir_c_runner_utils.so",
+            "/home/mt5383/.conda/envs/main/lib/libmlir_runner_utils.so",
+            "/home/mt5383/.conda/envs/main/lib/libmlir_c_runner_utils.so",
             "/home/mt5383/.conda/envs/main/lib/libomp.so"
         ],
     )
 
-    try:
-        for _ in range(10):
-            execution_engine.invoke("main", *args)
-            outs_struct.free_outputs()
+    execution_engine.invoke("main", *args)
+    np.testing.assert_allclose(outputs[0], expected)
 
-        times = []
-        for _ in range(11):
-            execution_engine.invoke("main", *args)
-            outs_struct.free_outputs()
-            times.append(outs_struct.delta)
-        print(median(times))
-    finally:
-        outs_struct.free_outputs()
+    for _ in range(10):
+        execution_engine.invoke("main", *args)
+
+    times: list[int] = []
+    for _ in range(11):
+        execution_engine.invoke("main", *args)
+        times.append(exec_time.item())
+    print(median(times))
 
 
 def create_params(module: Module):
@@ -117,61 +84,28 @@ def create_params(module: Module):
 
     # Create input params
     inputs: list[np.ndarray] = []
-    for input_type in main_func.type.inputs:
+    outputs: list[np.ndarray] = []
+    for input_type, input_attrs in zip(main_func.type.inputs, main_func.arg_attrs):
         assert isinstance(input_type, MemRefType), f'unexpected input type {input_type}'
-        # in_arr = np.zeros(input_type.shape, dtype=get_dtype(input_type))
-        # in_arr = np.random.rand(*input_type.shape).astype(get_dtype(input_type))
-        # Array filled with 2
-        in_arr = np.full(input_type.shape, 2, dtype=get_dtype(input_type))
-        inputs.append(in_arr)
+        if "bufferize.result" in input_attrs:
+            out_arr = np.empty(input_type.shape, dtype=get_dtype(input_type))
+            outputs.append(out_arr)
+        else:
+            in_arr = np.full(input_type.shape, 2, dtype=get_dtype(input_type))
+            inputs.append(in_arr)
 
     # Create results arg
     res_types = main_func.type.results
 
-    exec_time_type = res_types[-1]
-    if not (isinstance(exec_time_type, IntegerType) and exec_time_type.width == 64):
-        raise Exception(f'unexpected exec time type {exec_time_type}')
+    if not (len(res_types) == 1 and isinstance(res_types[0], IntegerType) and res_types[0].width == 64):
+        raise Exception(f'unexpected result types {res_types}, expected a single i64 result for execution time')
 
-    out_fields: list[tuple[str, type[ctypes.Structure]]] = []
-    for i, out_type in enumerate(res_types[:-1]):
-        assert isinstance(out_type, MemRefType), f'unexpected output type {out_type}'
-        descriptor_type = make_nd_memref_descriptor(out_type.rank, as_ctype(get_dtype(out_type)))
-        out_fields.append((f'out_{i}', descriptor_type))
+    exec_time = np.zeros((), dtype=np.int64)
 
-    class _OutputsStructure(ctypes.Structure):
-        _fields_ = [
-            *out_fields,
-            ("delta", ctypes.c_int64)
-        ]
-        delta: int
-
-        def get_results(self):
-            res: list[np.ndarray] = []
-            for field_name, _ in out_fields:
-                out_array = ranked_memref_to_numpy([getattr(self, field_name)])
-                res.append(out_array.copy())
-            return res
-
-        def free_outputs(self):
-            for field_name, mem_desc_T in out_fields:
-                memref_descriptor: ctypes.Structure = getattr(self, field_name)
-                allocated_ptr: Optional[ctypes.c_longlong] = getattr(memref_descriptor, 'allocated', None)
-
-                if allocated_ptr:
-                    address = ctypes.cast(allocated_ptr, ctypes.c_void_p)
-                    if address.value:
-                        free_pointer(address)
-                        setattr(self, field_name, mem_desc_T())
-
-    outputs_structure = _OutputsStructure()
-    for i, (field_name, field_type) in enumerate(out_fields):
-        out_arg = field_type()
-        setattr(outputs_structure, field_name, out_arg)
-
-    return inputs, outputs_structure
+    return inputs, outputs, exec_time
 
 
-def convert_to_args(inputs: list[np.ndarray], outputs_structure) -> list:
+def convert_to_args(inputs: list[np.ndarray], outputs: list[np.ndarray], exec_time: np.ndarray) -> list:
     """Converts input arrays and output structure into ctypes arguments for MLIR execution.
 
     Prepares arguments in the format required by the MLIR execution engine. Each argument
@@ -186,12 +120,11 @@ def convert_to_args(inputs: list[np.ndarray], outputs_structure) -> list:
     Returns:
         List of double pointers to ctypes Structures suitable for passing to ExecutionEngine.invoke().
     """
-    args: list[ctypes._Pointer[ctypes._Pointer[ctypes.Structure]]] = []
-    args.append(ctypes.pointer(ctypes.pointer(outputs_structure)))
-    for in_arr in inputs:
-        args.append(ctypes.pointer(ctypes.pointer(
-            get_ranked_memref_descriptor(in_arr)
-        )))
+    args: list[ctypes._Pointer[ctypes._Pointer[ctypes.Structure]]] = [
+        ctypes.pointer(ctypes.pointer(get_ranked_memref_descriptor(arr)))
+        for arr in inputs + outputs
+    ]
+    args.append(exec_time.ctypes.data_as(ctypes.POINTER(ctypes.c_int64)))
     return args
 
 
@@ -214,29 +147,6 @@ def free_pointer(ptr: ctypes.c_void_p):
 
     # Call free
     free(ptr)
-
-
-def bufferize(module: Module):
-    """Apply bufferization
-
-    Args:
-        module: The MLIR module to transform.
-    """
-    transform_code = """
-    module attributes {transform.with_named_sequence} {
-        transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.consumed}) {
-            transform.structured.eliminate_empty_tensors %arg0 : !transform.any_op
-            %empty = transform.structured.match ops{["tensor.empty"]} in %arg0 : (!transform.any_op) -> !transform.op<"tensor.empty">
-            transform.bufferization.empty_tensor_to_alloc_tensor %empty : (!transform.op<"tensor.empty">) -> !transform.op<"bufferization.alloc_tensor">
-
-            transform.bufferization.one_shot_bufferize layout{IdentityLayoutMap} %arg0 {bufferize_function_boundaries = true} : (!transform.any_op) -> !transform.any_op
-
-            transform.yield
-        }
-    }"""
-
-    t_module = Module.parse(transform_code, module.context)
-    interpreter.apply_named_sequence(module, t_module.body.operations[0], t_module)
 
 
 if __name__ == "__main__":

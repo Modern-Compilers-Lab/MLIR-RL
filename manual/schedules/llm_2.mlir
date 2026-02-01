@@ -1,19 +1,9 @@
-func.func private @nanoTime() -> i64 attributes {llvm.emit_c_interface}
-func.func @main(%arg0: tensor<24576x768xf64>, %arg1: tensor<768x384xf64>, %arg2: tensor<24576x384xf64>) -> (tensor<24576x384xf64>, i64) attributes {llvm.emit_c_interface} {
-    %0 = call @nanoTime() : () -> i64
-    %1 = linalg.matmul {tag = "operation"} ins(%arg0, %arg1 : tensor<24576x768xf64>, tensor<768x384xf64>) outs(%arg2 : tensor<24576x384xf64>) -> tensor<24576x384xf64>
-    %2 = call @nanoTime() : () -> i64
-    %3 = arith.subi %2, %0 : i64
-    return %1, %3 : tensor<24576x384xf64>, i64
-}
-
 // GEMM v978: Parallel outer tiling M=128, K cache=64
 // Testing larger K cache
 
 module attributes {transform.with_named_sequence} {
-  transform.named_sequence @__transform_main(%arg0: !transform.any_op) {
-    %module_op = transform.bufferization.one_shot_bufferize layout{IdentityLayoutMap} %arg0 {bufferize_function_boundaries = true} : (!transform.any_op) -> !transform.any_op
-    %matmul = transform.structured.match attributes {tag = "gemm"} in %module_op
+  transform.named_sequence @__transform_main(%module_op: !transform.any_op) {
+    %matmul = transform.structured.match attributes {tag = "operation"} in %module_op
       : (!transform.any_op) -> !transform.any_op
 
     // Parallel outer tile on M

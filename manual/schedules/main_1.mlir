@@ -1,12 +1,3 @@
-func.func private @nanoTime() -> i64 attributes {llvm.emit_c_interface}
-func.func @main(%arg0: tensor<24576x768xf64>, %arg1: tensor<768x384xf64>, %arg2: tensor<24576x384xf64>) -> (tensor<24576x384xf64>, i64) attributes {llvm.emit_c_interface} {
-    %0 = call @nanoTime() : () -> i64
-    %1 = linalg.matmul {tag = "operation"} ins(%arg0, %arg1 : tensor<24576x768xf64>, tensor<768x384xf64>) outs(%arg2 : tensor<24576x384xf64>) -> tensor<24576x384xf64>
-    %2 = call @nanoTime() : () -> i64
-    %3 = arith.subi %2, %0 : i64
-    return %1, %3 : tensor<24576x384xf64>, i64
-}
-
 // MC = 12288 | 4096, MC_thread = 1024
 // KC = 256
 // NC = 96 | 64
@@ -17,9 +8,8 @@ func.func @main(%arg0: tensor<24576x768xf64>, %arg1: tensor<768x384xf64>, %arg2:
 // K
 
 module attributes {transform.with_named_sequence} {
-    transform.named_sequence @__transform_main(%module: !transform.any_op {transform.consumed}) {
+    transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {
         %op_tag = transform.param.constant "operation" -> !transform.any_param
-        %arg0 = transform.bufferization.one_shot_bufferize layout{IdentityLayoutMap} %module {bufferize_function_boundaries = true} : (!transform.any_op) -> !transform.any_op
         %f = transform.structured.match ops{["func.func"]} in %arg0 : (!transform.any_op) -> !transform.any_op
         %gen = transform.structured.match attributes {tag = "operation"} in %arg0 : (!transform.any_op) -> !transform.any_op
 
@@ -55,11 +45,7 @@ module attributes {transform.with_named_sequence} {
         transform.apply_patterns to %f {
             transform.apply_patterns.vector.reduction_to_contract
             transform.apply_patterns.vector.transfer_permutation_patterns
-        } : !transform.any_op
-        transform.apply_patterns to %f {
-            // transform.apply_patterns.tensor.fold_tensor_subset_ops_into_vector_transfers
             transform.apply_patterns.canonicalization
-            transform.apply_patterns.memref.alloc_to_alloca
         } : !transform.any_op
 
         transform.apply_patterns to %f {

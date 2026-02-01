@@ -1,5 +1,55 @@
 #!/bin/bash
 
-mlir-opt matmul.mlir -transform-interpreter -test-transform-dialect-erase-schedule -o out/output.mlir
-python lower.py out/output.mlir | mlir-translate --mlir-to-llvmir -o out/output.ll
-llc -mcpu=native -o out/output.s out/output.ll
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")"
+
+# Parse arguments
+BUFFERIZE=true
+
+# Loop through arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -no-bufferize)
+      BUFFERIZE=false
+      shift
+      ;;
+    -[0-9]*)
+      MATMUL_TYPE="${1:1}"
+      shift
+      ;;
+    *)
+      # Assume any other argument is the SCHED_NAME
+      SCHED_NAME=$1
+      shift
+      ;;
+  esac
+done
+
+# Check if SCHED_NAME was provided
+if [ -z "$SCHED_NAME" ]; then
+    echo "Error: SCHED_NAME variable is missing."
+    echo "Usage: lower [-bufferize] <SCHED_NAME>"
+    exit 1
+fi
+
+INPUT_SRC="matmul_${MATMUL_TYPE}.mlir"
+
+TRANSFORM_CMD=(
+  mlir-opt
+  -transform-preload-library="transform-library-paths=schedules/${SCHED_NAME}_${MATMUL_TYPE}.mlir"
+  -transform-interpreter -o out/output.mlir
+)
+
+if [ "$BUFFERIZE" = true ]; then
+  mlir-opt "${INPUT_SRC}" \
+  -eliminate-empty-tensors -empty-tensor-to-alloc-tensor \
+  -one-shot-bufferize="unknown-type-conversion=identity-layout-map function-boundary-type-conversion=identity-layout-map bufferize-function-boundaries" \
+  -buffer-results-to-out-params="hoist-static-allocs add-result-attr" \
+  -canonicalize -cse | "${TRANSFORM_CMD[@]}" -
+else
+  "${TRANSFORM_CMD[@]}" "${INPUT_SRC}"
+fi
+
+python lower.py out/output.mlir > out/output.ll.mlir
+mlir-translate out/output.ll.mlir --mlir-to-llvmir -o out/output.ll
+llc -O3 -filetype=asm -relocation-model=pic -mcpu=native -o out/output.s out/output.ll
