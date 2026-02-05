@@ -11,7 +11,7 @@ from llm_action.src.prompts.representation import get_code_representation
 
 from llm_action.src.utils.log import logger
 from llm_action.src.models import KernelType, ClaudeModel
-from llm_action.src.utils.persistence import load_kernel_code
+from llm_action.src.utils.persistence import load_kernel_code, save_optimization_result
 
 from llm_action.src.tools.transformation import transform_code, execute_code, measure_speedup
 from llm_action.src.tools.agent_as_tool import delegate_documentation_lookup
@@ -50,16 +50,14 @@ class OptimizationAgentWrapper:
         return raw_content
 
 if __name__ == "__main__":
-    llm_model = ClaudeModel.HAIKU
+    llm_model = ClaudeModel.SONNET
     agent_wrapper = OptimizationAgentWrapper(llm_model=llm_model)
-    code = load_kernel_code(KernelType.MATMUL)
+    code = load_kernel_code(KernelType.CONV2D)
     
     print(f"=== Running Optimization Agent using {llm_model.value} Model ===")
-    raw_content = agent_wrapper.run(code + "Please test out simple tiling and vectorization optimizations, this is just a unit test.")
+    raw_content = agent_wrapper.run(code + "Try out Tiling, Vectorization, Parallelization, Interchange (not necessarily in order, or all of them).")
     print("=== Agent Response ===")
     print(raw_content)
     
-    # save_path, candidate_path = save_action_implementation_result(reasoning, action_package, action_python_implementation, KernelType.MIXED, llm_model, save_to_playground=False)
-    # print(f"=== Response saved to: {save_path} ===")
-    # if candidate_path:
-    #     print(f"=== Candidate action also saved to: {candidate_path} ===")
+    save_path = save_optimization_result(raw_content)
+    print(f"=== Response saved to: {save_path} ===")

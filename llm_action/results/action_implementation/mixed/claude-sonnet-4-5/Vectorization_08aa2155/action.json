@@ -1,0 +1,5 @@
+{
+    "name": "Vectorization",
+    "description": "Transform scalar loop iterations into vector operations by promoting innermost loops to operate on vector lanes, enabling AVX2 SIMD execution. This transformation should typically be applied after tiling the target operation to appropriate sizes (e.g., 2-8 elements per dimension for f64 on AVX2). The vectorization infers vector sizes from the tiled iteration space and converts scalar multiply-accumulate chains into vectorized operations.",
+    "parameters": []
+}

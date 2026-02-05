@@ -89,7 +89,7 @@ Your job is to return a **documentation-grounded answer** suitable for implement
 
 ## Deterministic Retrieval Procedure (Critical)
 
-1. Identify the likely Transform dialect operation(s) relevant to the query.
+1. Identify the Transform dialect operation(s) relevant to the query. Try to be comprehensive, ensuring not to miss any key ops.
 2. Determine the correct `(category_name, transformation_name)` from the provided index.
 3. Call `lookup_transformation(category_name, transformation_name)` for EACH relevant operation.
 4. Build a concise answer grounded ONLY in the retrieved text.

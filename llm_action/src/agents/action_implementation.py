@@ -60,6 +60,7 @@ if __name__ == "__main__":
     agent_wrapper = ActionImplementationAgentWrapper(llm_model=llm_model)
     # code_template = load_kernel_code_template(KernelType.CONV2D)
     cached_action_enumeration: ActionEnumeration = load_cached_action_enumeration()
+    # vectorization
     optimization_intent = cached_action_enumeration.intents[1]
     transformation = optimization_intent.transformations[0]
     
@@ -74,7 +75,7 @@ if __name__ == "__main__":
     pprint(action_package.model_dump())
     print("===== Action Python =====")
     pprint(action_python_implementation)
-    save_path, candidate_path = save_action_implementation_result(reasoning, action_package, action_python_implementation, KernelType.MIXED, llm_model, save_to_playground=False)
+    save_path, candidate_path = save_action_implementation_result(reasoning, action_package, action_python_implementation, KernelType.MIXED, llm_model, save_to_playground=True)
     print(f"=== Response saved to: {save_path} ===")
     if candidate_path:
         print(f"=== Candidate action also saved to: {candidate_path} ===")
