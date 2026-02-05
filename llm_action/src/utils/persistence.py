@@ -141,3 +141,12 @@ def save_documentation_outline(tree: DocTreeNode, outdir: str, filename: str = "
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines).rstrip() + "\n")
     return path
+
+def save_optimization_result(response: str) -> str:
+    dir = f"llm_action/results/optimization/"
+    os.makedirs(dir, exist_ok=True)
+    id = random_id(short=True)
+    file_path = f"{dir}/{id}.txt"
+    with open(file_path, "w") as f:
+        f.write(response)
+    return file_path

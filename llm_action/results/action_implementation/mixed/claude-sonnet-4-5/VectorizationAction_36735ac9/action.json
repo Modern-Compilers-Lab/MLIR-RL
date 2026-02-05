@@ -1,0 +1,17 @@
+{
+    "name": "VectorizationAction",
+    "description": "Vectorize SIMD-friendly operations by tiling to register-level sizes and applying MLIR vectorization. Due to limitations of MLIR's structured vectorization, this action is conservative and may not apply to many operations.",
+    "parameters": [
+        {
+            "name": "vector_size",
+            "description": "SIMD vector width for the innermost vectorized dimension (e.g., 4 for AVX2 f64, 8 for AVX2 f32)",
+            "type": "int",
+            "values": [
+                2,
+                4,
+                8,
+                16
+            ]
+        }
+    ]
+}

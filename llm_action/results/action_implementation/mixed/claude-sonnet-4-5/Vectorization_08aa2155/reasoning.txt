@@ -1,0 +1,838 @@
+# Reasoning
+
+I need to implement a **Vectorization** action that transforms scalar loop iterations into vector operations aligned with AVX2 SIMD capabilities on the target Broadwell CPU.
+
+## Key Constraints & Requirements
+
+1. **Tag-based targeting**: Must match `tag = "operation_0"` exclusively
+2. **Hardware constraints**: AVX2 available (no AVX-512)
+   - f64: realistic widths 2, 4, 8, 16 (prefer 2-8 for AVX2)
+   - f32: realistic widths 4, 8, 16, 32 (prefer 4-16 for AVX2)
+3. **Vector safety contract**: 
+   - f64: N ≤ 16
+   - Prefer rank-1 vectors
+   - No tile-as-vector lowering
+4. **Reusability**: Must work on matmul, conv, generic, and their transformed variants
+
+## Design Decisions
+
+### Parameters
+- `vector_size`: The SIMD width to use for vectorization (discrete values matching hardware)
+- Optional parameters for controlling which dimension/loop to vectorize could be added, but Transform dialect's `vectorize` operation has intelligent defaults
+
+### Transform Dialect Strategy
+
+Let me consult the documentation first to ensure correct usage:I'll look up the vectorization operations available in the Transform dialect for you.Let me also retrieve the linalg pad_vectorization pattern:---
+
+## Retrieved Documentation
+
+### 1. **transform.structured.vectorize** (Primary vectorization operation)
+
+Vectorize the target ops, which must be Linalg ops. Use optional vector sizes to specify exactly what configuration the vectorizer should use:
+- **Without vector sizes**: "regular vectorization" — vector sizes are inferred from the target Linalg ops.
+- **With vector sizes** (e.g., `vector_sizes [1, 4]`): "masked vectorization" — enforces the specified configuration.
+
+**Key attributes:**
+- `static_vector_sizes`: i64 dense array attribute
+- `scalable_sizes`: i1 dense array attribute (for scalable vectors)
+- `vectorize_nd_extract`: unit attribute (enable n-d extract vectorization)
+- `assume_dynamic_dims_match_vec_sizes`: unit attribute
+- `create_named_contraction`: unit attribute (create named vector contractions)
+
+**Operands:**
+- `target`: TransformHandleTypeInterface (the Linalg op to vectorize)
+- `vector_sizes`: variadic of transform param or handle type (optional SSA values)
+
+**Return behavior:** Produces a silenceable failure if any target op is not a Linalg op or fails to vectorize.
+
+---
+
+### 2. **transform.structured.vectorize_children_and_apply_patterns**
+
+Vectorizes all children contained in the given `target` and applies supporting rewrite patterns. This is a bulk vectorization operation that only works on ops with the "isolated from above" property.
+
+**Key attributes:**
+- `fold_type_extensions_into_contract`: fold type extension ops into `vector.contract`
+- `vectorize_padding`: activate vectorization of `tensor.pad` ops
+- `vectorize_nd_extract`: enable n-d extract vectorization
+- `flatten_1d_depthwise_conv`: unit attribute
+- `disable_multi_reduction_to_contract_patterns`: deactivate multi-reduction to contract rewrite
+- `disable_transfer_permutation_map_lowering_patterns`: deactivate explicit transpose lowering
+
+**Operands:**
+- `target`: TransformHandleTypeInterface
+
+**Results:**
+- `transformed`: handle to the target op
+
+---
+
+### 3. **transform.apply_patterns.vector.lower_contraction**
+
+Indicates that vector contraction-like operations should be lowered to finer-grained vector primitives. Typically run after bufferization as part of lowering to LLVM or NVVM.
+
+**Attributes:**
+- `lowering_strategy`: `VectorContractLoweringAttr` — controls how `vector.contract` operations are lowered.
+
+---
+
+### 4. **transform.apply_patterns.linalg.pad_vectorization**
+
+Apply patterns that vectorize `tensor.pad` operations using `vector.transfer_read` and `vector.transfer_write` operations.
+
+---
+
+## Answer
+
+**Two main approaches to vectorize Linalg operations:**
+
+1. **Targeted vectorization** — Use `transform.structured.vectorize` on individual Linalg ops:
+   - Accepts optional `vector_sizes` attribute for masked vectorization (enforces specific vector widths).
+   - Without `vector_sizes`, performs regular vectorization with inferred sizes.
+   - Best applied **after tiling** to appropriate sizes.
+
+2. **Bulk vectorization** — Use `transform.structured.vectorize_children_and_apply_patterns` for vectorizing all children in a container op:
+   - Applies supporting patterns automatically (e.g., contraction creation, padding).
+   - Requires target to be "isolated from above".
+   - Fine-tune behavior via unit attributes like `vectorize_padding`, `fold_type_extensions_into_contract`.
+
+3. **Post-vectorization cleanup** — After vectorization, optionally apply:
+   - `transform.apply_patterns.vector.lower_contraction` to lower `vector.contract` to primitives.
+   - `transform.apply_patterns.linalg.pad_vectorization` to vectorize `tensor.pad` ops.
+
+---
+
+## Minimal Transform IR Skeleton
+
+```mlir
+module attributes { transform.with_named_sequence } {
+  transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {
+    // Approach 1: Targeted vectorization with inferred sizes
+    %target = transform.structured.match attributes {tag = "operation_0"} in %arg0 : (!transform.any_op) -> !transform.any_op
+    transform.structured.vectorize %target : !transform.any_op
+
+    // Approach 2: Vectorization with masked vector sizes
+    %target2 = transform.structured.match attributes {tag = "operation_1"} in %arg0 : (!transform.any_op) -> !transform.any_op
+    transform.structured.vectorize %target2 vector_sizes [1, 4, 8] : !transform.any_op
+
+    // Approach 3: Bulk vectorization with patterns
+    %func = transform.structured.match attributes {tag = "func"} in %arg0 : (!transform.any_op) -> !transform.any_op
+    %vectorized = transform.structured.vectorize_children_and_apply_patterns %func {
+      fold_type_extensions_into_contract, 
+      vectorize_padding
+    } : (!transform.any_op) -> !transform.any_op
+
+    transform.yield
+  }
+}
+```
+
+---
+
+## Constraints / Preconditions
+
+- **Target must be a Linalg op** (or container of Linalg ops for bulk vectorization).
+- **Vector sizes** (if specified) must be **≥ iteration space dimensions**.
+- For **masked vectorization** with dynamic vector sizes (SSA values), the handle must map to exactly one payload op with exactly one index-typed result.
+- **Typically apply after tiling** the payload IR to appropriate sizes.
+- **Bulk vectorization** (`vectorize_children_and_apply_patterns`) requires the target op to have the "isolated from above" property (e.g., a function or isolated block).
+- Vector-to-LLVM lowering typically happens in a separate pass (e.g., via `transform.apply_patterns.vector.lower_contraction`).
+
+---
+
+## Lookup Keys Used
+
+- `("Structured (Linalg) Transform Operations", "transform.structured.vectorize")`
+- `("Structured (Linalg) Transform Operations", "transform.structured.vectorize_children_and_apply_patterns")`
+- `("Vector Transform Operations", "transform.apply_patterns.vector.lower_contraction")`
+- `("Structured (Linalg) Transform Operations", "transform.apply_patterns.linalg.pad_vectorization")`Good! The documentation confirms:
+- `transform.structured.vectorize` is the primary op
+- It can accept `vector_sizes` attribute for masked vectorization
+- Without `vector_sizes`, it performs regular vectorization with inferred sizes
+
+Now let me design the action and test it on the concrete instances.
+
+## Implementation Plan
+
+1. **Parameters**: `vector_size` (optional, defaults to None for inference)
+2. **Precondition**: 
+   - Verify `tag = "operation_0"` exists
+   - If `vector_size` is provided, validate it's hardware-realistic
+3. **Preprocess**: Identity (no preprocessing needed)
+4. **Implement**: Apply `transform.structured.vectorize` with optional vector_sizes
+5. **Postcondition**: 
+   - Verify IR changed
+   - Check vector types don't violate safety contract
+
+Let me test this on the concrete instances:(6.049491, True)Good, baseline executes. Now let's try vectorization:#map = affine_map<(d0, d1) -> (d0, 0, d1)>
+#map1 = affine_map<(d0, d1) -> (0, d1, d0)>
+module {
+  func.func private @nanoTime() -> i64 attributes {llvm.emit_c_interface}
+  func.func @main(%arg0: tensor<128x256xf64>, %arg1: tensor<256x128xf64>, %arg2: tensor<128x128xf64>) -> (tensor<128x128xf64>, i64) attributes {llvm.emit_c_interface} {
+    %0 = call @nanoTime() : () -> i64
+    %c128 = arith.constant 128 : index
+    %c128_0 = arith.constant 128 : index
+    %c256 = arith.constant 256 : index
+    %c0 = arith.constant 0 : index
+    %cst = arith.constant 0.000000e+00 : f64
+    %1 = vector.transfer_read %arg0[%c0, %c0], %cst {in_bounds = [false, true, false], permutation_map = #map} : tensor<128x256xf64>, vector<128x128x256xf64>
+    %cst_1 = arith.constant 0.000000e+00 : f64
+    %2 = vector.transfer_read %arg1[%c0, %c0], %cst_1 {in_bounds = [true, false, false], permutation_map = #map1} : tensor<256x128xf64>, vector<128x128x256xf64>
+    %cst_2 = arith.constant 0.000000e+00 : f64
+    %3 = vector.transfer_read %arg2[%c0, %c0], %cst_2 : tensor<128x128xf64>, vector<128x128xf64>
+    %4 = arith.mulf %1, %2 : vector<128x128x256xf64>
+    %5 = vector.multi_reduction <add>, %4, %3 [2] : vector<128x128x256xf64> to vector<128x128xf64>
+    %c0_3 = arith.constant 0 : index
+    %6 = vector.transfer_write %5, %arg2[%c0_3, %c0_3] : vector<128x128xf64>, tensor<128x128xf64>
+    %7 = call @nanoTime() : () -> i64
+    %8 = arith.subi %7, %0 : i64
+    return %6, %8 : tensor<128x128xf64>, i64
+  }
+}
+**Critical issue**: The vectorization produced `vector<128x128x256xf64>`, which is a massive 4,194,304-element vector (128×128×256). This violates the safety contract (f64 limit is N ≤ 16).
+
+This is the "tile-as-vector" anti-pattern. The issue is that `linalg.matmul` on full tensors gets vectorized as a whole, creating unrealistic vectors.
+
+**Solution**: Vectorization should typically be applied **after tiling**. However, the action must still be safe when applied to untiled ops. Let me check if we can use vector_sizes to constrain this:I'll look up the documentation for `transform.structured.vectorize` to answer your question about the `vector_sizes` attribute.## Retrieved Documentation
+
+The documentation for `transform.structured.vectorize` is above.
+
+---
+
+## Answer
+
+1. **Yes, `vector_sizes` can constrain vectorization to smaller widths.** When you specify `vector_sizes`, the operation performs "masked vectorization" with exactly those dimensions, rather than inferring sizes automatically.
+
+2. **The `vector_sizes` attribute specifies static vector dimensions** as a list of positive integers (e.g., `[1, 4]`). Each value corresponds to a vectorization dimension.
+
+3. **The constraint is that vector sizes must be ≥ iteration space sizes.** You cannot use a smaller vector size than the corresponding loop/dimension in the target Linalg op.
+
+4. **Vector sizes can be static or dynamic (SSA values).** If dynamic, the handle must map to exactly one payload op with exactly one index-typed result.
+
+5. **Masked vectorization is typical after tiling.** Use `transform.structured.vectorize` after tiling your ops to appropriate sizes; then specify vector_sizes to enforce specific vector widths.
+
+6. **Key attributes for configuration:**
+   - `static_vector_sizes`: DenseI64ArrayAttr with the sizes (e.g., `dense<[1, 4]>`)
+   - `vectorize_nd_extract`: Optional unit attribute for special extract behavior
+   - `scalable_sizes`: Optional DenseBoolArrayAttr to mark dimensions as scalable
+
+---
+
+## Minimal Transform IR skeleton
+
+```mlir
+transform.named_sequence @__transform_main(%arg1: !transform.any_op {transform.readonly}) {
+  %target = transform.structured.match attributes{tag = "operation_0"} in %arg1 : (!transform.any_op) -> !transform.any_op
+  
+  // Masked vectorization with static vector sizes [1, 4]
+  transform.structured.vectorize %target vector_sizes [1, 4] : !transform.any_op
+  
+  transform.yield
+}
+```
+
+---
+
+## Constraints / Preconditions
+
+- **Target must be a Linalg op** (e.g., `linalg.matmul`, `linalg.generic`).
+- **Vector sizes must be ≥ iteration space dimensions.** For example, if the target loop has size 16, you cannot specify `vector_size = 8` for that dimension.
+- **Typically apply after tiling** to ensure iteration space sizes are appropriate for the target vector widths.
+- **Static vector_sizes use the `static_vector_sizes` attribute** (DenseI64ArrayAttr); dynamic sizes are SSA operands in the `vector_sizes` variadic list.
+- **If vectorization fails** (e.g., unsupported Linalg op or illegal vector configuration), the transform produces a silenceable failure.
+
+---
+
+## Lookup keys used
+
+- `("Structured (Linalg) Transform Operations", "transform.structured.vectorize")`The documentation confirms that `vector_sizes` enforces specific dimensions, but they must be **≥ iteration space sizes**, not smaller. This means we **cannot** use `vector_sizes` to constrain large matmul dimensions to small vector widths.
+
+**Key insight**: Vectorization on large untiled ops will produce illegal vectors. The action must either:
+1. Detect this in precondition and reject
+2. Apply vectorization only after verifying the op is already tiled to appropriate sizes
+
+Let me check the conv2d case:(41.782793, True)Conv2d vectorization fails outright. Let me check a tiled version. First, let me tile the matmul to a reasonable size:module {
+  func.func private @nanoTime() -> i64 attributes {llvm.emit_c_interface}
+  func.func @main(%arg0: tensor<128x256xf64>, %arg1: tensor<256x128xf64>, %arg2: tensor<128x128xf64>) -> (tensor<128x128xf64>, i64) attributes {llvm.emit_c_interface} {
+    %0 = call @nanoTime() : () -> i64
+    %c0 = arith.constant 0 : index
+    %c128 = arith.constant 128 : index
+    %c8 = arith.constant 8 : index
+    %1 = scf.for %arg3 = %c0 to %c128 step %c8 iter_args(%arg4 = %arg2) -> (tensor<128x128xf64>) {
+      %c0_0 = arith.constant 0 : index
+      %c128_1 = arith.constant 128 : index
+      %c8_2 = arith.constant 8 : index
+      %4 = scf.for %arg5 = %c0_0 to %c128_1 step %c8_2 iter_args(%arg6 = %arg4) -> (tensor<128x128xf64>) {
+        %c0_3 = arith.constant 0 : index
+        %c256 = arith.constant 256 : index
+        %c4 = arith.constant 4 : index
+        %5 = scf.for %arg7 = %c0_3 to %c256 step %c4 iter_args(%arg8 = %arg6) -> (tensor<128x128xf64>) {
+          %extracted_slice = tensor.extract_slice %arg0[%arg3, %arg7] [8, 4] [1, 1] : tensor<128x256xf64> to tensor<8x4xf64>
+          %extracted_slice_4 = tensor.extract_slice %arg1[%arg7, %arg5] [4, 8] [1, 1] : tensor<256x128xf64> to tensor<4x8xf64>
+          %extracted_slice_5 = tensor.extract_slice %arg8[%arg3, %arg5] [8, 8] [1, 1] : tensor<128x128xf64> to tensor<8x8xf64>
+          %6 = linalg.matmul {tag = "operation_0"} ins(%extracted_slice, %extracted_slice_4 : tensor<8x4xf64>, tensor<4x8xf64>) outs(%extracted_slice_5 : tensor<8x8xf64>) -> tensor<8x8xf64>
+          %inserted_slice = tensor.insert_slice %6 into %arg8[%arg3, %arg5] [8, 8] [1, 1] : tensor<8x8xf64> into tensor<128x128xf64>
+          scf.yield %inserted_slice : tensor<128x128xf64>
+        }
+        scf.yield %5 : tensor<128x128xf64>
+      }
+      scf.yield %4 : tensor<128x128xf64>
+    }
+    %2 = call @nanoTime() : () -> i64
+    %3 = arith.subi %2, %0 : i64
+    return %1, %3 : tensor<128x128xf64>, i64
+  }
+}
+Good! Now the matmul is tiled to 8x4x8. Let's vectorize this:#map = affine_map<(d0, d1) -> (d0, 0, d1)>
+#map1 = affine_map<(d0, d1) -> (0, d1, d0)>
+module {
+  func.func private @nanoTime() -> i64 attributes {llvm.emit_c_interface}
+  func.func @main(%arg0: tensor<128x256xf64>, %arg1: tensor<256x128xf64>, %arg2: tensor<128x128xf64>) -> (tensor<128x128xf64>, i64) attributes {llvm.emit_c_interface} {
+    %0 = call @nanoTime() : () -> i64
+    %c0 = arith.constant 0 : index
+    %c128 = arith.constant 128 : index
+    %c8 = arith.constant 8 : index
+    %1 = scf.for %arg3 = %c0 to %c128 step %c8 iter_args(%arg4 = %arg2) -> (tensor<128x128xf64>) {
+      %c0_0 = arith.constant 0 : index
+      %c128_1 = arith.constant 128 : index
+      %c8_2 = arith.constant 8 : index
+      %4 = scf.for %arg5 = %c0_0 to %c128_1 step %c8_2 iter_args(%arg6 = %arg4) -> (tensor<128x128xf64>) {
+        %c0_3 = arith.constant 0 : index
+        %c256 = arith.constant 256 : index
+        %c4 = arith.constant 4 : index
+        %5 = scf.for %arg7 = %c0_3 to %c256 step %c4 iter_args(%arg8 = %arg6) -> (tensor<128x128xf64>) {
+          %extracted_slice = tensor.extract_slice %arg0[%arg3, %arg7] [8, 4] [1, 1] : tensor<128x256xf64> to tensor<8x4xf64>
+          %extracted_slice_4 = tensor.extract_slice %arg1[%arg7, %arg5] [4, 8] [1, 1] : tensor<256x128xf64> to tensor<4x8xf64>
+          %extracted_slice_5 = tensor.extract_slice %arg8[%arg3, %arg5] [8, 8] [1, 1] : tensor<128x128xf64> to tensor<8x8xf64>
+          %c8_6 = arith.constant 8 : index
+          %c8_7 = arith.constant 8 : index
+          %c4_8 = arith.constant 4 : index
+          %c0_9 = arith.constant 0 : index
+          %cst = arith.constant 0.000000e+00 : f64
+          %6 = vector.transfer_read %extracted_slice[%c0_9, %c0_9], %cst {in_bounds = [false, true, false], permutation_map = #map} : tensor<8x4xf64>, vector<8x8x4xf64>
+          %cst_10 = arith.constant 0.000000e+00 : f64
+          %7 = vector.transfer_read %extracted_slice_4[%c0_9, %c0_9], %cst_10 {in_bounds = [true, false, false], permutation_map = #map1} : tensor<4x8xf64>, vector<8x8x4xf64>
+          %cst_11 = arith.constant 0.000000e+00 : f64
+          %8 = vector.transfer_read %extracted_slice_5[%c0_9, %c0_9], %cst_11 : tensor<8x8xf64>, vector<8x8xf64>
+          %9 = arith.mulf %6, %7 : vector<8x8x4xf64>
+          %10 = vector.multi_reduction <add>, %9, %8 [2] : vector<8x8x4xf64> to vector<8x8xf64>
+          %c0_12 = arith.constant 0 : index
+          %11 = vector.transfer_write %10, %extracted_slice_5[%c0_12, %c0_12] : vector<8x8xf64>, tensor<8x8xf64>
+          %inserted_slice = tensor.insert_slice %11 into %arg8[%arg3, %arg5] [8, 8] [1, 1] : tensor<8x8xf64> into tensor<128x128xf64>
+          scf.yield %inserted_slice : tensor<128x128xf64>
+        }
+        scf.yield %5 : tensor<128x128xf64>
+      }
+      scf.yield %4 : tensor<128x128xf64>
+    }
+    %2 = call @nanoTime() : () -> i64
+    %3 = arith.subi %2, %0 : i64
+    return %1, %3 : tensor<128x128xf64>, i64
+  }
+}
+Much better! We now have:
+- `vector<8x8x4xf64>` (256 elements, within the f64 limit of N ≤ 16... wait, 256 > 16!)
+- `vector<8x8xf64>` (64 elements, also > 16)
+
+This still violates the safety contract. The issue is that even 8x8 tiles produce vectors that are too large for the stated safety bounds.
+
+Let me reconsider: the safety contract says:
+- f64: N ≤ 16
+
+But an 8x8 tile vectorized is 64 elements. This is a rank-2 vector, which might be acceptable if we're lenient about rank-2/rank-3 for small sizes. Let me re-read the contract...
+
+Actually, looking back at the vectorization safety contract:
+
+```
+2) **Limit vector rank**
+   - Prefer rank-1 vectors: `vector<kxf32>`
+   - Allow rank-2 and rank-3 vectors only if small (e.g. `vector<4x8xf32>, vector<4x4x4xf32>`).
+```
+
+So rank-2 vectors like `vector<4x8xf32>` (32 elements) are explicitly allowed. For f64, this would be `vector<4x4xf64>` (16 elements) at most for rank-2.
+
+The current vectorization produces `vector<8x8xf64>` (64 elements) and `vector<8x8x4xf64>` (256 elements), both violating the limits.
+
+**Revised strategy**: The action needs to be more conservative. Rather than applying vectorization blindly, it should:
+
+1. Check if the target operation has reasonable tile sizes (e.g., for matmul, check the extracted slice dimensions)
+2. Only apply vectorization if the resulting vectors would be safe
+3. Or, apply vectorization conservatively with explicit small vector sizes
+
+However, checking slice dimensions via regex parsing is fragile. A better approach might be to:
+- Apply the transformation
+- Check the resulting IR for vector types
+- Reject if any vectors violate the safety contract
+
+Let me test execute_code on the vectorized version:The vectorized code fails to execute, confirming that these vector sizes are problematic for lowering.
+
+**Revised approach**: I need to be much more conservative. Let me try a smaller tile size:module {
+  func.func private @nanoTime() -> i64 attributes {llvm.emit_c_interface}
+  func.func @main(%arg0: tensor<128x256xf64>, %arg1: tensor<256x128xf64>, %arg2: tensor<128x128xf64>) -> (tensor<128x128xf64>, i64) attributes {llvm.emit_c_interface} {
+    %0 = call @nanoTime() : () -> i64
+    %c0 = arith.constant 0 : index
+    %c128 = arith.constant 128 : index
+    %c4 = arith.constant 4 : index
+    %1 = scf.for %arg3 = %c0 to %c128 step %c4 iter_args(%arg4 = %arg2) -> (tensor<128x128xf64>) {
+      %c0_0 = arith.constant 0 : index
+      %c128_1 = arith.constant 128 : index
+      %c4_2 = arith.constant 4 : index
+      %4 = scf.for %arg5 = %c0_0 to %c128_1 step %c4_2 iter_args(%arg6 = %arg4) -> (tensor<128x128xf64>) {
+        %c0_3 = arith.constant 0 : index
+        %c256 = arith.constant 256 : index
+        %c2 = arith.constant 2 : index
+        %5 = scf.for %arg7 = %c0_3 to %c256 step %c2 iter_args(%arg8 = %arg6) -> (tensor<128x128xf64>) {
+          %extracted_slice = tensor.extract_slice %arg0[%arg3, %arg7] [4, 2] [1, 1] : tensor<128x256xf64> to tensor<4x2xf64>
+          %extracted_slice_4 = tensor.extract_slice %arg1[%arg7, %arg5] [2, 4] [1, 1] : tensor<256x128xf64> to tensor<2x4xf64>
+          %extracted_slice_5 = tensor.extract_slice %arg8[%arg3, %arg5] [4, 4] [1, 1] : tensor<128x128xf64> to tensor<4x4xf64>
+          %6 = linalg.matmul {tag = "operation_0"} ins(%extracted_slice, %extracted_slice_4 : tensor<4x2xf64>, tensor<2x4xf64>) outs(%extracted_slice_5 : tensor<4x4xf64>) -> tensor<4x4xf64>
+          %inserted_slice = tensor.insert_slice %6 into %arg8[%arg3, %arg5] [4, 4] [1, 1] : tensor<4x4xf64> into tensor<128x128xf64>
+          scf.yield %inserted_slice : tensor<128x128xf64>
+        }
+        scf.yield %5 : tensor<128x128xf64>
+      }
+      scf.yield %4 : tensor<128x128xf64>
+    }
+    %2 = call @nanoTime() : () -> i64
+    %3 = arith.subi %2, %0 : i64
+    return %1, %3 : tensor<128x128xf64>, i64
+  }
+}
+#map = affine_map<(d0, d1) -> (d0, 0, d1)>
+#map1 = affine_map<(d0, d1) -> (0, d1, d0)>
+module {
+  func.func private @nanoTime() -> i64 attributes {llvm.emit_c_interface}
+  func.func @main(%arg0: tensor<128x256xf64>, %arg1: tensor<256x128xf64>, %arg2: tensor<128x128xf64>) -> (tensor<128x128xf64>, i64) attributes {llvm.emit_c_interface} {
+    %0 = call @nanoTime() : () -> i64
+    %c0 = arith.constant 0 : index
+    %c128 = arith.constant 128 : index
+    %c4 = arith.constant 4 : index
+    %1 = scf.for %arg3 = %c0 to %c128 step %c4 iter_args(%arg4 = %arg2) -> (tensor<128x128xf64>) {
+      %c0_0 = arith.constant 0 : index
+      %c128_1 = arith.constant 128 : index
+      %c4_2 = arith.constant 4 : index
+      %4 = scf.for %arg5 = %c0_0 to %c128_1 step %c4_2 iter_args(%arg6 = %arg4) -> (tensor<128x128xf64>) {
+        %c0_3 = arith.constant 0 : index
+        %c256 = arith.constant 256 : index
+        %c2 = arith.constant 2 : index
+        %5 = scf.for %arg7 = %c0_3 to %c256 step %c2 iter_args(%arg8 = %arg6) -> (tensor<128x128xf64>) {
+          %extracted_slice = tensor.extract_slice %arg0[%arg3, %arg7] [4, 2] [1, 1] : tensor<128x256xf64> to tensor<4x2xf64>
+          %extracted_slice_4 = tensor.extract_slice %arg1[%arg7, %arg5] [2, 4] [1, 1] : tensor<256x128xf64> to tensor<2x4xf64>
+          %extracted_slice_5 = tensor.extract_slice %arg8[%arg3, %arg5] [4, 4] [1, 1] : tensor<128x128xf64> to tensor<4x4xf64>
+          %c4_6 = arith.constant 4 : index
+          %c4_7 = arith.constant 4 : index
+          %c2_8 = arith.constant 2 : index
+          %c0_9 = arith.constant 0 : index
+          %cst = arith.constant 0.000000e+00 : f64
+          %6 = vector.transfer_read %extracted_slice[%c0_9, %c0_9], %cst {in_bounds = [false, true, false], permutation_map = #map} : tensor<4x2xf64>, vector<4x4x2xf64>
+          %cst_10 = arith.constant 0.000000e+00 : f64
+          %7 = vector.transfer_read %extracted_slice_4[%c0_9, %c0_9], %cst_10 {in_bounds = [true, false, false], permutation_map = #map1} : tensor<2x4xf64>, vector<4x4x2xf64>
+          %cst_11 = arith.constant 0.000000e+00 : f64
+          %8 = vector.transfer_read %extracted_slice_5[%c0_9, %c0_9], %cst_11 : tensor<4x4xf64>, vector<4x4xf64>
+          %9 = arith.mulf %6, %7 : vector<4x4x2xf64>
+          %10 = vector.multi_reduction <add>, %9, %8 [2] : vector<4x4x2xf64> to vector<4x4xf64>
+          %c0_12 = arith.constant 0 : index
+          %11 = vector.transfer_write %10, %extracted_slice_5[%c0_12, %c0_12] : vector<4x4xf64>, tensor<4x4xf64>
+          %inserted_slice = tensor.insert_slice %11 into %arg8[%arg3, %arg5] [4, 4] [1, 1] : tensor<4x4xf64> into tensor<128x128xf64>
+          scf.yield %inserted_slice : tensor<128x128xf64>
+        }
+        scf.yield %5 : tensor<128x128xf64>
+      }
+      scf.yield %4 : tensor<128x128xf64>
+    }
+    %2 = call @nanoTime() : () -> i64
+    %3 = arith.subi %2, %0 : i64
+    return %1, %3 : tensor<128x128xf64>, i64
+  }
+}
+Good! Now we have:
+- `vector<4x4x2xf64>` (32 elements)
+- `vector<4x4xf64>` (16 elements)
+
+Both are within or slightly above the f64 limit (N ≤ 16). The rank-3 vector with 32 elements might be borderline, but let's test execution:Still fails. The issue is that the rank-3 vectors from matmul vectorization don't lower well.
+
+**Key realization**: The documentation mentions that vectorization should typically be applied **after decomposition** or **on specific ops**. For matmul, we might need to decompose it to linalg.generic first, or use a different approach.
+
+Let me try vectorizing the generic instance instead:(1.050316, True)module {
+  func.func private @nanoTime() -> i64 attributes {llvm.emit_c_interface}
+  func.func @main(%arg0: tensor<8x8x16x8x32xf64>, %arg1: tensor<8x8x16x8x32xf64>) -> (tensor<8x8x16x8x32xf64>, i64) attributes {llvm.emit_c_interface} {
+    %0 = call @nanoTime() : () -> i64
+    %c8 = arith.constant 8 : index
+    %c8_0 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c8_1 = arith.constant 8 : index
+    %c32 = arith.constant 32 : index
+    %c0 = arith.constant 0 : index
+    %cst = arith.constant 0.000000e+00 : f64
+    %1 = vector.transfer_read %arg0[%c0, %c0, %c0, %c0, %c0], %cst : tensor<8x8x16x8x32xf64>, vector<8x8x16x8x32xf64>
+    %cst_2 = arith.constant 0.000000e+00 : f64
+    %2 = vector.transfer_read %arg1[%c0, %c0, %c0, %c0, %c0], %cst_2 : tensor<8x8x16x8x32xf64>, vector<8x8x16x8x32xf64>
+    %3 = arith.addf %2, %1 : vector<8x8x16x8x32xf64>
+    %c0_3 = arith.constant 0 : index
+    %4 = vector.transfer_write %3, %arg1[%c0_3, %c0_3, %c0_3, %c0_3, %c0_3] : vector<8x8x16x8x32xf64>, tensor<8x8x16x8x32xf64>
+    %5 = call @nanoTime() : () -> i64
+    %6 = arith.subi %5, %0 : i64
+    return %4, %6 : tensor<8x8x16x8x32xf64>, i64
+  }
+}
+**Critical**: This produces `vector<8x8x16x8x32xf64>` which is 262,144 elements! This massively violates the safety contract.
+
+**Conclusion**: Blind vectorization of high-dimensional untiled operations produces illegal vectors. The action MUST:
+
+1. **Reject untiled or large operations in precondition**, OR
+2. **Apply vectorization conservatively and validate the output**
+
+Given that precondition checking of tensor dimensions is complex (requires IR parsing), I'll use approach #2: apply vectorization, then validate vector sizes in postcondition.
+
+However, there's a practical issue: vectorization is most useful **after tiling**. An action that only works on pre-tiled code is limiting.
+
+**Alternative strategy**: Make vectorization a **no-parameter action** that applies conservatively, and rely on the user/RL agent to tile first. The precondition should check if the operation is "vectorizable" (e.g., already tiled to small sizes).
+
+Actually, rereading the requirements more carefully: the action should be **parameterized** where appropriate. For vectorization, a natural parameter would be `vector_size`, but as we've seen, the Transform dialect doesn't support constraining to smaller vector widths.
+
+**Final strategy**:
+1. **No parameters** (or optional flag for different vectorization strategies)
+2. **Precondition**: Check that tag exists and IR contains the target op
+3. **Implementation**: Apply `transform.structured.vectorize`
+4. **Postcondition**: 
+   - Check IR changed
+   - Parse output for `vector<...>` types
+   - Validate all vector types are within safety bounds
+   - Reject if any vector violates the contract
+
+Let me implement this:
+
+```python
+import re
+from llm_action.src.actions.base import ActionBase
+from llm_action.src.utils.transformation import run_transform_code
+
+
+class VectorizationAction(ActionBase):
+    
+    @classmethod
+    def parameters(cls) -> dict:
+        return {}
+    
+    @classmethod
+    def precondition(cls, code: str, params: dict) -> bool:
+        # Check that the target tag exists
+        if 'tag = "operation_0"' not in code:
+            return False
+        return True
+    
+    @classmethod
+    def preprocess(cls, code: str, params: dict) -> str:
+        return code
+    
+    @classmethod
+    def implement(cls, code: str, params: dict) -> str:
+        transform_code = (
+            'module attributes {transform.with_named_sequence} {\n'
+            '  transform.named_sequence @__transform_main(%arg1: !transform.any_op {transform.readonly}) {\n'
+            '    %op = transform.structured.match attributes{tag = "operation_0"} in %arg1'
+            ' : (!transform.any_op) -> !transform.any_op\n'
+            '    transform.structured.vectorize %op : !transform.any_op\n'
+            '    transform.yield\n'
+            '  }\n'
+            '}\n'
+        )
+        
+        try:
+            result = run_transform_code(code, transform_code)
+            return result
+        except Exception:
+            # If transform fails, return original code
+            return code
+    
+    @classmethod
+    def postcondition(cls, before: str, after: str, params: dict) -> bool:
+        # Check that the IR actually changed
+        if after.strip() == before.strip():
+            return False
+        
+        # Extract all vector types and validate sizes
+        vector_pattern = r'vector<([0-9x]+)x([a-z0-9]+)>'
+        vectors = re.findall(vector_pattern, after)
+        
+        for vec_dims, elem_type in vectors:
+            # Calculate total vector size
+            dims = [int(d) for d in vec_dims.split('x') if d.isdigit()]
+            if not dims:
+                continue
+                
+            total_size = 1
+            for d in dims:
+                total_size *= d
+            
+            # Check rank
+            rank = len(dims)
+            if rank >= 4:
+                return False
+            
+            # Check size limits based on element type
+            if elem_type in ['f64', 'i64']:
+                if total_size > 16:
+                    return False
+            elif elem_type in ['f32', 'i32']:
+                if total_size > 32:
+                    return False
+            elif elem_type in ['f16', 'bf16', 'i16']:
+                if total_size > 64:
+                    return False
+            elif elem_type == 'i8':
+                if total_size > 128:
+                    return False
+        
+        # Check that the result is still valid MLIR
+        if 'func.func' not in after:
+            return False
+        
+        return True
+```
+
+Wait, this implementation will reject most vectorizations on untiled code. Let me test my regex and logic on a realistic case. Actually, let me reconsider the whole approach...
+
+**Better idea**: Since vectorization without tiling produces illegal vectors, maybe this action should be **tiling + vectorization** combined. But that violates the "atomic transformation" principle.
+
+Or, we could make vectorization **require tiled input** and document that clearly. The precondition could check for presence of `scf.for` loops (indicating tiling has been applied).
+
+Let me check if there's a way to make vectorization work better. Let me look at alternative vectorization patterns:I'll retrieve documentation on vectorization strategies and related operations to give you a comprehensive, practice-grounded answer.---
+
+## Retrieved Documentation
+
+### **transform.structured.vectorize**
+Vectorize the target ops, which must be Linalg ops. Supports two modes:
+- **Regular vectorization**: vector sizes are inferred from the target Op (no vector_sizes argument).
+- **Masked vectorization**: specify exact vector sizes via `vector_sizes [size1, size2, ...]` to enforce a configuration with masked vectors.
+
+**Key constraint**: "Typically this operator should be applied to linalg operations that have **already been tiled to the appropriate sizes**."
+
+Supports attributes like `vectorize_nd_extract`, `assume_dynamic_dims_match_vec_sizes`, `create_named_contraction`, and scalable vector sizes.
+
+### **transform.structured.vectorize_children_and_apply_patterns**
+Vectorizes all children (structured ops on shaped types) contained in a target with "isolated from above" property. Applies a set of rewrite patterns to enable vectorization and clean up results.
+
+Supports fine-grained attributes:
+- `vectorize_padding`: activates vectorization of `tensor.pad` ops (default: off).
+- `fold_type_extensions_into_contract`: enables mixed-precision `vector.contract` creation.
+- Other pattern controls (multi_reduction, transfer permutation maps).
+
+**Important**: This transformation invalidates handles to payload ops contained inside the vectorization target.
+
+### **transform.structured.tile_using_for**
+Tiles a Linalg op with specified sizes, generating a loop nest with the tiled operation in its body. 
+- Tile size `0` means "do not tile this dimension".
+- Returns handles to the **tiled op** and the **generated loops**.
+
+### **transform.structured.pad**
+Pads operations before vectorization (e.g., to multiples of vector widths). Returns handles to padded op, padding op, and copy-back op.
+
+### **transform.apply_patterns.linalg.pad_vectorization**
+Pattern descriptor that vectorizes `tensor.pad` ops using `vector.transfer_read`/`vector.transfer_write`. Folding happens either with existing transfer ops or via rewrite with consumers.
+
+---
+
+## Answer
+
+**To vectorize linalg operations effectively, follow this pattern:**
+
+1. **Tile first (typically required)**: Apply `transform.structured.tile_using_for` with appropriate tile sizes to match your target vector widths and hardware cache/register constraints. The documentation explicitly states vectorization "should be applied to linalg operations that have already been tiled."
+
+2. **Optional padding before tiling**: Use `transform.structured.pad` (with `pad_to_multiple_of`) to ensure iteration spaces are multiples of vector sizes, avoiding masked vectorization overhead.
+
+3. **Vectorize the tiled op**: Use `transform.structured.vectorize` on the tiled operation with either:
+   - **No vector_sizes** (regular vectorization): infer sizes from the tiled iteration space.
+   - **Explicit vector_sizes** (masked vectorization): enforce specific vector configurations with masking.
+
+4. **Alternative: Child vectorization + patterns**: For ops with children, use `transform.structured.vectorize_children_and_apply_patterns` with attributes like `vectorize_padding` to avoid separate pattern application steps.
+
+5. **Handle padding ops**: If padding is present, optionally apply `transform.apply_patterns.linalg.pad_vectorization` to vectorize `tensor.pad` via transfer ops.
+
+6. **Cleanup patterns**: The `vectorize_children_and_apply_patterns` variant automatically applies cleanup (contraction folding, transpose lowering, etc.); for standalone `vectorize`, you may need additional pattern passes.
+
+---
+
+## Minimal Transform IR Skeleton
+
+```mlir
+module attributes { transform.with_named_sequence } {
+  transform.named_sequence @__transform_main(
+      %arg0: !transform.any_op {transform.readonly}) {
+    // Match target operation (e.g., matmul with tag)
+    %op = transform.structured.match attributes { tag = "operation_0" }
+      in %arg0 : (!transform.any_op) -> !transform.any_op
+
+    // Step 1: Tile with specific sizes
+    %tiled_op, %loops:2 = transform.structured.tile_using_for %op
+      tile_sizes [64, 64, 0]
+      : (!transform.any_op) -> (!transform.any_op, !transform.any_op, !transform.any_op)
+
+    // Step 2: Vectorize the tiled operation
+    transform.structured.vectorize %tiled_op
+      : !transform.any_op
+
+    transform.yield
+  }
+}
+```
+
+---
+
+## Constraints / Preconditions
+
+- **Tiling is prerequisite**: Vectorization works best on already-tiled operations; iteration spaces must be suitable for vector widths (typically 4–8 for FP64, 8–16 for FP32 on AVX2).
+- **Iteration space alignment**: If iteration space sizes are not multiples of vector size, masked vectorization will be triggered; consider padding beforehand with `transform.structured.pad`.
+- **Handle validity**: After `vectorize_children_and_apply_patterns`, handles to contained ops are **invalidated**; do not reuse them downstream.
+- **Linalg ops only**: Both `tile_using_for` and `vectorize` require Linalg ops; other ops are silently dropped or produce failures.
+- **Vector size constraints**: For masked vectorization, specified vector sizes must be ≥ the iteration space sizes in each dimension.
+
+---
+
+## Lookup Keys Used
+
+- `("Structured (Linalg) Transform Operations", "transform.structured.vectorize")`
+- `("Structured (Linalg) Transform Operations", "transform.structured.vectorize_children_and_apply_patterns")`
+- `("Structured (Linalg) Transform Operations", "transform.structured.tile_using_for")`
+- `("Structured (Linalg) Transform Operations", "transform.structured.pad")`
+- `("Structured (Linalg) Transform Operations", "transform.apply_patterns.linalg.pad_vectorization")`Perfect! The documentation confirms: **"Typically this operator should be applied to linalg operations that have already been tiled to the appropriate sizes."**
+
+So the correct approach is:
+1. Vectorization should be applied **after tiling**
+2. The action's precondition should verify that tiling has occurred (or at least that the operation dimensions are small enough)
+
+Given the design constraints and the reality of how vectorization works, I'll implement this action with:
+
+- **No parameters** (vectorization infers sizes from tiled iteration space)
+- **Precondition**: Check for tag existence only (cannot reliably check if tiling occurred without complex IR parsing)
+- **Implementation**: Apply vectorization
+- **Postcondition**: Strictly validate vector sizes, reject if any exceed safety bounds
+
+This means the action will:
+- **Succeed** when applied to appropriately tiled code
+- **Fail precondition** if tag is missing
+- **Fail postcondition** if vectors are too large or IR is broken
+
+Let me implement and test this thoroughly:
+
+```python
+from llm_action.src.actions.base import ActionBase
+from llm_action.src.utils.transformation import run_transform_code
+import re
+
+
+class VectorizationAction(ActionBase):
+    
+    @classmethod
+    def parameters(cls) -> dict:
+        return {}
+    
+    @classmethod
+    def precondition(cls, code: str, params: dict) -> bool:
+        """
+        Verify that:
+        1. The target operation tag exists
+        2. (Implicitly) the operation should be tiled to reasonable sizes,
+           but we cannot check this directly, so postcondition will validate vector sizes
+        """
+        if 'tag = "operation_0"' not in code:
+            return False
+        return True
+    
+    @classmethod
+    def preprocess(cls, code: str, params: dict) -> str:
+        """No preprocessing needed"""
+        return code
+    
+    @classmethod
+    def implement(cls, code: str, params: dict) -> str:
+        """
+        Apply structured vectorization to the tagged operation.
+        Uses regular vectorization (inferred vector sizes).
+        """
+        transform_code = (
+            'module attributes {transform.with_named_sequence} {\n'
+            '  transform.named_sequence @__transform_main(%arg1: !transform.any_op {transform.readonly}) {\n'
+            '    %op = transform.structured.match attributes{tag = "operation_0"} in %arg1'
+            ' : (!transform.any_op) -> !transform.any_op\n'
+            '    transform.structured.vectorize %op : !transform.any_op\n'
+            '    transform.yield\n'
+            '  }\n'
+            '}\n'
+        )
+        
+        try:
+            result = run_transform_code(code, transform_code)
+            return result
+        except Exception:
+            # If vectorization fails, return original code
+            # Postcondition will catch this as a no-op
+            return code
+    
+    @classmethod
+    def postcondition(cls, before: str, after: str, params: dict) -> bool:
+        """
+        Validate that:
+        1. IR actually changed (not a no-op)
+        2. All vector types respect hardware safety bounds
+        3. IR is still well-formed
+        """
+        # Reject no-ops
+        if after.strip() == before.strip():
+            return False
+        
+        # Basic well-formedness check
+        if 'func.func' not in after:
+            return False
+        
+        # Extract and validate all vector types
+        # Pattern matches: vector<8x4xf64>, vector<128xf32>, etc.
+        vector_pattern = r'vector<([0-9x]+)x?([a-z0-9]+)>'
+        vectors = re.findall(vector_pattern, after)
+        
+        for vec_spec, elem_type in vectors:
+            # Parse dimensions
+            # vec_spec could be "8x4" or just "128"
+            dim_strs = vec_spec.split('x')
+            dims = []
+            for d in dim_strs:
+                if d.isdigit():
+                    dims.append(int(d))
+            
+            if not dims:
+                continue
+            
+            # Calculate total vector size
+            total_size = 1
+            for d in dims:
+                total_size *= d
+            
+            # Check rank constraint
+            rank = len(dims)
+            if rank >= 4:
+                # Rank-4 or higher vectors are disallowed
+                return False
+            
+            # Check size limits based on element type
+            # Safety contract limits:
+            if elem_type in ['f64', 'i64']:
+                if total_size > 16:
+                    return False
+            elif elem_type in ['f32', 'i32']:
+                if total_size > 32:
+                    return False
+            elif elem_type in ['f16', 'bf16', 'i16']:
+                if total_size > 64:
+                    return False
+            elif elem_type == 'i8':
+                if total_size > 128:
+                    return False
+            else:
+                # Unknown type, be conservative
+                if total_size > 16:
+                    return False
+        
+        return True
+```
+
+Now let me create the action metadata and test it:

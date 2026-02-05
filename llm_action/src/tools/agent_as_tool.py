@@ -3,6 +3,7 @@ from llm_action.src.config import TOOL_VERBOSE
 
 from agno.tools import tool
 
+from llm_action.src.models import ClaudeModel
 from llm_action.src.agents.documentation_lookup import DocumentationLookupAgentWrapper 
 
 @tool(
@@ -22,7 +23,7 @@ from llm_action.src.agents.documentation_lookup import DocumentationLookupAgentW
     stop_after_tool_call=False
 )
 def delegate_documentation_lookup(task: str) -> str:
-    agent = DocumentationLookupAgentWrapper()
+    agent = DocumentationLookupAgentWrapper(llm_model=ClaudeModel.HAIKU)
     if TOOL_VERBOSE:
         logger.info("[TOOL] Executing `delegate_documentation_lookup`")
         logger.info(f"[TOOL PARAM] Task: {task}")

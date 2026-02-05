@@ -1,0 +1,15 @@
+{
+    "name": "Vectorization",
+    "description": "Transform scalar loop iterations into vector operations by promoting innermost loops to operate on vector lanes, enabling AVX2 SIMD execution. This action applies MLIR's linalg vectorization and succeeds only when the operation has been appropriately tiled to produce hardware-realistic vector sizes (typically requires prior tiling to small tile sizes like 2\u00d72 or 4\u00d74 for f64, or 4\u00d74 to 8\u00d78 for f32).",
+    "parameters": [
+        {
+            "name": "vectorize",
+            "description": "Whether to apply vectorization (must be true for action to execute)",
+            "type": "bool",
+            "values": [
+                1,
+                0
+            ]
+        }
+    ]
+}

@@ -174,6 +174,49 @@ For each kernel instance you test during synthesis, follow systematically this p
 
 This plan is meant to prevent false positives (no-op transforms, invalid IR, or silently broken payloads) and ensure the synthesized action is functional end-to-end over the 4 steps.
 
+## Vectorization Safety Contract
+
+### Goal
+Vectorization is allowed only when it produces **hardware-realistic SIMD vectors**
+and must NOT materialize large tensor tiles as vectors.
+
+### Hard Constraints
+
+When a transformation introduces `vector<...>` types, you MUST ensure:
+
+1) **Bound total vector size**
+   - Let `N = product(static vector dimensions)`.
+   - Limits by element type:
+     - `f64` / `i64`: `N ≤ 16`
+     - `f32` / `i32`: `N ≤ 32`
+     - `f16` / `bf16` / `i16`: `N ≤ 64`
+     - `i8`: `N ≤ 128`
+   - If any vector exceeds its bound → **reject the candidate immediately**.
+
+2) **Limit vector rank**
+   - Prefer rank-1 vectors: `vector<kxf32>`
+   - Allow rank-2 and rank-3 vectors only if small (e.g. `vector<4x8xf32>, vector<4x4x4xf32>`).
+   - Rank ≥ 4 vectors are **disallowed**, regardless of element count.
+
+3) **No tile-as-vector lowering**
+   - Vectors resembling whole tiles or buffers
+     (e.g. `vector<128x128x256xf64>`) are illegal and must be rejected.
+
+### Preferred Vectorization Pattern (Positive Guidance)
+- Target realistic SIMD widths:
+  - f64: 2, 4, 8, 16
+  - f32: 4, 8, 16, 32
+  - f16/bf16: 8, 16, 32, 64
+- Prefer `vector.transfer` + small vectors over large `vector.contract`.
+- If vectorization increases vector rank or size significantly, back off.
+
+### Required Validation Step (Before execute_code)
+
+After applying `transform_code` and before calling `execute_code`, you MUST:
+- Inspect the transformed MLIR for `vector<...>` types.
+- Compute `N` for each static vector.
+- Reject the candidate if any vector violates the size or rank rules.
+
 Remember:
 Your output is a **single reusable RL action**. It will be used as an atomic decision in an RL environment,
 and must operate robustly on general MLIR structured loop nests while always targeting `tag = "operation_0"`.
@@ -250,6 +293,7 @@ The action must be:
 - reusable,
 - parameterized where appropriate,
 - robust to non-applicable inputs.
+- Tested and run correctly on all RL training dataset code templates.
 """
 
 def get_output_instructions() -> str:

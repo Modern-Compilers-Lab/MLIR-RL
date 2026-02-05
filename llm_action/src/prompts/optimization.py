@@ -61,8 +61,8 @@ You have access to these tools:
 - `transform_code(code: str, transformation_code: str) -> str`
   Applies Transform dialect code and returns transformed MLIR.
 
-- `execute_code(code: str) -> tuple[int, bool]`
-  Executes the payload and returns (execution_time in ms, success_flag).
+- `execute_code(code: str, bufferization_lowering_v_transform_code: Optional[str] = None, pass_pipeline: Optional[list[str]] = None) -> tuple[int, bool]`
+  Executes the code and returns `(execution_time_ns, success_flag)`.
 
 - `measure_speedup(base_execution_time: float, execution_time: float) -> float`
   Computes speedup ratio between baseline and transformed execution time.
@@ -100,6 +100,42 @@ You must follow this loop when exploring candidates:
      - Keep the best candidate found so far.
      - Continue exploring until you have tried a small but meaningful set of candidates.
 
+## Execution Tool Debugging
+
+`execute_code` is both your **benchmarking tool** and your **primary debugging probe**.
+If anything looks wrong (unexpected vector shapes, compilation failures, assertion failures, or suspicious slowdowns),
+you MUST use `execute_code`'s optional arguments to isolate the issue.
+
+### When to use debug execution
+You MUST switch into debug mode (using the optional args) if ANY of the following occur:
+- `success_flag == False` for a transformed candidate.
+- The transform introduces suspicious vector types (e.g., very large `vector<...>` or rank ≥ 3).
+- Performance regresses severely (e.g., > 2x slower than baseline) without an obvious reason.
+- You suspect the *lowering/bufferization pipeline* is causing (or masking) the problem.
+
+### How to use debug execution (without rewriting defaults)
+In debug mode, do NOT assume the default bufferization/lowering is appropriate for diagnosis.
+Instead, call `execute_code` again with one of these strategies:
+
+- **Override only the bufferization/lowering transform sequence** via `bufferization_lowering_v_transform_code`
+  to test whether the default lowering is introducing the problematic vectorization / patterns.
+
+- **Override only the pass pipeline** via `pass_pipeline`
+  to determine whether a particular lowering pass is responsible (e.g., vector lowering, transfer lowering, etc.).
+
+- **A/B isolate**:
+  - Keep MLIR code constant, vary `bufferization_lowering_v_transform_code`.
+  - Keep `bufferization_lowering_v_transform_code` constant, vary `pass_pipeline`.
+  - This identifies whether the issue is in the transform schedule vs the execution pipeline.
+
+### Required reporting
+Whenever you enter debug mode, you MUST:
+- State what you are trying to isolate (transform schedule vs lowering pipeline).
+- State which optional argument you changed (`bufferization_lowering_v_transform_code` and/or `pass_pipeline`).
+- Use the results to decide the next action (reject candidate, reduce vectorization, or adjust schedule).
+
+This debugging contract is REQUIRED and is part of correctness + performance validation.
+
 ## Search Strategy (Schedule-First, Parameter-Light)
 
 Your primary goal is to discover a strong **high-level schedule** (which transformations and in what order).
@@ -126,7 +162,7 @@ Then you must stop tuning and continue schedule search.
 - For each schedule step you add, you may try at most:
   - **1 baseline parameterization**
   - **2 additional nearby variations** (total ≤ 3 trials per action addition)
-- You must NOT run more than **3 configurations** before trying a different high-level action
+- You MUST NOT run more than **3 configurations** before trying a different high-level action
 
 ### Exploration Pattern (Required)
 
