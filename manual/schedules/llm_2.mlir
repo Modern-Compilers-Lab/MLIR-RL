@@ -1,6 +1,3 @@
-// GEMM v978: Parallel outer tiling M=128, K cache=64
-// Testing larger K cache
-
 module attributes {transform.with_named_sequence} {
   transform.named_sequence @__transform_main(%module_op: !transform.any_op) {
     %matmul = transform.structured.match attributes {tag = "operation"} in %module_op

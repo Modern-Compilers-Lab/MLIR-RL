@@ -1,12 +1,3 @@
-// MC = 12288 | 4096, MC_thread = 1024
-// KC = 256
-// NC = 96 | 64
-// MR = 6 | 4
-// NR = 8
-// M
-// N
-// K
-
 module attributes {transform.with_named_sequence} {
     transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {
         %op_tag = transform.param.constant "operation" -> !transform.any_param

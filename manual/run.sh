@@ -11,7 +11,7 @@
 #SBATCH -c 28
 #SBATCH --mem=100G
 #SBATCH -t 1-00
-#SBATCH -o logs/%x_%j.out
+#SBATCH -o logs/%j.out
 
 # Parse arguments
 BUFFERIZE=true
@@ -61,20 +61,27 @@ export OMP_WAIT_POLICY=passive
 export KMP_BLOCKTIME=0
 
 # Execute the code
+set -eo pipefail
+INPUT_SRC="matmul_${MATMUL_TYPE}.mlir"
+
 echo "Base:"
-# TIME_BASE=$(mlir-opt matmul.mlir -test-transform-dialect-erase-schedule | python run.py)
-TIME_BASE=17707650426
+# TIME_BASE=$(mlir-opt ${INPUT_SRC} | python run.py -p base.txt)
+# Return saved values since the base doesn't change
+case $MATMUL_TYPE in
+  1) TIME_BASE=17707650426 ;;
+  2) TIME_BASE=346113949 ;;
+  3) TIME_BASE=338921024 ;;
+  *) echo "Error: MATMUL_TYPE $MATMUL_TYPE does not exist" >&2; exit 1 ;;
+esac
 echo "Execution time (ns): $TIME_BASE"
 
 echo "Optimized:"
-INPUT_SRC="matmul_${MATMUL_TYPE}.mlir"
-
 TRANSFORM_CMD=(
   mlir-opt
   -transform-preload-library="transform-library-paths=schedules/${SCHED_NAME}_${MATMUL_TYPE}.mlir"
   -transform-interpreter
 )
-
+ERR_FILE=$(mktemp)
 TIME_OPT=$(
   if [ "$BUFFERIZE" = true ]; then
     mlir-opt "${INPUT_SRC}" \
@@ -84,13 +91,23 @@ TIME_OPT=$(
     -canonicalize -cse | "${TRANSFORM_CMD[@]}" -
   else
     "${TRANSFORM_CMD[@]}" "${INPUT_SRC}"
-  fi | python run.py
-)
-
+  fi | python run.py -p schedules/${SCHED_NAME}_${MATMUL_TYPE}.txt
+) 2>"$ERR_FILE"
+EXIT_CODE=$?
+if [ $EXIT_CODE -ne 0 ]; then
+  echo "Error: Optimized execution failed (exit code $EXIT_CODE):" >&2
+  cat "$ERR_FILE" >&2
+  rm -f "$ERR_FILE"
+  exit 1
+fi
 re='^[0-9]+$'
 if ! [[ $TIME_OPT =~ $re ]]; then
-   echo "Error: TIME_OPT is not a number" >&2; exit 1
+  echo "Error: TIME_OPT is not a number: '$TIME_OPT'" >&2
+  cat "$ERR_FILE" >&2
+  rm -f "$ERR_FILE"
+  exit 1
 fi
+rm -f "$ERR_FILE"
 echo "Execution time (ns): $TIME_OPT"
 
 echo "PyTorch:"

@@ -5,7 +5,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 
 # 1. Submit and get ID
 JOB_ID=$(sbatch --parsable run.sh $@)
-LOG_FILE="logs/eval_matmul_$JOB_ID.out"
+LOG_FILE="logs/$JOB_ID.out"
 
 echo "Job $JOB_ID submitted. Waiting for log file..."
 
@@ -28,5 +28,6 @@ while [ -n "$(squeue -h -j $JOB_ID 2>/dev/null)" ]; do
 done
 
 # 6. Job is finished: Kill the tail process
+sleep 1
 kill $TAIL_PID
 echo -e "\nJob $JOB_ID finished."

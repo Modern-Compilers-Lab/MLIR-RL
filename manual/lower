@@ -50,6 +50,6 @@ else
   "${TRANSFORM_CMD[@]}" "${INPUT_SRC}"
 fi
 
-python lower.py out/output.mlir > out/output.ll.mlir
+python lower.py -p schedules/${SCHED_NAME}_${MATMUL_TYPE}.txt out/output.mlir > out/output.ll.mlir
 mlir-translate out/output.ll.mlir --mlir-to-llvmir -o out/output.ll
 llc -O3 -filetype=asm -relocation-model=pic -mcpu=native -o out/output.s out/output.ll

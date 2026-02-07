@@ -1,4 +1,4 @@
-import sys
+import argparse
 import ctypes
 import ctypes.util
 from statistics import median
@@ -11,10 +11,17 @@ from mlir.dialects.func import FuncOp
 
 
 def main():
-    code = sys.stdin.read()
-    if not code:
-        with open(sys.argv[1], 'r') as f:
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-p', required=True, help='Pass pipeline file')
+    parser.add_argument('code_file', nargs='?', help='MLIR code file (reads stdin if omitted)')
+    args = parser.parse_args()
+
+    if args.code_file:
+        with open(args.code_file, 'r') as f:
             code = f.read()
+    else:
+        import sys
+        code = sys.stdin.read()
 
     with Context():
         module = Module.parse(code)
@@ -23,9 +30,9 @@ def main():
 
     inputs, outputs, exec_time = create_params(module)
     expected = np.matmul(inputs[0], inputs[1])
-    args = convert_to_args(inputs, outputs, exec_time)
+    args_list = convert_to_args(inputs, outputs, exec_time)
 
-    lower(module)
+    lower(module, args.p)
 
     execution_engine = ExecutionEngine(
         module,
@@ -37,15 +44,15 @@ def main():
         ],
     )
 
-    execution_engine.invoke("main", *args)
+    execution_engine.invoke("main", *args_list)
     np.testing.assert_allclose(outputs[0], expected)
 
     for _ in range(10):
-        execution_engine.invoke("main", *args)
+        execution_engine.invoke("main", *args_list)
 
     times: list[int] = []
     for _ in range(11):
-        execution_engine.invoke("main", *args)
+        execution_engine.invoke("main", *args_list)
         times.append(exec_time.item())
     print(median(times))
 
