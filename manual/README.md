@@ -4,44 +4,77 @@
 
 Autonomously optimize MLIR matrix multiplication operations to achieve **< 0.5x slowdown** (or > 2x speedup) compared to PyTorch using Claude Code with web search capabilities.
 
+## ⚠️ CRITICAL: Permissions Setup Required
+
+**Claude Code needs permission configuration for autonomous operation!**
+
+By default, Claude Code asks for permission before every operation. For fully autonomous execution in SLURM jobs, you MUST configure permissions first.
+
+👉 **Read [PERMISSIONS_SETUP.md](PERMISSIONS_SETUP.md) FIRST** before launching Claude Code!
+
+**Quick Setup (Recommended):**
+```bash
+# Use sandbox mode - safest autonomous option
+claude --sandbox "Read CLAUDE_CODE_INSTRUCTIONS.md and optimize matmuls..."
+```
+
+See PERMISSIONS_SETUP.md for complete details on all three permission options.
+
 ## 📦 What's Included
 
 This package contains everything Claude Code needs to autonomously optimize your MLIR matmul operations:
 
 ### Core Documentation
 
-1. **CLAUDE_CODE_INSTRUCTIONS.md** - Complete instructions for Claude Code
+1. **PERMISSIONS_SETUP.md** - **START HERE!** Permission configuration guide
+   - Sandbox mode (recommended)
+   - Config file method
+   - YOLO mode (bypass all)
+   - SLURM examples for each
+
+2. **CLAUDE_CODE_INSTRUCTIONS.md** - Complete instructions for Claude Code
    - Project structure and workflow
    - Command usage (`submit`, `lower`)
    - Optimization strategies
    - Web search integration
    - Performance tracking
 
-2. **MLIR_OPTIMIZATION_REFERENCE.md** - Technical reference guide
+3. **MLIR_OPTIMIZATION_REFERENCE.md** - Technical reference guide
    - MLIR transform dialect examples
    - Common optimization techniques
    - Lowering pass sequences
    - Hardware considerations
    - Web search strategies
 
-3. **CLAUDE_CODE_PROMPT.md** - Ready-to-use prompts
+4. **CLAUDE_CODE_PROMPT.md** - Ready-to-use prompts
    - Multiple prompt templates
    - Usage instructions
    - SLURM job setup
    - Monitoring tips
 
-4. **README.md** - This file
+5. **README.md** - This file
 
 ### Automation Framework
 
-5. **optimize_matmuls.py** - Python automation script
+6. **optimize_matmuls.py** - Python automation script
    - MatmulOptimizer class for all operations
    - Benchmark execution and parsing
    - Performance logging
    - Report generation
    - Web search integration points
 
+**Total: 6 files** - Everything Claude Code needs for autonomous optimization!
+
 ## 🚀 Quick Start
+
+### 0. **FIRST: Configure Permissions**
+
+**This is critical for autonomous operation!**
+
+Read [PERMISSIONS_SETUP.md](PERMISSIONS_SETUP.md) completely and choose your permission method:
+- **Sandbox mode** (recommended, safest)
+- **Config file** (granular control)  
+- **YOLO mode** (fastest, requires isolated environment)
 
 ### 1. Setup
 
@@ -51,6 +84,7 @@ Place all files in your MLIR project directory:
 cd /path/to/your/mlir/project
 
 # Ensure you have these files:
+ls PERMISSIONS_SETUP.md
 ls CLAUDE_CODE_INSTRUCTIONS.md
 ls MLIR_OPTIMIZATION_REFERENCE.md  
 ls CLAUDE_CODE_PROMPT.md
@@ -78,40 +112,29 @@ project/
 
 ### 2. Launch Claude Code
 
-**Option A: Interactive Mode**
+**IMPORTANT:** Use appropriate permission flags for autonomous operation!
+
+**Option A: Sandbox Mode (RECOMMENDED)**
 ```bash
-claude-code
+claude --sandbox "Read CLAUDE_CODE_INSTRUCTIONS.md and autonomously optimize MLIR matmul operations using optimize_matmuls.py. Use web search extensively for MLIR documentation, optimization techniques, debugging, and GitHub examples. Target: <0.5x slowdown vs PyTorch. Work fully autonomously."
 ```
 
-Then paste this prompt:
-```
-Read CLAUDE_CODE_INSTRUCTIONS.md and autonomously optimize MLIR matmul operations using optimize_matmuls.py. 
-
-Use web search extensively for:
-- MLIR documentation (mlir.llvm.org)
-- Optimization techniques and examples
-- Debugging errors
-- GitHub examples (llvm/llvm-project)
-
-Target: <0.5x slowdown vs PyTorch for all matmul operations.
-
-Work fully autonomously - no user interaction. Start by researching MLIR transform dialect, then begin optimizing.
-```
-
-**Option B: From File**
+**Option B: From File with Permissions**
 ```bash
 # Copy a prompt from CLAUDE_CODE_PROMPT.md to prompt.txt
-claude-code -f prompt.txt
+claude --sandbox -f prompt.txt
 ```
 
-**Option C: Direct**
+**Option C: YOLO Mode (if in isolated SLURM environment)**
 ```bash
-claude-code "Read CLAUDE_CODE_INSTRUCTIONS.md and autonomously optimize MLIR matmuls. Use web search for research and debugging. Target: <0.5x slowdown vs PyTorch."
+claude --dangerously-skip-permissions "Read CLAUDE_CODE_INSTRUCTIONS.md and optimize matmuls. Use web search. Target: <0.5x slowdown vs PyTorch. Work autonomously - no user interaction possible."
 ```
 
 ### 3. For SLURM Jobs (Fully Autonomous)
 
-Create a SLURM job script:
+**See PERMISSIONS_SETUP.md for complete SLURM examples.**
+
+Quick example with sandbox mode:
 
 ```bash
 #!/bin/bash
@@ -123,8 +146,10 @@ Create a SLURM job script:
 
 cd /path/to/mlir/project
 
-# Run Claude Code autonomously
-claude-code "$(cat CLAUDE_CODE_PROMPT.md | grep -A 50 'Recommended Prompt' | tail -n +3 | head -n 40)"
+# Use sandbox mode for safe autonomous operation
+claude --sandbox "Read CLAUDE_CODE_INSTRUCTIONS.md and autonomously optimize MLIR matmul operations using optimize_matmuls.py. Use web search extensively for MLIR documentation, optimization techniques, debugging, and GitHub examples. Target: <0.5x slowdown vs PyTorch for all matmul operations. Work fully autonomously with no user interaction."
+
+echo "Optimization complete. Check OPTIMIZATION_REPORT.md for results."
 ```
 
 Submit:
@@ -348,18 +373,24 @@ Claude Code will automatically search these resources:
 
 While Claude Code works autonomously, you can help by:
 
-1. **Providing good baseline schedules** (if available)
+1. **⚠️ CONFIGURING PERMISSIONS CORRECTLY** ← Most important!
+   - Read PERMISSIONS_SETUP.md completely
+   - Choose appropriate permission method for your environment
+   - Test permissions setup before long SLURM jobs
+   - Use `--sandbox` for safest autonomous operation
+
+2. **Providing good baseline schedules** (if available)
    - Existing examples help Claude Code learn faster
 
-2. **Ensuring tools work**
+3. **Ensuring tools work**
    - Test `./submit` and `./lower` manually first
    - Verify they produce expected output
 
-3. **Having sufficient compute time**
+4. **Having sufficient compute time**
    - 50 iterations × multiple matmuls needs time
    - Allocate enough SLURM time (e.g., 24 hours)
 
-4. **Enabling web search**
+5. **Enabling web search**
    - Ensure Claude Code has network access
    - This is critical for learning and debugging
 
@@ -405,9 +436,21 @@ Claude Code should self-diagnose and search for solutions, but if it's truly stu
 
 ## 🚀 Ready to Start?
 
+**Before you begin:**
+1. ✅ Read PERMISSIONS_SETUP.md
+2. ✅ Choose your permission method
+3. ✅ Test it with a simple command
+
+**Then launch:**
+
 ```bash
 cd /path/to/mlir/project
-claude-code -f prompt.txt  # Using prompt from CLAUDE_CODE_PROMPT.md
+
+# Recommended: Sandbox mode
+claude --sandbox "Read CLAUDE_CODE_INSTRUCTIONS.md and optimize matmuls..."
+
+# Or for SLURM:
+sbatch slurm_optimize.sh  # Make sure it includes --sandbox or other permission flags!
 ```
 
 Watch as Claude Code autonomously optimizes your matmul operations using the power of web search and systematic experimentation!

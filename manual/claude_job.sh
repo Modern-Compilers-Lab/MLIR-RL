@@ -19,4 +19,4 @@ eval "$(conda shell.bash hook)"
 conda activate main
 
 # Execute the code
-claude-code -f prompt.txt
+claude --sandbox -f prompt.txt
