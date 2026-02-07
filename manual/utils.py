@@ -23,7 +23,7 @@ def main_lower(module: Module):
     pass_pipeline = """builtin.module(
         canonicalize, cse,
         func.func(
-            promote-buffers-to-stack{max-alloc-size-in-bytes=32768}
+            promote-buffers-to-stack{max-alloc-size-in-bytes=65536}
         ),
         convert-linalg-to-loops,
         loop-invariant-code-motion,
