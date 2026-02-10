@@ -1,43 +1,101 @@
-You are an expert MLIR optimization engineer with full web search capabilities. Your mission is to autonomously optimize matrix multiplication operations to beat PyTorch performance.
+You are an expert MLIR optimization engineer.
 
-INSTRUCTIONS:
-1. Read and follow CLAUDE_CODE_INSTRUCTIONS.md completely
-2. Use optimize_matmuls.py as your automation framework
-3. Refer to MLIR_OPTIMIZATION_REFERENCE.md for optimization techniques
-4. Use web search extensively to:
-   - Learn MLIR transform dialect syntax and operations
-   - Discover advanced optimization techniques
-   - Debug errors and issues
-   - Find working examples on GitHub (especially llvm/llvm-project)
-   - Research academic papers on matmul optimization
+Read CLAUDE_CODE_INSTRUCTIONS.md and MLIR_OPTIMIZATION_REFERENCE.md to understand the project and optimization techniques.
 
-RESEARCH RESOURCES:
-- MLIR Official Docs: https://mlir.llvm.org/
-- Transform Dialect: https://mlir.llvm.org/docs/Dialects/Transform/
-- LLVM GitHub: https://github.com/llvm/llvm-project
-- Search queries to use:
-  * "MLIR transform dialect matmul optimization"
-  * "site:github.com/llvm/llvm-project MLIR linalg tiling"
-  * "hierarchical tiling matrix multiplication"
-  * "cache-oblivious matmul"
-  * "MLIR vectorization strategies"
+Your task: Autonomously optimize all matmul operations in this project to achieve <0.5x slowdown compared to PyTorch performance.
 
-WORKFLOW:
-1. Search for MLIR documentation and examples FIRST
-2. Discover all matmul_*.mlir files
-3. Examine any existing schedules to understand the format
-4. For each matmul operation:
-   - Create optimized schedules as claude{N}_{matmul_index}.mlir
-   - Create lowering passes as claude{N}_{matmul_index}.txt
-   - Test with ./submit and analyze results
-   - Use ./lower + analysis to understand what's happening
-   - Search for new techniques when stuck
-   - Iterate until achieving <0.5x slowdown vs PyTorch
+## Project Structure
+- matmul_*.mlir: Input matrix multiplication operations (READ ONLY - do not modify)
+- schedules/: Contains optimization schedules and lowering passes
+- ./submit: Script to benchmark a schedule (usage: ./submit -<matmul_index> <schedule_name>)
+- ./lower: Script to lower and analyze a schedule (usage: ./lower -<matmul_index> <schedule_name>)
+- logs/: Benchmark results (READ ONLY - managed by SLURM)
+- out/: Temporary lowering outputs (can delete files here)
 
-TARGET: Achieve slowdown < 0.5x compared to PyTorch (or speedup > 2x)
+## Your Workflow
 
-AUTONOMY: Work completely independently - no user intervention needed. This will run in a SLURM job.
+For each matmul operation (matmul_1.mlir, matmul_2.mlir, etc.):
 
-ERROR HANDLING: When errors occur, use web search to debug. Search for exact error messages and MLIR-specific solutions.
+1. **Discover**: List all matmul_*.mlir files to see what needs optimization
 
-Begin by searching for MLIR optimization techniques, then start optimizing matmul_1.mlir systematically.
+2. **Analyze**: Examine existing schedules (schedules/baseline_*.mlir and .txt) to understand current approaches
+
+3. **Iterate** (repeat until target achieved or convergence):
+   
+   a. **Create Schedule** (iteration N for matmul M):
+      - Create schedules/claudeN_M.mlir with MLIR transform dialect optimizations
+      - Create schedules/claudeN_M.txt with lowering pass sequence
+      - Use insights from MLIR_OPTIMIZATION_REFERENCE.md and web search
+   
+   b. **Benchmark**:
+      - Run: ./submit -M claudeN
+      - Parse output to extract "Slowdown compared to PyTorch"
+      - Goal: Get this under 0.5x
+   
+   c. **Analyze** (every 3-5 iterations for insights):
+      - Clean: rm out/*
+      - Lower: ./lower -M claudeN
+      - Examine: cat out/output.ll.mlir and out/output.s
+      - Look for vectorization, memory patterns, loop structure
+   
+   d. **Learn and Adapt**:
+      - If slowdown improved: build on that approach
+      - If slowdown worsened: try different strategy
+      - Track what works in optimization_log.md
+
+4. **Log Progress**: 
+   - Maintain optimization_log.md with iteration results
+   - Format: markdown table showing iteration, schedule name, slowdown, speedup, strategy
+
+5. **Convergence**:
+   - Stop when: slowdown < 0.5x (TARGET MET) OR no improvement for 5 iterations OR 50 iterations reached
+   - Move to next matmul
+
+6. **Final Report**:
+   - Generate OPTIMIZATION_REPORT.md summarizing best schedules and performance for each matmul
+
+## Naming Convention
+- Schedules MUST be named: claude<N>_<M>.mlir and claude<N>_<M>.txt
+- Where N is iteration number (1, 2, 3, ...) and M is matmul index
+- Examples: claude1_1.mlir, claude1_1.txt, claude2_1.mlir, claude2_1.txt
+
+## Information on CPU Architecture
+Architecture:        x86_64
+CPU op-mode(s):      32-bit, 64-bit
+Byte Order:          Little Endian
+CPU(s):              28
+On-line CPU(s) list: 0-27
+Thread(s) per core:  1
+Core(s) per socket:  14
+Socket(s):           2
+NUMA node(s):        2
+Vendor ID:           GenuineIntel
+CPU family:          6
+Model:               79
+Model name:          Intel(R) Xeon(R) CPU E5-2680 v4 @ 2.40GHz
+Stepping:            1
+CPU MHz:             658.089
+CPU max MHz:         2400.0000
+CPU min MHz:         1200.0000
+BogoMIPS:            4788.85
+Virtualization:      VT-x
+L1d cache:           32K
+L1i cache:           32K
+L2 cache:            256K
+L3 cache:            35840K
+NUMA node0 CPU(s):   0-6,14-20
+NUMA node1 CPU(s):   7-13,21-27
+Flags:               fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush dts acpi mmx fxsr sse sse2 ss ht tm pbe syscall nx pdpe1gb rdtscp lm constant_tsc arch_perfmon pebs bts rep_good nopl xtopology nonstop_tsc cpuid aperfmperf pni pclmulqdq dtes64 monitor ds_cpl vmx smx est tm2 ssse3 sdbg fma cx16 xtpr pdcm pcid dca sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand lahf_lm abm 3dnowprefetch cpuid_fault epb cat_l3 cdp_l3 invpcid_single pti intel_ppin ssbd ibrs ibpb stibp tpr_shadow vnmi flexpriority ept vpid fsgsbase tsc_adjust bmi1 hle avx2 smep bmi2 erms invpcid rtm cqm rdt_a rdseed adx smap intel_pt xsaveopt cqm_llc cqm_occup_llc cqm_mbm_total cqm_mbm_local dtherm arat pln pts md_clear flush_l1d
+
+## Important Notes
+- You can read any file, but only create schedules/claude*.{mlir,txt} and reports
+- The logs/ directory is managed by SLURM - read only, don't modify
+- Be systematic: test one optimization at a time when possible
+- Document your reasoning in the schedule files as comments
+
+## Success Criteria
+- Primary: Slowdown vs PyTorch < 0.5x for each matmul
+- Secondary: Clear improvement over iterations
+- Process: Complete optimization_log.md and OPTIMIZATION_REPORT.md
+
+Work autonomously and systematically. Start now!

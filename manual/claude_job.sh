@@ -19,4 +19,6 @@ eval "$(conda shell.bash hook)"
 conda activate main
 
 # Execute the code
-claude --sandbox -f prompt.txt
+for ((i = 0 ; i < 100 ; i++ )); do
+    claude --continue --print --verbose --output-format=text "$(cat prompt.txt)";
+done

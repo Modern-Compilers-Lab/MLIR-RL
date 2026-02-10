@@ -160,15 +160,8 @@ Where `<index>` starts at 1 and increments (claude1, claude2, claude3, ...)
       - Review previous claude schedules and their performance
       - Examine lowered outputs (`./lower` then analyze `out/*.mlir`, `out/*.ll`, `out/*.s`)
       - Identify optimization opportunities
-      - **Search for relevant techniques** if stuck or looking for new ideas
    
-   b. **Research & Learn** (as needed)
-      - Search MLIR documentation for unfamiliar operations
-      - Look up optimization techniques from research papers
-      - Find examples of successful matmul optimizations
-      - Debug errors by searching for error messages
-   
-   c. **Create New Schedule**
+   b. **Create New Schedule**
       - Generate `schedules/claude<i>_<matmul_index>.mlir` (transform dialect)
       - Generate `schedules/claude<i>_<matmul_index>.txt` (lowering passes)
       - Document your optimization strategy in comments
@@ -250,40 +243,30 @@ Where `<index>` starts at 1 and increments (claude1, claude2, claude3, ...)
 ### Example Initial Approach
 
 ```bash
-# 0. Research MLIR optimization techniques
-# Search: "MLIR matmul optimization transform dialect"
-# Search: "MLIR tiling strategies for matrix multiplication"
-
 # 1. Discover matmul files
 ls matmul_*.mlir
 
 # 2. Check existing schedules
 ls schedules/
 
-# 3. Learn from an existing schedule
-cat schedules/baseline_1.mlir  # if exists
-
-# 4. Search for documentation on any unfamiliar operations
-# Search: "MLIR transform.structured.tile_using_for"
-
-# 5. For matmul_1.mlir, create first optimization
+# 3. For matmul_1.mlir, create first optimization
 # Create schedules/claude1_1.mlir (transform schedule)
 # Create schedules/claude1_1.txt (lowering passes)
 
-# 6. Test it
+# 4. Test it
 ./submit -1 claude1
 
-# 7. Analyze lowered code
+# 5. Analyze lowered code
 rm out/*
 ./lower -1 claude1
 cat out/output.ll.mlir
 cat out/output.s
 
-# 8. If errors occur, search for solutions
+# 6. If errors occur, search for solutions
 # Search: "[error message from lower/submit]"
 # Search: "MLIR debugging [specific issue]"
 
-# 9. Based on analysis and research, create claude2_1 with improvements
+# 7. Based on analysis and research, create claude2_1 with improvements
 # Repeat...
 ```
 
