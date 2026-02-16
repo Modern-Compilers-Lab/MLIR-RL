@@ -28,6 +28,11 @@ def main():
                 torch.full((512, 512), 2, dtype=torch.float64),
                 torch.full((512, 512), 2, dtype=torch.float64)
             ]
+        case 3:
+            inputs = [
+                torch.full((256, 512), 2, dtype=torch.float64),
+                torch.full((512, 1024), 2, dtype=torch.float64)
+            ]
         case _:
             exit(1)
 

@@ -16,7 +16,8 @@ def main():
         import sys
         code = sys.stdin.read()
 
-    with Context():
+    with Context() as ctx:
+        ctx.load_all_available_dialects()
         module = Module.parse(code)
 
     bufferize(module)

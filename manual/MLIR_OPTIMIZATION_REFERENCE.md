@@ -235,6 +235,48 @@ module attributes {transform.with_named_sequence} {
 
 ## Hardware Considerations
 
+### Target System: Intel Xeon E5-2680 v4 (Broadwell)
+- Vector width: 256 bits (AVX2) = 8 floats or 4 doubles
+- L1: 32KB per core
+- L2: 256KB per core
+- L3: 35MB shared (per socket, 14 cores)
+- FMA support: Yes
+- AVX-512: No (Broadwell does not support AVX-512)
+
+### Optimal Tile Sizes for This CPU
+
+**For float32 matrices:**
+- **L1 cache tiles:** 32×32 to 48×48 (4-9 KB)
+- **L2 cache tiles:** 128×128 to 192×192 (64-144 KB)
+- **L3 cache tiles:** 512×512 to 768×768 (1-2.3 MB)
+
+**Strategy:**
+```
+Outer tile (L3):   512×512×512 or 768×768×768
+Middle tile (L2):  128×128×128 or 192×192×192
+Inner tile (L1):   32×32×32 or 48×48×48
+Vector width:      8 (AVX2)
+```
+
+### Vectorization for AVX2
+- Use 8-wide vectorization for float32
+- Use 4-wide vectorization for float64
+- Ensure memory alignment (32-byte for AVX2)
+- Example vector sizes in schedules: `[8, 8]` or `[8, 4]`
+
+### Parallelization Strategy
+- 28 cores available (2 NUMA nodes)
+- For small matrices: 4-8 threads
+- For large matrices: 14-28 threads
+- Consider NUMA placement for matrices > 2048×2048
+
+### Memory Bandwidth Optimization
+- Minimize cross-NUMA traffic
+- Reuse data in cache as much as possible
+- Prefetching can help for large sequential access
+
+## Hardware Considerations (Legacy - for reference)
+
 ### Modern x86 CPU (AVX2)
 - Vector width: 256 bits (8 floats)
 - L1: 32KB per core

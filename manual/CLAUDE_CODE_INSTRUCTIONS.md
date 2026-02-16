@@ -6,6 +6,44 @@ You are working on optimizing matrix multiplication (Matmul) operations using ML
 
 **Target Performance:** Achieve slowdown compared to PyTorch < 0.5x (ideally speedup > 2x over PyTorch)
 
+## Target Hardware Specifications
+
+The optimizations will run on the following CPU:
+
+**Processor:** Intel Xeon E5-2680 v4 @ 2.40GHz (Broadwell microarchitecture)
+- **Cores:** 28 total (2 sockets × 14 cores per socket, 1 thread per core)
+- **NUMA Nodes:** 2 (cores 0-6,14-20 on node 0; cores 7-13,21-27 on node 1)
+
+**Cache Hierarchy:**
+- **L1d cache:** 32KB per core
+- **L1i cache:** 32KB per core
+- **L2 cache:** 256KB per core
+- **L3 cache:** 35MB shared per socket (17.5MB effective per socket)
+
+**SIMD Support:**
+- ✅ SSE, SSE2, SSE4.1, SSE4.2
+- ✅ AVX, AVX2 (256-bit vectors = 8 single-precision floats or 4 double-precision)
+- ✅ FMA (Fused Multiply-Add)
+- ❌ NO AVX-512 (not available on Broadwell)
+
+**Key Optimization Implications:**
+
+1. **Vectorization Target:** AVX2 with 8-wide SIMD for float32 operations
+2. **Cache-Aware Tiling:**
+   - L1 tiles: ~4-8KB of active data (fits in 32KB L1d)
+   - L2 tiles: ~32-64KB of data (fits in 256KB L2)
+   - L3 tiles: ~4-8MB of data (fits in 35MB L3, but shared across 14 cores)
+3. **Parallelization:** Up to 28 threads, but consider NUMA placement for large matrices
+4. **Memory Bandwidth:** NUMA-aware data placement can reduce cross-socket traffic
+5. **FMA Instructions:** Utilize fused multiply-add for efficient matmul kernels
+
+**Recommended Tile Sizes for this CPU:**
+- Small (L1): 32×32 or 48×48 for float32
+- Medium (L2): 128×128 or 192×192 for float32
+- Large (L3): 512×512 or 768×768 for float32
+
+When creating schedules, **optimize specifically for Broadwell with AVX2**, not AVX-512.
+
 ## Project Structure
 
 ```

@@ -2,12 +2,13 @@
 
 # Define the resource requirements here using #SBATCH
 
-#SBATCH -J claude_matmul
+#SBATCH -J claude_job
+#SBATCH -q c2
 #SBATCH -p compute
 #SBATCH -c 8
 #SBATCH --mem=32G
 #SBATCH -t 7-00
-#SBATCH -o claude_optimization_%j.log
+#SBATCH -o %x_%j.log
 
 # Resource requiremenmt commands end here
 
@@ -19,6 +20,7 @@ eval "$(conda shell.bash hook)"
 conda activate main
 
 # Execute the code
+rm -f out/* logs/*
 for ((i = 0 ; i < 100 ; i++ )); do
-    claude --continue --print --verbose --output-format=text "$(cat prompt.txt)";
+    claude --continue --dangerously-skip-permissions --print --verbose --output-format=text "$(cat prompt.txt)";
 done
