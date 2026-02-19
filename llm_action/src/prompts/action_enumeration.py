@@ -1,4 +1,5 @@
 from llm_action.src.prompts.system_description import get_system_description_prompt
+from llm_action.src.utils.persistence import save_prompt
 
 def get_agent_identity() -> str:
     return f"""# Agent Identity
@@ -211,4 +212,4 @@ def get_layer1_system_prompt(intents_num_min: int = 2, intents_num_max: int = 3,
 """
 
 if __name__ == "__main__":
-    print(get_layer1_system_prompt())
+    save_prompt(get_layer1_system_prompt(), version="1", name="action_enumeration")

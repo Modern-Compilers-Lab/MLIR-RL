@@ -1,4 +1,5 @@
 from llm_action.src.prompts.system_description import get_system_description_prompt
+from llm_action.src.utils.persistence import save_prompt
 
 def load_documentation_representation() -> str:
     with open("llm_action/resources/ready/representation.txt", "r", encoding="utf-8") as f:
@@ -152,4 +153,4 @@ def get_documentation_lookup_system_prompt() -> str:
 """
 
 if __name__ == "__main__":
-    print(get_documentation_lookup_system_prompt())
+    save_prompt(get_documentation_lookup_system_prompt(), version="1", name="documentation_lookup")

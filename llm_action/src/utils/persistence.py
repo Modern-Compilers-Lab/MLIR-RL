@@ -150,3 +150,11 @@ def save_optimization_result(response: str) -> str:
     with open(file_path, "w") as f:
         f.write(response)
     return file_path
+
+def save_prompt(prompt: str, version: str, name: str) -> str:
+    dir = f"llm_action/resources/prompts/v{version}"
+    os.makedirs(dir, exist_ok=True)
+    file_path = f"{dir}/{name}.md"
+    with open(file_path, "w") as f:
+        f.write(prompt)
+    return file_path
