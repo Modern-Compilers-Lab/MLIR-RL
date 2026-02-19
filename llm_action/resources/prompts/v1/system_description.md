@@ -223,4 +223,3 @@ The example above is illustrative, not a strict requirement; it conveys the curr
 - actions are parameterized,
 - implementable as executable units,
 - and expressed through MLIR Transform dialect where applicable.
-

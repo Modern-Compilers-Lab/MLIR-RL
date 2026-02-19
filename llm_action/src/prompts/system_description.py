@@ -1,5 +1,7 @@
 # 2734 Tokens
 
+from llm_action.src.utils.persistence import save_prompt
+
 def get_system_purpose() -> str:
     return f"""## 1. Purpose of the System
 
@@ -250,4 +252,4 @@ def get_system_description_prompt() -> str:
 {get_system_action_implementation_snapshot()}"""
 
 if __name__ == "__main__":
-    print(get_system_description_prompt())
+    save_prompt(get_system_description_prompt(), version="1", name="system_description")
