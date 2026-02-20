@@ -15,12 +15,102 @@
 
 # Parse arguments
 BUFFERIZE=true
+RUN_SCRIPT=run.py
 
 # Loop through arguments
 while [[ $# -gt 0 ]]; do
   case $1 in
     -no-bufferize)
       BUFFERIZE=false
+      shift
+      ;;
+    -tensorpad)
+      BUFFERIZE=false
+      RUN_SCRIPT=run_tensorpad.py
+      shift
+      ;;
+    -noalias)
+      RUN_SCRIPT=run_noalias.py
+      shift
+      ;;
+    -noalias-v2)
+      RUN_SCRIPT=run_noalias_v2.py
+      shift
+      ;;
+    -opt)
+      RUN_SCRIPT=run_opt.py
+      shift
+      ;;
+    -opt-noalias)
+      RUN_SCRIPT=run_opt_noalias.py
+      shift
+      ;;
+    -opt-targeted)
+      RUN_SCRIPT=run_opt_targeted.py
+      shift
+      ;;
+    -so-noalias)
+      RUN_SCRIPT=run_so_noalias.py
+      shift
+      ;;
+    -opt-o2)
+      RUN_SCRIPT=run_opt_o2.py
+      shift
+      ;;
+    -prefetch)
+      RUN_SCRIPT=run_prefetch.py
+      shift
+      ;;
+    -so)
+      RUN_SCRIPT=run_so.py
+      shift
+      ;;
+    -licm)
+      RUN_SCRIPT=run_licm.py
+      shift
+      ;;
+    -opt-double)
+      RUN_SCRIPT=run_opt_double.py
+      shift
+      ;;
+    -opt-custom)
+      RUN_SCRIPT=run_opt_custom.py
+      shift
+      ;;
+    -opt-licm)
+      RUN_SCRIPT=run_opt_licm.py
+      shift
+      ;;
+    -opt-licm-noalias)
+      RUN_SCRIPT=run_opt_licm_noalias.py
+      shift
+      ;;
+    -opt-direct)
+      RUN_SCRIPT=run_opt_direct.py
+      shift
+      ;;
+    -opt-direct-noalias)
+      RUN_SCRIPT=run_opt_direct_noalias.py
+      shift
+      ;;
+    -opt-jit0)
+      RUN_SCRIPT=run_opt_jit0.py
+      shift
+      ;;
+    -blockpack)
+      BLOCKPACK=true
+      shift
+      ;;
+    --block-factors)
+      BLOCK_FACTORS=$2
+      shift 2
+      ;;
+    -twophase)
+      TWOPHASE=true
+      shift
+      ;;
+    -twophase-opt)
+      TWOPHASE_OPT=true
       shift
       ;;
     -[0-9]*)
@@ -57,8 +147,10 @@ export OMP_PROC_BIND=close
 export OMP_PLACES=cores
 export OMP_SCHEDULE=static
 export OMP_DYNAMIC=FALSE
-export OMP_WAIT_POLICY=passive
-export KMP_BLOCKTIME=0
+export OMP_WAIT_POLICY=${OMP_WAIT_POLICY:-passive}
+export KMP_BLOCKTIME=${KMP_BLOCKTIME:-0}
+# LLVM codegen options (set via LLVM_OPTS env var)
+export LLVM_OPTS="${LLVM_OPTS:-}"
 
 # Execute the code
 set -eo pipefail
@@ -82,17 +174,48 @@ TRANSFORM_CMD=(
   -transform-interpreter
 )
 ERR_FILE=$(mktemp)
-TIME_OPT=$(
-  if [ "$BUFFERIZE" = true ]; then
-    mlir-opt "${INPUT_SRC}" \
-    -eliminate-empty-tensors -empty-tensor-to-alloc-tensor \
-    -one-shot-bufferize="unknown-type-conversion=identity-layout-map function-boundary-type-conversion=identity-layout-map bufferize-function-boundaries" \
-    -buffer-results-to-out-params="hoist-static-allocs add-result-attr" \
-    -canonicalize -cse | "${TRANSFORM_CMD[@]}" -
+if [ "${BLOCKPACK:-}" = true ]; then
+  TIME_OPT=$(
+    ${NUMACTL_CMD:-} python run_blockpack.py \
+      -s "schedules/${SCHED_NAME}_${MATMUL_TYPE}.mlir" \
+      -p "schedules/${SCHED_NAME}_${MATMUL_TYPE}.txt" \
+      --block-factors "${BLOCK_FACTORS:-32,8,256}" \
+      "${INPUT_SRC}"
+  ) 2>"$ERR_FILE"
+elif [ "${TWOPHASE:-}" = true ] || [ "${TWOPHASE_OPT:-}" = true ]; then
+  # Two-phase: tensor-land schedule -> bufferize -> memref-land schedule -> run
+  if [ "${TWOPHASE_OPT:-}" = true ]; then
+    TWOPHASE_RUN_SCRIPT=run_twophase_opt.py
   else
-    "${TRANSFORM_CMD[@]}" "${INPUT_SRC}"
-  fi | python run.py -p schedules/${SCHED_NAME}_${MATMUL_TYPE}.txt
-) 2>"$ERR_FILE"
+    TWOPHASE_RUN_SCRIPT=run_twophase.py
+  fi
+  TIME_OPT=$(
+    mlir-opt "${INPUT_SRC}" \
+      -transform-preload-library="transform-library-paths=schedules/${SCHED_NAME}_${MATMUL_TYPE}.mlir" \
+      -transform-interpreter | \
+    mlir-opt \
+      -eliminate-empty-tensors -empty-tensor-to-alloc-tensor \
+      -one-shot-bufferize="unknown-type-conversion=identity-layout-map function-boundary-type-conversion=identity-layout-map bufferize-function-boundaries" \
+      -buffer-results-to-out-params="hoist-static-allocs add-result-attr" \
+      -promote-buffers-to-stack="max-alloc-size-in-bytes=262144 max-rank-of-allocated-memref=3" \
+      -canonicalize -cse | \
+    ${NUMACTL_CMD:-} python ${TWOPHASE_RUN_SCRIPT} \
+      -s "schedules/${SCHED_NAME}_${MATMUL_TYPE}_phase2.mlir" \
+      -p "schedules/${SCHED_NAME}_${MATMUL_TYPE}.txt"
+  ) 2>"$ERR_FILE"
+else
+  TIME_OPT=$(
+    if [ "$BUFFERIZE" = true ]; then
+      mlir-opt "${INPUT_SRC}" \
+      -eliminate-empty-tensors -empty-tensor-to-alloc-tensor \
+      -one-shot-bufferize="unknown-type-conversion=identity-layout-map function-boundary-type-conversion=identity-layout-map bufferize-function-boundaries" \
+      -buffer-results-to-out-params="hoist-static-allocs add-result-attr" \
+      -canonicalize -cse | "${TRANSFORM_CMD[@]}" -
+    else
+      "${TRANSFORM_CMD[@]}" "${INPUT_SRC}"
+    fi | ${NUMACTL_CMD:-} python ${RUN_SCRIPT} -p schedules/${SCHED_NAME}_${MATMUL_TYPE}.txt
+  ) 2>"$ERR_FILE"
+fi
 EXIT_CODE=$?
 if [ $EXIT_CODE -ne 0 ]; then
   echo "Error: Optimized execution failed (exit code $EXIT_CODE):" >&2

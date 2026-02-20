@@ -1,26 +1,19 @@
+"""Run MLIR matmul with targeted LLVM pass pre-processing.
+
+Pipeline: MLIR → lower → mlir-translate → opt (targeted passes) → mlir-translate -import-llvm → JIT(opt_level=3)
+
+Uses OPT_PASSES env var to specify targeted LLVM passes instead of full O3.
+Default: 'function(sroa<modify-cfg>,instcombine,reassociate,loop-mssa(licm),gvn,dse,memcpyopt)'
+"""
+
 import argparse
 import ctypes
 import ctypes.util
 import os
+import subprocess
+import tempfile
 from statistics import median
 import numpy as np
-
-# Set LLVM CL options BEFORE any MLIR imports/initialization
-if os.environ.get('LLVM_OPTS'):
-    try:
-        import mlir._mlir_libs
-        _lib_dir = os.path.dirname(mlir._mlir_libs.__file__)
-        _lib = ctypes.CDLL(os.path.join(_lib_dir, 'libMLIRPythonCAPI.so'))
-        _func = _lib.LLVMParseCommandLineOptions
-        _func.restype = None
-        _func.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_char_p), ctypes.c_char_p]
-        _opts = [b'mlir'] + [o.encode() for o in os.environ['LLVM_OPTS'].split()]
-        _argc = len(_opts)
-        _argv_arr = (ctypes.c_char_p * _argc)(*_opts)
-        _func(_argc, _argv_arr, None)
-    except Exception as e:
-        import sys
-        print(f"Warning: Failed to set LLVM options: {e}", file=sys.stderr)
 
 from mlir._mlir_libs._mlir.ir import Context, Module, MemRefType, IntegerType, F64Type, F32Type  # type: ignore
 from mlir.execution_engine import ExecutionEngine
@@ -54,6 +47,68 @@ def main():
 
     lower(module, args.p)
 
+    # Get MLIR LLVM dialect text
+    asm = module.operation.get_asm()
+
+    # Get targeted passes from env
+    opt_passes = os.environ.get('OPT_PASSES',
+        'function(sroa<modify-cfg>,instcombine,reassociate,loop-mssa(licm),gvn,dse,memcpyopt)')
+
+    # Pipeline: MLIR → LLVM IR → opt (targeted) → MLIR
+    with tempfile.NamedTemporaryFile(suffix='.mlir', mode='w', delete=False) as f:
+        f.write(asm)
+        mlir_file = f.name
+
+    with tempfile.NamedTemporaryFile(suffix='.ll', mode='w', delete=False) as f:
+        ll_file = f.name
+
+    with tempfile.NamedTemporaryFile(suffix='.ll', mode='w', delete=False) as f:
+        opt_file = f.name
+
+    with tempfile.NamedTemporaryFile(suffix='.mlir', mode='w', delete=False) as f:
+        reimport_file = f.name
+
+    try:
+        # Step 1: MLIR to LLVM IR
+        result = subprocess.run(
+            ['mlir-translate', '-mlir-to-llvmir', mlir_file, '-o', ll_file],
+            capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f'mlir-translate failed: {result.stderr}')
+
+        # Step 2: opt with targeted passes
+        result = subprocess.run(
+            ['opt', f'--passes={opt_passes}', ll_file, '-S', '-o', opt_file],
+            capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f'opt failed: {result.stderr}')
+
+        import sys
+        print(f'opt targeted passes complete: {opt_passes}', file=sys.stderr)
+
+        # Step 3: Import back to MLIR
+        result = subprocess.run(
+            ['mlir-translate', '-import-llvm', opt_file, '-o', reimport_file],
+            capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f'mlir-translate import failed: {result.stderr}')
+
+        # Step 4: Parse optimized MLIR
+        with open(reimport_file) as f:
+            opt_mlir = f.read()
+
+        with Context() as ctx2:
+            ctx2.load_all_available_dialects()
+            module = Module.parse(opt_mlir)
+
+    finally:
+        for f in [mlir_file, ll_file, opt_file, reimport_file]:
+            try:
+                os.unlink(f)
+            except OSError:
+                pass
+
+    # Use opt_level=3 for final machine-level optimizations
     execution_engine = ExecutionEngine(
         module,
         opt_level=3,
@@ -78,15 +133,6 @@ def main():
 
 
 def create_params(module: Module):
-    """Creates the input and output parameters for the given MLIR module.
-
-    Args:
-        module: The MLIR module to create the parameters for.
-
-    Returns:
-        The list of inputs as numpy arrays
-        The outputs structure (output arrays + delta)
-    """
     def get_dtype(memref_type: MemRefType):
         et = memref_type.element_type
         match et:
@@ -106,10 +152,8 @@ def create_params(module: Module):
                 raise Exception(f'unexpected element type {et}')
         return np_dtype
 
-    # Get the main function
     main_func = next(op for op in module.body.operations if isinstance(op, FuncOp) and (op.name.value == 'main'))
 
-    # Create input params
     inputs: list[np.ndarray] = []
     outputs: list[np.ndarray] = []
     for input_type, input_attrs in zip(main_func.type.inputs, main_func.arg_attrs):
@@ -121,7 +165,6 @@ def create_params(module: Module):
             in_arr = np.full(input_type.shape, 2, dtype=get_dtype(input_type))
             inputs.append(in_arr)
 
-    # Create results arg
     res_types = main_func.type.results
 
     if not (len(res_types) == 1 and isinstance(res_types[0], IntegerType) and res_types[0].width == 64):
@@ -133,47 +176,12 @@ def create_params(module: Module):
 
 
 def convert_to_args(inputs: list[np.ndarray], outputs: list[np.ndarray], exec_time: np.ndarray) -> list:
-    """Converts input arrays and output structure into ctypes arguments for MLIR execution.
-
-    Prepares arguments in the format required by the MLIR execution engine. Each argument
-    is a double pointer (pointer to pointer) to allow proper handling in the C calling
-    convention.
-
-    Args:
-        inputs: List of input numpy arrays to be passed to the MLIR kernel.
-        outputs_structure: ctypes Structure containing output memref descriptors and
-            execution time.
-
-    Returns:
-        List of double pointers to ctypes Structures suitable for passing to ExecutionEngine.invoke().
-    """
     args: list[ctypes._Pointer[ctypes._Pointer[ctypes.Structure]]] = [
         ctypes.pointer(ctypes.pointer(get_ranked_memref_descriptor(arr)))
         for arr in inputs + outputs
     ]
     args.append(exec_time.ctypes.data_as(ctypes.POINTER(ctypes.c_int64)))
     return args
-
-
-def free_pointer(ptr: ctypes.c_void_p):
-    """Free the memory pointed to by the given pointer using the C standard library.
-
-    Args:
-        ptr: The pointer to free.
-    """
-    # Find the C standard library
-    libc_path = ctypes.util.find_library('c')
-    if not libc_path:
-        raise RuntimeError("C standard library not found.")
-    libc = ctypes.CDLL(libc_path)
-
-    # Define the signature for free
-    free = libc.free
-    free.argtypes = [ctypes.c_void_p]
-    free.restype = None
-
-    # Call free
-    free(ptr)
 
 
 if __name__ == "__main__":
