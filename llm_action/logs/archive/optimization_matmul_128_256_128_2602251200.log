@@ -1,0 +1,131 @@
+# MLIR Optimization Log: matmul_128_256_128
+# Date: 2026-02-25 12:00
+# Shape: M=128, K=256, N=128 (f64)
+# Hardware: Intel Xeon E5-2680 v4 (Broadwell), AVX2, 28 cores
+
+## Session Start
+
+### Kernel
+- Operation: linalg.matmul, tag=operation_0
+- A: tensor<128x256xf64>, B: tensor<256x128xf64>, C: tensor<128x128xf64>
+
+### Hardware Notes
+- AVX2: 4-wide for f64
+- L1: 32KB, L2: 256KB, L3: 35MB
+- Matrix sizes: A=256KB, B=256KB, C=128KB (barely fits in L2)
+
+---
+
+## Step 1: Baseline Measurement
+- MLIR baseline: 5.917 ms (success=true)
+- PyTorch reference: 0.143 ms
+- Gap: PyTorch is ~41x faster
+
+## Schedule Exploration
+
+### Candidate 1: Tiling [32, 32, 32]
+- Result: 2.093 ms (2.83x speedup over baseline)
+
+### Candidate 2: Tiling [64, 64, 64]
+- Result: 4.726 ms (worse than [32,32,32])
+
+### Candidate 3: Tile[32,32,32] + tile[4,4,4] + vectorize [4,4,4]
+- Vectors: vector<4x4x4xf64>=64 elems ✓
+- Result: 0.709 ms (8.35x speedup)
+
+### Candidate 4: Tile[32,32,32] + tile[4,4,8] + vectorize [4,4,8]
+- Vectors: vector<4x4x8xf64>=128 elems ✓
+- Result: 0.701 ms (8.44x speedup) ← BEST SO FAR before parallelism
+
+### Candidate 5: Tile[32,32,32] + tile[4,4,16] + vectorize [4,4,16]
+- Vectors: vector<4x4x16xf64>=256 elems ✓
+- Result: 0.857 ms (worse than [4,4,8])
+
+### Candidate 6: forall[4,4] + tile[4,4,8] + vectorize [4,4,8] *** BEST ***
+- Schedule: tile_using_forall tile_sizes [32,32] → 16 parallel threads (4x4 grid)
+  + inner tile_using_for [4,4,8] + vectorize [4,4,8]
+- Vectors: vector<4x4x8xf64>=128 elems ✓, vector<4x4xf64>=16 elems ✓
+- Result: 0.093 ms (63.6x speedup over baseline, 1.54x FASTER than PyTorch!)
+
+### Candidate 7: forall[8,4] (tile_sizes [16,32]) + tile[4,4,8] + vectorize [4,4,8]
+- 8x4=32 tasks
+- Result: 0.066 ms (89.7x speedup, 2.18x FASTER than PyTorch)
+
+### Candidate 8: forall[8,8] (tile_sizes [16,16]) + tile[4,4,8] + vectorize [4,4,8]
+- 8x8=64 tasks
+- Result: 0.064 ms (92.5x speedup, 2.25x FASTER than PyTorch)
+
+### Candidate 9: forall[16,4] (tile_sizes [8,32]) + tile[4,4,8] + vectorize [4,4,8]
+- 16x4=64 tasks
+- Result: 0.065 ms (slightly worse than forall[8,8])
+
+### Candidate 10: forall[8,8] (tile_sizes [16,16]) + tile[4,4,16] + vectorize [4,4,16]
+- Larger inner K tile: 16 → vector<4x4x16xf64>=256 elems ✓
+- Result: 0.052 ms (113.8x speedup, 2.74x FASTER than PyTorch)
+
+### Candidate 11: forall[8,8] + tile[4,4,32] + vectorize [4,4,32]
+- Even larger K: 32 → vector<4x4x32xf64>=512 elems ✓ (at limit)
+- Result: 0.052 ms (same as candidate 10, diminishing returns)
+
+### Candidate 12: forall[16,16] (tile_sizes [8,8]) + tile[4,4,16] + vectorize [4,4,16]
+- 16x16=256 tasks, each 8x8 block
+- Result: 0.048 ms (123.3x speedup, 2.98x FASTER than PyTorch)
+
+### Candidate 13: forall[32,16] (tile_sizes [4,8]) + tile[4,4,16] + vectorize [4,4,16]
+- 32x16=512 tasks
+- Result: 0.059 ms (worse — too many small tasks, overhead dominates)
+
+### Candidate 14: forall[16,16] (tile_sizes [8,8]) + tile[8,4,16] + vectorize [8,4,16]
+- Asymmetric inner tile: 8 M rows, 4 N cols
+- Vectors: vector<8x4x16xf64>=512 elems ✓
+- Result: 0.045 ms (131.5x speedup, 3.19x FASTER than PyTorch)
+
+### Candidate 15: forall[16,16] (tile_sizes [8,8]) + tile[4,8,16] + vectorize [4,8,16] *** BEST BEFORE UNROLLING ***
+- Asymmetric inner tile: 4 M rows, 8 N cols
+- Vectors: vector<4x8x16xf64>=512 elems ✓
+- Result: 0.044 ms (134.5x speedup, 3.27x FASTER than PyTorch)
+
+### Candidate 16: forall[16,16] + tile[8,8,8] + vectorize [8,8,8]
+- Symmetric 8x8x8 inner tile
+- Vectors: vector<8x8x8xf64>=512 elems ✓
+- Result: 0.065 ms (worse than candidate 15)
+
+### Candidate 17: K-first tile[0,0,64] + forall[16,16] + tile[4,8,16] + vectorize [4,8,16]
+- Pre-tile the K dimension with size 64 before parallelization
+- Result: 0.055 ms (worse — extra K tiling adds loop overhead without benefit)
+
+### Candidate 18: forall[32,32] (tile_sizes [4,4]) + tile[4,4,16] + vectorize [4,4,16]
+- 32x32=1024 tasks, each only 4x4 block
+- Result: 0.060 ms (worse — too fine-grained task decomposition)
+
+## Unrolling Phase (Starting from Candidate 15)
+
+### Candidate 19: forall[16,16] + tile[4,8,16] + vectorize [4,8,16] + loop.unroll K factor=4 *** FINAL BEST ***
+- Added 4x unrolling on the inner K reduction loop (%loops2#2)
+- Exposes ILP across 4 FMA operations per SIMD iteration
+- Result: 0.039 ms (151.8x speedup over baseline, 3.70x FASTER than PyTorch!)
+
+### Candidate 20: forall[16,16] + tile[4,8,16] + vectorize [4,8,16] + loop.unroll K factor=16 (full unroll)
+- Full unroll eliminates the K loop entirely (16 iterations)
+- Result: 0.050 ms (worse — code size explosion reduces instruction cache efficiency)
+
+---
+
+## FINAL RESULT
+
+### Best Schedule: Candidate 19
+- **Transformation sequence**: tile_using_forall [8,8] + tile_using_for [4,8,16] + vectorize [4,8,16] + loop.unroll K×4
+- **Parallel grid**: 16×16 = 256 tasks (each handles an 8×8 block of C)
+- **Inner register tile**: 4 M rows × 8 N cols × 16 K slice
+- **Vectors**: vector<4x8x16xf64>=512 elems (rank-3, at limit ✓), vector<4x8xf64>=32 elems ✓
+- **K unroll factor**: 4 (optimal; full 16x unroll was worse)
+
+### Measured Times
+- MLIR baseline:   5.917 ms
+- PyTorch ref:     0.143 ms
+- Best result:     0.039 ms
+
+### Speedup
+- vs MLIR baseline: 151.8x
+- vs PyTorch:        3.70x (FASTER than PyTorch!)
+

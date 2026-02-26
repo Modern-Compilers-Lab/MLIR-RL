@@ -1,0 +1,193 @@
+# MLIR Optimization Log — matmul_256_512_1024
+# Started: 2026-02-26 14:10
+# Shape: (256x512) @ (512x1024) -> 256x1024, f64
+# Hardware: Intel Xeon E5-2680 v4 (Broadwell), AVX2 (4-wide f64), 28 cores, L1=32KB, L2=256KB, L3=35MB
+# Kernel: linalg.matmul with tag="operation_0"
+
+---
+
+## Lessons from previous run (matmul_128_256_128):
+- Best schedule: forall[16,1] + tile_K[64] + tile_reg[4,8,4] + hoist_C_from_K_inner + vectorize
+- f64 on AVX2: 4-wide vectorization
+- M-parallel forall better than N-parallel for row-major access
+- DO NOT apply tiling/scf canonicalization after vectorize (hurts perf)
+- pack_greedily fails without custom lowering pipeline
+- interchange hurts B-matrix locality
+
+---
+
+## Phase 0: Baseline & PyTorch Reference
+
+- MLIR baseline: 312.077 ms
+- PyTorch baseline: 0.4936 ms
+- Gap: ~632x
+
+---
+
+## Phase 1: Schedule Search (forall + tile_K + tile_reg + vectorize)
+
+### Key observation for this shape vs 128x256x128:
+- Per-thread tile with forall[4,8] = 32 threads: M=64, N=128 (larger N per thread)
+- N-dimension parallelism matters more here due to N=1024
+- Inner K tile size should be LARGER than previous run (K=512 vs K=256)
+- Best inner tile: [4,8,16] (not [4,8,4]) — larger K inner reduces loop iterations
+
+## Candidate 1: forall[16,1] + K[64] + [4,8,4] + vectorize
+- Transform: forall [16,1] threads, K=64, inner=[4,8,4], vectorize
+- Execution: 3.717 ms
+- Speedup vs baseline: 84x
+- Note: M-only parallelism suboptimal for N=1024
+
+## Candidate 2: forall[8,4] + K[64] + [4,8,4] + vectorize
+- Execution: 3.533 ms
+- Slightly better than 1
+
+## Candidate 3: forall[4,8] + K[64] + [4,8,4] + vectorize
+- Execution: 2.605 ms (SUCCESS)
+- *** BEST SO FAR: 2.605 ms ***
+
+## Candidate 4: forall[2,16] + K[64] + [4,8,4] + vectorize
+- Execution: 3.719 ms — too many N threads
+
+## Candidate 5: forall[4,8] + K[64] + [4,16,4] + vectorize (wider N inner)
+- Execution: 3.342 ms — worse, N=16 inner too wide
+
+## Candidate 6: forall[4,8] + K[64] + [4,8,4] + hoist + vectorize
+- Added hoist_loop_invariant_subsets before vectorize
+- Execution: 3.106 ms — hoist HURT perf (unlike 128x128 case)
+- Key learning: hoist hurts for this larger shape (register pressure)
+
+## Candidate 7: forall[4,8] + K[128] + [4,8,4] + vectorize
+- Execution: 2.663 ms — worse than K=64
+
+## Candidate 8: forall[1,16] N-only + K[64] + [4,8,4] + vectorize
+- Execution: 3.990 ms — N-only parallelism worse
+
+## Candidate 9: forall[4,8] + K[32] + [4,8,4] + vectorize
+- Execution: 3.594 ms — K=64 optimal
+
+## Candidate 10: forall[8,8] + K[64] + [4,8,4] + vectorize
+- Execution: 2.674 ms — 64 threads too many for this shape
+
+## Candidate 10-alt: forall[4,8] + K[64] + [4,8,8] + vectorize (larger K inner)
+- Execution: 2.177 ms (SUCCESS)
+- *** NEW BEST: 2.177 ms ***
+
+## Candidate 11: forall[4,8] + K[64] + [4,16,8] + vectorize (wider N inner)
+- Execution: 2.876 ms — worse
+
+## Candidate 12: forall[4,8] + K[64] + [4,8,16] + vectorize (even larger K inner)
+- Vectors: vector<4x8x16xf64> = 512 elements — AT LIMIT
+- Execution: 1.802 ms (SUCCESS)
+- *** NEW BEST: 1.802 ms ***
+
+## Candidate 13: forall[4,8] + K[128] + [4,8,16] + vectorize
+- Execution: 2.209 ms — K=64 optimal
+
+## Candidate 14: forall[4,8] + K[64] + [4,8,16] + vectorize + unroll_K_inner×4
+- Key: vectorize FIRST, then unroll %kloop2 (K inner loop, 4 iterations → fully unrolled)
+- Execution: 1.497 ms (SUCCESS)
+- Speedup vs baseline: 208x
+- Speedup vs PyTorch: 0.330x (3.03x slower than PyTorch)
+- *** BEST: 1.497 ms ***
+
+## Candidate 15 (attempted): C14 + also unroll M_inner×4
+- Transform succeeded but execute_mlir_code FAILED with parse error ("expected non-function type")
+- Root cause: massive unrolled code (K_inner×4 + M_inner×4) caused type corruption in generated MLIR
+- Strategy: try smaller unroll factors or unroll different loop
+
+---
+
+## Phase 2: Continued Exploration
+
+## Candidate 15 (new): C14 + unroll_N_inner×4
+- forall[4,8] + K[64] + [4,8,16] + vectorize + unroll_K×4 + unroll_nloop×4
+- Result: 2.086 ms — WORSE (N inner unroll increases register pressure)
+
+## Candidate 16: forall[4,4] (16 threads) + K[64] + [4,8,16] + vectorize + unroll_K×4
+- Result: 1.661 ms — WORSE than C14 (fewer threads hurt)
+
+## Candidate 17: forall[4,8] + K[64] + [4,16,8] + vectorize + unroll_K×8
+- vector<4x16x8xf64> = 512 elements — AT LIMIT
+- Result: 1.796 ms — WORSE
+
+## Candidate 18: C14 + unroll_mloop×2
+- Result: 1.497 ms — SAME as C14 (M outer unroll doesn't help)
+
+## Candidate 19: forall[4,8] + K[64] + [4,8,1] + vectorize[4,8,1] + unroll_K×8
+- vector<4x8x1xf64>, scalar K inner
+- Result: 2.399 ms — WORSE (tensor extract/insert overhead per K step)
+
+## Candidate 20: forall[4,8] + K[64] + [4,8,4] + vectorize[4,8,4] + unroll_K×16
+- vector<4x8x4xf64> = 128 elements, K_inner=4, 16 iterations fully unrolled
+- Result: 1.526 ms — close to C14 but still worse
+
+### Phase 2 Summary
+- Best remains Candidate 14: 1.497 ms (3.03x slower than PyTorch)
+- None of: N-inner unroll, fewer threads, wider N inner, M-outer unroll, scalar K, smaller K inner beat C14
+- Next: 3-level K tiling (L2+L1), custom pass pipeline, promote
+
+---
+
+## Phase 3: Hierarchical Tiling and Pipeline Exploration
+
+## Candidate 21: 3-level K tiling (L2=256 + L1=64) + [4,8,16] + vectorize + unroll_K×4
+- Hypothesis: A_tile(L2=256)=128KB + B_tile(L2=256)=256KB → both fit L2
+- Result: 1.503 ms — essentially SAME as C14 (no improvement from 3-level K)
+
+## Candidate 22: Custom bufferization pipeline — innerreduction + full_unroll=false
+- Changed: lower_multi_reduction from "innerparallel"→"innerreduction", transfer_to_scf full_unroll=false
+- Result: 3.700 ms — MUCH WORSE
+- Also tried: innerparallel + full_unroll=false → 3.948 ms — MUCH WORSE
+- Key learning: default innerparallel + full_unroll=true is critical — LLVM auto-vectorizes from scalar code
+
+## Candidate 23: N_L2=64 tile (reduce B tile from 64x128 to 64x64 = 32KB for L1)
+- Schedule: forall[4,8] + N_L2[64] + K[64] + [4,8,16] + vectorize + unroll_K×4
+- Result: 1.830 ms — WORSE
+- Root cause: A matrix gets read TWICE (once per N_L2 iteration), negating cache benefit
+
+## Candidate 24: [8,4,16] inner tile (wider M, narrower N)
+- vector<8x4x16xf64> = 512 elements — AT LIMIT
+- Result: 1.961 ms — WORSE ([4,8,16] M-N balance is optimal)
+
+## Candidate 25: [4,8,8] + unroll_K×8 (more unrolled copies, smaller vector)
+- vector<4x8x8xf64> = 256 elements, 8 unrolled K copies
+- Result: 1.525 ms — close but slightly worse than C14
+
+## Candidate 26: [4,8,16] + unroll_K×2 (fewer unroll copies)
+- Result: 2.395 ms — WORSE (factor=4 is optimal, not 2)
+
+## Candidate 27: pre-vectorize canonicalization (to force in_bounds=true)
+- Added tiling_canonicalization + scf canonicalization BEFORE vectorize
+- Result: 1.504 ms — SAME as C14 (in_bounds flags don't affect lowering path)
+
+## Candidate 28: [4,8,16] + unroll_K×4 + unroll_kloop(outer)×2
+- Combined inner+outer K unrolling to expose independent compute streams
+- Result: 1.682 ms — WORSE (code bloat + register pressure from outer K unroll)
+
+---
+
+## FINAL SUMMARY
+
+- **BEST**: Candidate 14 — 1.497 ms
+- Schedule: forall[4,8] + tile_K[64] + tile_reg[4,8,16] + vectorize + unroll_K_inner×4
+- Speedup vs baseline (312.077ms): **208.5x**
+- Speedup vs PyTorch (0.4936ms): **0.330x (3.03x slower)**
+
+### Performance Analysis
+- Hardware: 28 cores @ ~2.4GHz, AVX2 f64 (4-wide), 2 FMA ports = 537 GFLOPS peak
+- MLIR C14: 268M FLOPS / 1.497ms = ~179 GFLOPS (33% peak utilization)
+- PyTorch (MKL): 268M FLOPS / 0.4936ms = ~543 GFLOPS (101% of "peak" = using Turbo)
+- Gap analysis: ~3x gap due to MKL using architecture-specific micro-kernels + FMA scheduling
+
+### Key learnings from this shape (vs 128x256x128):
+- N-inner unroll hurts (register pressure for larger shapes)
+- hoist_loop_invariant_subsets hurts for this shape (unlike smaller 128x256x128)
+- M-parallel forall works well, [4,8] is optimal thread config for 256x1024 output
+- full_unroll=true in transfer_to_scf is CRITICAL (LLVM auto-vectorizes from scalar)
+- K outer=64 is optimal; L2 (256) and L1 (128) K tiles don't improve further
+- Larger K inner (16 > 8 > 4) is better (more work per FMA group)
+- K inner unroll factor=4 is optimal (fully unrolls the 4 inner K iterations)
+- N_L2 tiling causes A-matrix double reads → worse
+- Custom bufferization pipeline variants all worse than default
+

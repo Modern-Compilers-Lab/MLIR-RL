@@ -1,0 +1,102 @@
+# Optimization Log: matmul_24576_768_384
+# Shape: (24576×768) @ (768×384) → f64
+# Date: 2026-02-26 15:57
+# Hardware: Intel Xeon E5-2680 v4 (Broadwell), AVX2, 28 cores, L1=32KB
+
+## Problem Analysis
+- M=24576 (very large, 2^13 × 3), K=768, N=384
+- f64: AVX2 = 4-wide vectors
+- M >> N: prioritize M-dimension parallelism
+- Clean M divisors: 24, 32, 48, 96, 128, 256, 384, 512, 768, 1024, 1536, 2048...
+- Clean N divisors: 4, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 384
+
+## Strategy
+- Apply forall (M-heavy threads) + tile_K + tile_reg + vectorize + unroll_K
+- Based on: 256_512_1024 best was [4,8]+K64+[4,8,16]; 512_512_512 best was [4,4]+K32+[4,8,8]
+- For large M, N-smaller shape: try M-heavy configs like [16,2], [24,1], [32,1]
+
+---
+
+## Step 0: Baselines
+
+- MLIR baseline: 17515.725 ms
+- PyTorch: 18.856 ms
+
+## Candidate 1: forall[32×M: tile=768] + K[64] + [4,8,8] + vectorize + unroll×4
+- Time: 38.873 ms | Speedup: 450.6× | vs PyTorch: 0.485× (2.06× slower)
+
+## Candidate 2: forall[24×M: tile=1024] + K[64] + [4,8,8] + vectorize + unroll×4
+- Time: 27.839 ms | *** BEST SO FAR *** | vs PyTorch: 0.677× (1.48× slower)
+- Key insight: 24 threads = largest clean divisor ≤ 28 cores → perfect load balance
+  With 24 threads on 28 cores: each of 24 active cores processes M=1024 rows exactly once
+  With 32 threads on 28 cores: some cores handle 2 work items → load imbalance at end
+
+## Candidate 3: forall[16×M: tile=1536] + K[64] + [4,8,8] + vectorize + unroll×4
+- Time: 41.885 ms | WORSE than 24-thread config
+- Too few threads: 16/28 = 57% core utilization
+
+### Thread sweep summary: 24 >> 32 > 16
+### Next: K tile size tuning on forall[24×M]
+
+
+## Candidate 4: forall[24×M: tile=1024] + K[32] + [4,8,8] + vectorize + unroll×4
+- Time: 34.816 ms | WORSE — K=32 gives 2× more outer iterations with no cache benefit
+
+## Candidate 5: forall[24×M: tile=1024] + K[64] + [4,8,16] + vectorize + unroll×4
+- Vectors: vector<4x8x16xf64> = 512 elements (at limit)
+- Time: 27.469 ms | Marginal improvement, within noise of C2
+
+## Candidate 6: forall[24×M: tile=1024] + K[64] + [4,8,8] + vectorize + unroll×8 (full)
+- Full unroll of 8 K_inner iterations
+- Time: 27.348 ms | *** BEST *** — marginally better, essentially same as C2/C5
+
+### K tile and inner tile summary:
+- K=64 optimal (B_K_slice=196KB fits in L2); K=32 loses (2× overhead), K=128 not tested (would spill L2)
+- Inner tile [4,8,8] vs [4,8,16] vs unroll factor: all within 2% — no significant difference
+- K=64 with any of {[4,8,8]×4, [4,8,16]×4, [4,8,8]×8} gives ~27.35-27.84ms
+
+## Candidate 7 (failed): forall num_threads[28] + K[64] + [4,8,8] + vectorize
+- num_threads [28] fails: non-uniform tiles (877/878 rows) → vectorize fails
+- 24576 not divisible by 28 → cannot use all 28 cores cleanly
+
+## Candidate 8: forall[6,4] (24 threads, M=4096, N=96) + K[64] + [4,8,8] + vectorize + unroll×4
+- 2D parallelism: B_K_slice = 64×96×8 = 49KB (well under L2 vs 196KB with [24,1])
+- Time: 35.989 ms | WORSE — N-parallelism on small N=384 causes load imbalance (24 items unequally on 28 cores) and smaller N_tile reduces sequential work per item
+
+---
+
+## FINAL SUMMARY
+
+### Best Result
+- **Candidate 6**: forall[24×M: tile=1024] + K[64] + [4,8,8] + vectorize + unroll×8
+- **Time: 27.348 ms**
+- **Speedup vs MLIR baseline (17515.7ms): 640×**
+- **vs PyTorch (18.856ms): 0.69× (1.45× slower)**
+
+### Schedule
+```
+forall tile_sizes [1024, 0]         # 24 M-threads (largest clean divisor ≤ 28 cores)
+  tile_using_for [0, 0, 64]         # K outer: B_K_slice=196KB fits in L2
+    tile_using_for [4, 8, 8]        # register tile: vector<4x8x8xf64>=256 elements
+      vectorize                      # generate vector FMA ops
+      unroll k_inner × 8            # full unroll of 8 K inner iterations
+```
+
+### Key Findings for matmul_24576_768_384
+1. **Thread config**: 24 threads (tile=1024) is optimal — largest clean M-divisor ≤ 28 cores
+   - 24 threads achieves perfect load balance (no work items split across core waves)
+   - 32 threads slightly worse (load imbalance in last wave), 16 threads much worse (underutilization)
+2. **K tile = 64**: B_K_slice = 64×384×8 = 196KB barely fits in L2 (256KB) → optimal
+   - K=32 worse (2× loop overhead), K=128 not tried (would spill L2 at 393KB)
+3. **Inner tile [4,8,8]**: vector<4x8x8xf64>=256 elements — solid choice; [4,8,16] equivalent
+4. **Unroll**: factor=4 (partial) and factor=8 (full) both equivalent within noise
+5. **2D forall [6,4]**: worse — N-parallelism hurts for small N=384
+6. **Performance ceiling**: ~85% of Turbo FP64 peak with 24 cores; PyTorch uses all 28 cores + MKL
+   - MLIR: ~537 GFLOPS with 24 cores; PyTorch: ~769 GFLOPS (MKL + 28 cores + higher Turbo)
+
+### Performance Analysis
+- Matrix: 24576×768×384 × 8 bytes = A(144MB) + B(2.25MB) + C(72MB)
+- B (2.25MB) fits in L3 (35MB shared); A (144MB) streaming from DRAM
+- Compute bound: at 24 cores × ~22 GFLOPS/core ≈ 530 GFLOPS → 27.3ms → matches measurement
+- Gap from PyTorch: 24 vs 28 cores + MKL prefetching/micro-kernels
+

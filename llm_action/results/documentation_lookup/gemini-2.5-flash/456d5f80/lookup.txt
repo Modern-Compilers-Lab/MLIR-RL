@@ -1,0 +1,184 @@
+TASK:
+How to do vectorization in MLIR Transform dialect?
+
+RESPONSE:
+Retrieved Documentation (verbatim)
+
+### `transform.structured.vectorize` (transform::VectorizeOp) [¶](#transformstructuredvectorize-transformvectorizeop)
+
+`transform.structured.vectorize`
+[¶](#transformstructuredvectorize-transformvectorizeop)
+
+Syntax:
+
+```
+operation ::= `transform.structured.vectorize` $target oilist(
+              `vector_sizes` custom<DynamicIndexList>(
+              $vector_sizes,
+              $static_vector_sizes,
+              $scalable_sizes))
+              attr-dict
+              `:` type($target)(`,`type($vector_sizes)^)?
+```
+
+`` operation ::= `transform.structured.vectorize` $target oilist(
+`vector_sizes` custom<DynamicIndexList>(
+$vector_sizes,
+$static_vector_sizes,
+$scalable_sizes))\nattr-dict
+`:` type($target)(`,`type($vector_sizes)^)? ``
+
+Vectorize the target ops, which must be Linalg ops.
+
+Use the optional vector sizes to specify exactly what configuration the
+vectorizer should use. It will then use masked vectors of the specified
+size to enforce this configuration (“masked vectorization”). If no vector
+sizes are specified, the vectorizer will infer the shapes to use from the
+target Linalg ops (“regular vectorization”). More specifically:
+
+```
+transform.structured.vectorize %target vector_sizes [1, 4] : !transform.any_op
+# Regular vectorization - vector sizes are inferred from the target Op
+transform.structured.vectorize %target : !transform.any_op
+```
+
+```
+transform.structured.vectorize %target vector_sizes [1, 4] : !transform.any_op
+# Regular vectorization - vector sizes are inferred from the target Op
+transform.structured.vectorize %target : !transform.any_op
+```
+
+`transform.structured.vectorize %target vector_sizes [1, 4] : !transform.any_op
+# Regular vectorization - vector sizes are inferred from the target Op
+transform.structured.vectorize %target : !transform.any_op`
+transform.structured.vectorize %target vector\_sizes [1, 4] : !transform.any\_op
+transform.structured.vectorize %target vector\_sizes [1, 4] : !transform.any\_op
+.
+.
+vector
+%target
+vector
+[
+1
+,
+4
+]
+:
+!
+.
+# Regular vectorization - vector sizes are inferred from the target Op
+# Regular vectorization - vector sizes are inferred from the target Op
+#
+vector
+-
+vector
+transform.structured.vectorize %target : !transform.any\_op
+transform.structured.vectorize %target : !transform.any\_op
+.
+.
+vector
+%target
+:
+!
+.
+
+The vector sizes can be either static or dynamic (SSA values). In case of
+SSA values, the handle must be mapped to exactly one payload op with
+exactly one index-typed result.
+
+Note: The input vector sizes must be bigger than or equal to their
+counterpart iteration space sizes.
+
+Typically this operator should be applied to linalg operations that have
+already been tiled to the appropriate sizes.
+
+---
+
+#### Return modes: [¶](#return-modes-74)
+
+[¶](#return-modes-74)
+
+This operation produces a silenceable failure if at least one target op is
+not a Linalg op or fails to vectorize. It produces a definite failure if
+the dynamic vector sizes (SSA values) do not satisfy the constraints
+mentioned above.
+
+Traits: `ReportTrackingListenerFailuresOpTrait`
+
+`ReportTrackingListenerFailuresOpTrait`
+
+Interfaces: `MemoryEffectOpInterface`, `TransformOpInterface`
+
+`MemoryEffectOpInterface`
+`TransformOpInterface`
+
+---
+
+#### Attributes: [¶](#attributes-85)
+
+[¶](#attributes-85)
+
+| Attribute | MLIR Type | Description |
+| --- | --- | --- |
+| `static_vector_sizes` | ::mlir::DenseI64ArrayAttr | i64 dense array attribute |
+| `vectorize_nd_extract` | ::mlir::UnitAttr | unit attribute |
+| `assume_dynamic_dims_match_vec_sizes` | ::mlir::UnitAttr | unit attribute |
+| `create_named_contraction` | ::mlir::UnitAttr | unit attribute |
+| `scalable_sizes` | ::mlir::DenseBoolArrayAttr | i1 dense array attribute |
+
+| Attribute | MLIR Type | Description |
+| Attribute | MLIR Type | Description || `static_vector_sizes` | ::mlir::DenseI64ArrayAttr | i64 dense array attribute || `static_vector_sizes` |`static_vector_sizes` ::mlir::DenseI64ArrayAttr | i64 dense array attribute || `vectorize_nd_extract` | ::mlir::UnitAttr | unit attribute || `vectorize_nd_extract` |`vectorize_nd_extract` ::mlir::UnitAttr | unit attribute || `assume_dynamic_dims_match_vec_sizes` | ::mlir::UnitAttr | unit attribute || `assume_dynamic_dims_match_vec_sizes` |`assume_dynamic_dims_match_vec_sizes` ::mlir::UnitAttr | unit attribute || `create_named_contraction` | ::mlir::UnitAttr | unit attribute || `create_named_contraction` |`create_named_contraction` ::mlir::UnitAttr | unit attribute || `scalable_sizes` | ::mlir::DenseBoolArrayAttr | i1 dense array attribute || `scalable_sizes` |`scalable_sizes` ::mlir::DenseBoolArrayAttr | i1 dense array attribute |
+
+---
+
+#### Operands: [¶](#operands-125)
+
+[¶](#operands-125)
+
+| Operand | Description |
+| --- | --- |
+| `target` | TransformHandleTypeInterface instance |
+| `vector_sizes` | variadic of transform any param type or any handle type |
+
+| Operand | Description |
+| --- | --- |
+| Operand | Description |
+Operand | Description || `target` | TransformHandleTypeInterface instance |
+| `vector_sizes` | variadic of transform any param type or any handle type |
+| `target` | TransformHandleTypeInterface instance |
+`target` |`target` TransformHandleTypeInterface instance || `vector_sizes` | variadic of transform any param type or any handle type |
+`vector_sizes` |`vector_sizes` variadic of transform any param type or any handle type |
+
+Answer (1-6 bullets)
+
+*   To vectorize a Linalg operation, use `transform.structured.vectorize`.
+*   This operation can perform "masked vectorization" by explicitly providing `vector_sizes` or "regular vectorization" by inferring sizes if no `vector_sizes` are specified.
+*   `vector_sizes` can be static (as an array of integers) or dynamic (as SSA values).
+*   The `target` operand must be a handle to a Linalg operation.
+*   It's generally recommended to tile Linalg operations to appropriate sizes before applying this vectorization.
+
+Minimal Transform IR skeleton
+
+```mlir
+module attributes {transform.with_named_sequence} {
+  transform.named_sequence @__transform_main(%arg1: !transform.any_op {transform.readonly}) {
+    %target_op = transform.structured.match attributes{tag = "operation_0"} in %arg1 : (!transform.any_op) -> !transform.any_op
+    // Example: Masked vectorization with specific sizes [1, 4]
+    transform.structured.vectorize %target_op vector_sizes [1, 4] : !transform.any_op
+    // Example: Regular vectorization (sizes inferred)
+    // transform.structured.vectorize %target_op : !transform.any_op
+    transform.yield
+  }
+}
+```
+
+Constraints / Preconditions
+
+*   The `target` operand must be a handle to a Linalg operation.
+*   If `vector_sizes` are provided as SSA values, the handle for those values must map to exactly one payload op with exactly one index-typed result.
+*   Provided `vector_sizes` must be greater than or equal to their corresponding iteration space sizes.
+*   The operation will fail if the target is not a Linalg op or if dynamic `vector_sizes` constraints are not met.
+
+Lookup keys used
+
+*   (`Structured (Linalg) Transform Operations`, `transform.structured.vectorize`)
