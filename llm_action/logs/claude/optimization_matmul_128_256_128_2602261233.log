@@ -1,0 +1,221 @@
+# MLIR Optimization Log — matmul_128_256_128
+# Started: 2026-02-26 12:33
+# Shape: (128x256) @ (256x128) -> 128x128, f64
+# Hardware: Intel Xeon E5-2680 v4 (Broadwell), AVX2 (4-wide f64), 28 cores, L1=32KB, L2=256KB, L3=35MB
+
+---
+
+## Phase 0: Baseline & PyTorch Reference
+
+- MLIR baseline: 8.897 ms
+- PyTorch baseline: 0.035 ms
+- Gap: ~256x (PyTorch much faster)
+
+---
+
+## Candidate 1: Two-level Tiling [64,64,64]+[4,4,4] + Vectorize
+
+- Transform: tile_using_for [64,64,64], then tile_using_for [4,4,4], then vectorize
+- Vectors: vector<4x4x4xf64> = 64 elements, rank-3 small — VALID
+- Execution: 0.740 ms  (SUCCESS)
+- Speedup vs baseline: 12.0x
+- Speedup vs PyTorch: 0.047x (still 21x slower than PyTorch)
+- BEST SO FAR: 0.740 ms
+
+---
+
+## Candidate 2: forall(4x2) + tile_K[64] + tile_reg[4,4,4] + vectorize
+
+- Transform: tile_using_forall [4x2 threads], tile_K [64], tile_reg [4,4,4], vectorize
+- Vectors: vector<4x4x4xf64> = 64 elements — VALID
+- Execution: 0.133 ms  (SUCCESS)
+- Speedup vs baseline: 67x
+- Speedup vs PyTorch: 0.261x (3.8x slower than PyTorch)
+- *** NEW BEST: 0.133 ms ***
+
+---
+
+## Candidate 3: forall(4x4) + tile_K[64] + tile_reg[4,4,4] + vectorize
+
+- Transform: tile_using_forall [4x4=16 threads], tile_K [64], tile_reg [4,4,4], vectorize
+- Execution: 0.107 ms  (SUCCESS)
+- Speedup vs baseline: 83x
+
+## Candidate 4: forall(8x4) + tile_K[64] + tile_reg[4,4,4] + vectorize
+
+- Transform: tile_using_forall [8x4=32 threads], tile_K [64], tile_reg [4,4,4], vectorize
+- Execution: 0.091 ms  (SUCCESS)
+- Speedup vs baseline: 97.7x
+- Speedup vs PyTorch: 0.38x (2.6x slower than PyTorch)
+- *** NEW BEST: 0.091 ms ***
+
+## Candidate 5: forall(8x4) + tile_K[128] + tile_reg[4,4,4] + vectorize
+
+- Transform: 8x4 threads, K_tile=128 instead of 64
+- Execution: 0.114 ms  (SUCCESS)
+- Slightly worse than K=64 — K=64 is better
+
+## Candidate 6: forall(8x4) + tile_K[64] + tile_inner[4,8,4] + vectorize (wider N)
+
+- Transform: forall [8x4], K=64, inner=[4,8,4], vectorize
+- Vectors: vector<4x8x4xf64> = 128 elements — VALID
+- Execution: 0.052 ms  (SUCCESS)
+- Speedup vs baseline: 172x
+- Speedup vs PyTorch: 0.671x (1.5x slower than PyTorch)
+- *** NEW BEST: 0.052 ms ***
+
+## Candidate 7: forall(8x4) + tile_K[64] + tile_inner[4,16,4] + vectorize (N=16)
+
+- Execution: 0.092 ms — worse than N=8, stopping N search at N=8
+
+## Candidate 8: forall(8x4) + tile_K[64] + inner[4,8,8] + vectorize (K inner=8)
+
+- Vectors: vector<4x8x8xf64> = 256 elements — VALID
+- Execution: 0.053 ms — essentially same as [4,8,4]. N=8 is key.
+
+## Candidate 9: forall(16x1) + tile_K[64] + inner[4,8,4] + vectorize (M-only parallelism)
+
+- Transform: forall [16x1], K=64, inner=[4,8,4], vectorize
+- Execution: 0.051 ms  (SUCCESS)
+- *** NEW BEST: 0.051 ms ***
+
+## Candidate 10: forall(16x1) + tile_K[64] + inner[4,8,4] + vectorize + K-loop unroll
+
+- Execution: 0.052 ms — essentially same, unrolling doesn't help
+
+## Candidate 11: forall(32x1) + tile_K[64] + inner[4,8,4] + vectorize
+
+- Execution: 0.055 ms — 32 threads too granular for M=128
+
+## Candidate 12: forall(16x1) + tile_K[64] + inner[4,32,4] + vectorize (N=32 at limit)
+
+- Vectors: vector<4x32x4xf64> = 512 elements — at limit
+- Execution: 0.077 ms — worse than N=8
+
+## Candidate 13: forall(8x4) + no K tiling + inner[4,8,4] + vectorize
+
+- Execution: 0.068 ms — K=64 outer tiling is essential
+
+## Candidate 14: tile_reduction on K + forall + vectorize
+
+- Attempted tile_reduction_using_for on K, then forall on M/N, then vectorize
+- Result: produced tensor<128x128x0xf64> (0-dim output) — buggy transform output, SKIPPED
+
+---
+
+## Candidate 15: forall(16x1) + tile_K[32] + inner[4,8,4] + vectorize (smaller K tile)
+
+- Transform: forall [16x1], K_outer=32 (8 iterations), inner=[4,8,4], vectorize
+- Vectors: vector<4x8x4xf64> = 128 elements — VALID
+- Execution: 0.053 ms  (SUCCESS)
+- Slightly worse than K=64 (0.051 ms) — K=64 remains optimal outer tile
+
+## Candidate 16: forall(16x1) + tile_K[64] + inner[8,8,4] + vectorize (wider M inner)
+
+- Transform: forall [16x1], K=64, inner=[8,8,4] (M inner=8=full thread tile), vectorize
+- Vectors: vector<8x8x4xf64> = 256 elements — VALID
+- Execution: 0.158 ms  (WORSE) — single M iteration kills performance, register pressure
+- M inner=4 (two iterations) is much better than M inner=8 (one iteration)
+
+## Candidate 17: forall(1x16) + tile_K[64] + inner[4,8,4] + vectorize (N-only parallelism)
+
+- Transform: forall [1x16] (N-parallel), K=64, inner=[4,8,4], vectorize
+- Each thread handles 128x8 column slice vs 8x128 row slice in Candidate 9
+- Vectors: vector<4x8x4xf64> = 128 elements — VALID
+- Execution: 0.084 ms  (SUCCESS)
+- Worse than M-parallel forall(16x1) — row-parallelism better for this shape
+- *** BEST REMAINS: 0.051 ms (Candidate 9) ***
+
+---
+
+## Phase 2: New Transformation Families — Interchange, Pack, Promote, Hoist
+
+### Motivation
+After exhausting forall-thread-count and tile-size parameter sweeps, shifted focus to new
+high-level transformation families: loop interchange, tensor packing, memory promotion, and
+loop-invariant subset hoisting. Used delegate_documentation_lookup before each attempt.
+
+---
+
+## Candidate 18: generalize + interchange[0,2,1] + forall(16x1) + K[64] + inner[4,4,8] + vectorize
+
+- Schedule: generalize(%matmul) → interchange([0,2,1] = M-K-N order) → forall[16x1] → K[64] → [4,4,8] → vectorize
+- Note: interchange requires linalg.generic (not linalg.matmul). generalize converts to generic first.
+- K-innermost loop order: better A reuse (A[m,k] accessed with k-inner), but N-innermost
+  access pattern hurts B matrix locality (B[k,n] accessed with n varying fastest vs sequential k).
+- Vectors: vector<4x4x8xf64> = 128 elements — VALID
+- Execution: 0.065 ms  (SUCCESS)
+- Worse than best (0.051 ms) — N-innermost ordering hurts B-matrix locality for this shape
+- Key learning: M-K-N loop order (interchange [0,2,1]) is worse than default M-N-K for B access patterns
+
+---
+
+## Candidate 19: pack_greedily attempts — FAILED (rank explosion)
+
+### Attempt 19a: pack_greedily [4,8,4] + forall[16,1] + tile[1,1,1,0,0,0] + vectorize
+- pack_greedily {matmul_packed_sizes=[4,8,4]} creates 6D packed tensor [M/4, N/8, K/4, 4, 8, 4]
+- Tiling outer [1,1,1] dims + vectorize creates high-rank vectors — execution FAILED.
+- Root cause: cannot vectorize across pack-dimension boundaries without the vector lowering pipeline
+
+### Attempt 19b: K-only pack [0,0,4] + forall[16,1] + K[16] + inner[4,8,1] + vectorize
+- Created 4D tensor [M, N, K/4, 4] → inner vectorize creates vector<4x8x1x4xf64> (rank 4)
+- Execution FAILED — rank-4 vectors don't lower properly through the default pipeline
+- Key learning: pack without matching vector lowering pipeline is unusable
+
+### Attempt 19c: pack_greedily + partial vector_sizes [0,0,0,4,8,4]
+- Attempted vectorize with explicit sizes to skip outer dims
+- Transform FAILED ("Attempted to vectorize, but failed to apply")
+- Key learning: vectorize partial dims on pack output requires correct dim ordering
+
+---
+
+## Candidate 20: forall(16x1) + K[64] + inner[4,8,4] + hoist_loop_invariant_subsets + vectorize
+### Key discovery: transform.loop.hoist_loop_invariant_subsets
+
+- Background: In the K_inner loop, the C tile extract at [%arg8, %arg10] is loop-invariant
+  (position unchanged by K_inner iteration). C tile was being loaded 16 times per (M,N) output
+  tile. hoist_loop_invariant_subsets detects extract+insert pairs and hoists them out of the loop.
+- Transform sequence:
+    tile_using_forall [16,1] → tile_K [0,0,64] → tile_reg [4,8,4]
+    → hoist_loop_invariant_subsets(%iloop2: K_inner loop handle)
+    → vectorize
+- Result after hoist: K_inner carries TWO iter_args (%C_full, %C_tile_4x8).
+  C tile extracted ONCE before K_inner, inserted ONCE after → only 1 C load per (M,N) pair.
+- Vectors: vector<4x8x4xf64>=128, vector<4x8xf64>=32 — VALID
+- Execution: 0.0508 ms  (SUCCESS)
+- Speedup vs baseline: 175x
+- Speedup vs PyTorch: 0.689x (1.45x slower than PyTorch)
+- *** NEW BEST: 0.0508 ms ***
+- Note: %iloop2 handle is INVALIDATED after hoisting — cannot reuse handle afterward
+
+---
+
+## Candidate 21: hoist + canonicalization patterns — WORSE
+
+- Added after vectorize:
+    transform.apply_patterns.linalg.tiling_canonicalization
+    transform.apply_patterns.scf.for_loop_canonicalization
+- Result: cleaner code (all in_bounds=[true,true,true], constants folded), BUT
+- Execution: 0.060 ms — WORSE than Candidate 20 (0.0508 ms)
+- Root cause: canonicalization changes broadcast-dim in_bounds from false→true, altering
+  the vector.transfer_read lowering path. in_bounds=false on broadcast dims generates more
+  efficient LLVM IR than in_bounds=true for this hardware.
+- Key learning: DO NOT apply tiling/scf canonicalization after vectorize — it hurts perf
+
+---
+
+## Candidate 22: hoist + K_outer[128]
+
+- Same as Candidate 20 but K_outer=128 (2 iterations instead of 4)
+- Execution: 0.0517 ms — essentially same as best
+- K=64 remains optimal outer K tile
+
+---
+
+## Summary After Phase 2
+
+- **Best candidate**: Candidate 20
+  - Schedule: forall[16,1] + tile_K[64] + tile_reg[4,8,4] + hoist_C_from_K_inner + vectorize
+  - Time: 0.0508 ms
+  - Speedup vs baseline: 175x
+  - Speedup vs PyTorch: 0.689x (1.45x slower than PyTorch)

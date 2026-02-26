@@ -1,8 +1,11 @@
-from llm_action.src.models import ClaudeModel
+from llm_action.src.models import ClaudeModel, GeminiModel
 
 # LLM
 CLAUDE_LLM_MODEL = ClaudeModel.HAIKU
 CLAUDE_LLM_TEMPERATURE = 1.0
+
+GEMINI_LLM_MODEL = GeminiModel.GEMINI_2_5_FLASH
+GEMINI_LLM_TEMPERATURE = 1.0
 
 # Execution
 CODE_TRANSFORM_TIMEOUT = 10  # seconds

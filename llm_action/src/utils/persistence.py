@@ -8,12 +8,22 @@ from llm_action.src.utils.scrape import collect_md_tree, collect_md_doc
 
 from llm_action.src.config import ACTION_ENUMERATION_CACHE, CLAUDE_LLM_MODEL
 
-def load_kernel_code(kernel_type: KernelType) -> str:
+def load_kernel_code(kernel_type: KernelType, kernel_number: int = 2) -> str:
     dir = f"llm_action/data/{kernel_type.value}"
     match kernel_type:
         case KernelType.MATMUL:
             name = "Matrix Multiplication"
-            code_path = f"{dir}/matmul_128_256_128.mlir"
+            match kernel_number:
+                case 1:
+                    code_path = f"{dir}/matmul_128_256_128.mlir"
+                case 2:
+                    code_path = f"{dir}/matmul_256_512_1024.mlir"
+                case 3:
+                    code_path = f"{dir}/matmul_512_512_512.mlir"
+                case 4:
+                    code_path = f"{dir}/matmul_24576_768_384.mlir"
+                case _:
+                    raise ValueError(f"Unsupported kernel number {kernel_number} for {kernel_type}")
         case KernelType.CONV2D:
             name = "2D Convolution"
             code_path = f"{dir}/conv_2d_nchw_fchw_128_32_7_7_256_1_1_7_7.mlir"

@@ -1,0 +1,85 @@
+# MLIR Optimization Log: matmul 128x256x128 (f64)
+# Started: 2026-02-25 10:45
+
+## Problem
+- Shape: (128x256) @ (256x128) -> (128x128), dtype=f64
+- Hardware: Intel Xeon E5-2680 v4 (Broadwell), AVX2 (4xf64), 28 cores
+
+## Baseline Measurements
+- MLIR baseline:  5.898012 ms
+- PyTorch baseline: 0.035849 ms
+
+## Optimization Attempts
+
+### Attempt 1: Tiling [64, 64, 64]
+- Schedule: tile_using_for [64, 64, 64]
+- Time: 4.734ms | Speedup: 1.245x
+- Notes: Tiles too large for L1 (3x64x64x8=96KB > 32KB)
+
+### Attempt 2: Tiling [32, 32, 32] ← L1-optimal single tile
+- Schedule: tile_using_for [32, 32, 32]
+- Time: 2.095ms | Speedup: 2.815x
+- Notes: Each 32x32x8=8KB tile, 3 tiles=24KB fit in L1
+
+### Attempt 3: Tiling [16, 16, 16]
+- Schedule: tile_using_for [16, 16, 16]
+- Time: 2.102ms | Speedup: 2.808x
+- Notes: Similar to [32,32,32]; diminishing returns from smaller tiles
+
+### Attempt 4: Tiling [32, 32, 32] + Vectorize [32, 32, 32]
+- REJECTED: Creates vector<32x32x32xf64>, N=32768 >> 512 limit
+
+### Attempt 5: Two-level Tiling [32,32,32] + [8,8,8]
+- Time: 3.716ms | Speedup: 1.587x
+- Notes: Loop overhead exceeds benefit of finer granularity
+
+### Attempt 6: Parallelization forall [4,4] + inner tile [8,8,32]
+- Schedule: tile_using_forall [4,4] + tile_using_for [8,8,32]
+- Time: 0.376ms | Speedup: 15.7x
+- Notes: First big win! Parallelism across 16 threads
+
+### Attempt 7: Parallelization forall [4,4] + inner tile [16,16,64]
+- Time: 0.353ms | Speedup: 16.7x
+
+### Attempt 8: Parallelization forall [8,4] + inner tile [8,8,32]
+- Time: 0.287ms | Speedup: 20.6x
+
+### Attempt 9: Parallelization forall [8,4] + inner tile [8,8,64]
+- Time: 0.320ms | Speedup: 18.4x
+
+### Attempt 10: Parallelization forall [8,4] + inner tile [16,16,32]
+- Time: 0.189ms | Speedup: 31.2x ← best serial schedule
+
+### Attempt 11: Tiling [4,4,16] + Vectorize (no parallelism)
+- Vectors: vector<4x4x16xf64>=256 elements, rank-3 (safe)
+- Time: 1.087ms | Speedup: 5.42x
+
+### Attempt 12: forall [8,4] + tile [4,4,16] + Vectorize
+- Vectors: vector<4x4x16xf64>=256 elements, rank-3 (SAFE ≤512)
+- Time: 0.063ms | Speedup: 93.6x ← BREAKTHROUGH!
+
+### Attempt 13: forall [8,4] + tile [4,4,32] + Vectorize
+- Vectors: vector<4x4x32xf64>=512 elements, rank-3 (SAFE, at limit)
+- Time: 0.062ms | Speedup: 95.1x
+
+### Attempt 14: forall [8,4] + tile [4,8,16] + Vectorize ← BEST
+- Vectors: vector<4x8x16xf64>=512 elements, rank-3 (SAFE, at limit)
+- Time: 0.052ms | Speedup: 112.77x
+- speedup_to_torch: 0.685 (MLIR is 68.5% of torch speed = 1.46x slower than torch)
+
+### Attempt 15: forall [4,4] + tile [4,8,16] + Vectorize (fewer threads)
+- Time: 0.068ms | Speedup: 86.7x
+- Notes: [8,4]=32 threads outperforms [4,4]=16 threads
+
+## FINAL BEST RESULT
+- Schedule: tile_using_forall [8,4] num_threads + tile_using_for [4,8,16] + vectorize
+- Baseline: 5.898ms | Optimized: 0.052ms | Speedup: **112.77x**
+- PyTorch: 0.036ms | speedup_to_torch: 0.685 (1.46x slower than PyTorch)
+- All correctness checks PASSED (success_flag=True)
+
+## Key Insights
+1. Parallelization via scf.forall is the dominant optimization (15-30x alone)
+2. Vectorization with safe small tiles [4,8,16] multiplies the benefit (~3-5x)
+3. [8,4]=32 threads slightly over-subscribes 28 cores but performs best
+4. Inner tile sizes [4,8,16] align with f64 AVX2 SIMD width (4 doubles)
+5. The product M×N×K tile vector = 4×8×16=512 is at the safety limit

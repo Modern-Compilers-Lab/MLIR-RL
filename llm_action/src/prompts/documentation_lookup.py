@@ -81,7 +81,7 @@ You MUST rely on this index to choose valid `(category_name, transformation_name
 def get_agent_task() -> str:
     return """# Your Task
 
-You will receive a delegated question (usually from Layer 2), such as:
+You will receive a delegated question, such as:
 - “How do I vectorize in Transform dialect?”
 - “What operation tiles a linalg op using forall?”
 - “How do I interchange loops?”
@@ -90,7 +90,7 @@ Your job is to return a **documentation-grounded answer** suitable for implement
 
 ## Deterministic Retrieval Procedure (Critical)
 
-1. Identify the Transform dialect operation(s) relevant to the query. Try to be comprehensive, ensuring not to miss any key ops.
+1. Identify the Transform dialect operations relevant to the query. Try as much to be comprehensive, ensuring not to miss any key ops.
 2. Determine the correct `(category_name, transformation_name)` from the provided index.
 3. Call `lookup_transformation(category_name, transformation_name)` for EACH relevant operation.
 4. Build a concise answer grounded ONLY in the retrieved text.
@@ -144,9 +144,10 @@ Remember:
 You exist to reduce bugs and uncertainty for Layer 2 by grounding Transform dialect usage in retrieved documentation.
 """
 
+# {get_agent_position()}
+
 def get_documentation_lookup_system_prompt() -> str:
     return f"""{get_agent_identity()}
-{get_agent_position()}
 {get_agent_role()}
 {get_agent_task()}
 {get_output_instructions()}

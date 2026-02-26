@@ -136,6 +136,44 @@ def run_transform_code(code: str, transform_code: str, timeout: int = CODE_TRANS
 
     return BindingsProcess.call(transform_bind_call, timeout=timeout)
 
+BUFFERIZATION_AND_LOWER_V_TRANSFORM_CODE = """
+module attributes {transform.with_named_sequence} {
+    transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.consumed}) {
+        %all_loops = transform.structured.match interface{LoopLikeInterface} in %arg0 : (!transform.any_op) -> !transform.any_op
+        transform.apply_licm to %all_loops : !transform.any_op
+
+        transform.structured.eliminate_empty_tensors %arg0 : !transform.any_op
+        %empty = transform.structured.match ops{["tensor.empty"]} in %arg0 : (!transform.any_op) -> !transform.op<"tensor.empty">
+        transform.bufferization.empty_tensor_to_alloc_tensor %empty : (!transform.op<"tensor.empty">) -> !transform.op<"bufferization.alloc_tensor">
+
+        %f0 = transform.structured.match ops{["func.func"]} in %arg0 : (!transform.any_op) -> !transform.any_op
+        transform.apply_patterns to %f0 {
+            transform.apply_patterns.vector.transfer_permutation_patterns
+            transform.apply_patterns.vector.reduction_to_contract
+        } : !transform.any_op
+        transform.apply_patterns to %f0 {
+            transform.apply_patterns.canonicalization
+            transform.apply_patterns.tensor.fold_tensor_subset_ops_into_vector_transfers
+        } : !transform.any_op
+
+        %arg1 = transform.bufferization.one_shot_bufferize layout{IdentityLayoutMap} %arg0 {bufferize_function_boundaries = true} : (!transform.any_op) -> !transform.any_op
+
+        %f1 = transform.structured.match ops{["func.func"]} in %arg1 : (!transform.any_op) -> !transform.any_op
+        transform.apply_patterns to %f1 {
+            transform.apply_patterns.vector.lower_contraction lowering_strategy = "outerproduct"
+            transform.apply_patterns.vector.transfer_permutation_patterns
+            transform.apply_patterns.vector.lower_outerproduct
+            transform.apply_patterns.vector.lower_multi_reduction lowering_strategy = "innerparallel"
+            transform.apply_patterns.vector.transfer_to_scf max_transfer_rank = 1 full_unroll = true
+            transform.apply_patterns.vector.lower_transfer max_transfer_rank = 1
+            transform.apply_patterns.vector.lower_shape_cast
+            transform.apply_patterns.vector.lower_transpose lowering_strategy = "shuffle_1d"
+            transform.apply_patterns.canonicalization
+        } : !transform.any_op
+        transform.yield
+    }
+}"""
+
 def transform_bufferize_and_lower_v(code: str, transform_code: Optional[str] = None) -> str:
     """Apply the vectorization transformation with vectorizer to the specified operation in the given code.
 
@@ -146,45 +184,38 @@ def transform_bufferize_and_lower_v(code: str, transform_code: Optional[str] = N
         str: The code after applying the transformation.
     """
     if not transform_code:
-        transform_code = """
-        module attributes {transform.with_named_sequence} {
-            transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.consumed}) {
-                %all_loops = transform.structured.match interface{LoopLikeInterface} in %arg0 : (!transform.any_op) -> !transform.any_op
-                transform.apply_licm to %all_loops : !transform.any_op
-
-                transform.structured.eliminate_empty_tensors %arg0 : !transform.any_op
-                %empty = transform.structured.match ops{["tensor.empty"]} in %arg0 : (!transform.any_op) -> !transform.op<"tensor.empty">
-                transform.bufferization.empty_tensor_to_alloc_tensor %empty : (!transform.op<"tensor.empty">) -> !transform.op<"bufferization.alloc_tensor">
-
-                %f0 = transform.structured.match ops{["func.func"]} in %arg0 : (!transform.any_op) -> !transform.any_op
-                transform.apply_patterns to %f0 {
-                    transform.apply_patterns.vector.transfer_permutation_patterns
-                    transform.apply_patterns.vector.reduction_to_contract
-                } : !transform.any_op
-                transform.apply_patterns to %f0 {
-                    transform.apply_patterns.canonicalization
-                    transform.apply_patterns.tensor.fold_tensor_subset_ops_into_vector_transfers
-                } : !transform.any_op
-
-                %arg1 = transform.bufferization.one_shot_bufferize layout{IdentityLayoutMap} %arg0 {bufferize_function_boundaries = true} : (!transform.any_op) -> !transform.any_op
-
-                %f1 = transform.structured.match ops{["func.func"]} in %arg1 : (!transform.any_op) -> !transform.any_op
-                transform.apply_patterns to %f1 {
-                    transform.apply_patterns.vector.lower_contraction lowering_strategy = "outerproduct"
-                    transform.apply_patterns.vector.transfer_permutation_patterns
-                    transform.apply_patterns.vector.lower_multi_reduction lowering_strategy = "innerparallel"
-                    transform.apply_patterns.vector.split_transfer_full_partial split_transfer_strategy = "linalg-copy"
-                    transform.apply_patterns.vector.transfer_to_scf max_transfer_rank = 3 full_unroll = true
-                    transform.apply_patterns.vector.lower_transfer max_transfer_rank = 3
-                    transform.apply_patterns.vector.lower_shape_cast
-                    transform.apply_patterns.vector.lower_transpose lowering_strategy = "shuffle_1d"
-                    transform.apply_patterns.canonicalization
-                } : !transform.any_op
-                transform.yield
-            }
-        }"""
-
+        transform_code = BUFFERIZATION_AND_LOWER_V_TRANSFORM_CODE
     return run_transform_code(code, transform_code)
+
+PASS_PIPELINE = [
+    "canonicalize",
+    "cse",
+    "buffer-deallocation-pipeline",
+    "convert-bufferization-to-memref",
+    "convert-linalg-to-loops",
+    "scf-forall-to-parallel",
+    "convert-scf-to-openmp",
+    "fold-memref-alias-ops",
+    "expand-strided-metadata",
+    "finalize-memref-to-llvm",
+    "convert-scf-to-cf",
+    "lower-affine",
+
+    "convert-openmp-to-llvm",
+    "convert-vector-to-llvm",
+    "convert-math-to-llvm",
+    "convert-math-to-libm",
+    "finalize-memref-to-llvm",
+    "convert-func-to-llvm",
+    "convert-index-to-llvm",
+    "arith-unsigned-when-equivalent",
+    "convert-arith-to-llvm",
+    "convert-cf-to-llvm",
+
+    "reconcile-unrealized-casts",
+    "canonicalize",
+    "cse"
+]
 
 def execute_bufferized_code(code: str, pass_pipeline: Optional[list[str]] = None, timeout: int = CODE_EXECUTION_TIMEOUT) -> tuple[int, bool]:
     """Lowers and runs the given MLIR code using Python bindings, then returns the execution time and assertion
@@ -195,37 +226,14 @@ def execute_bufferized_code(code: str, pass_pipeline: Optional[list[str]] = None
         timeout (int): The maximum time to allow for code execution in seconds.
 
     Returns:
-        int: the execution time in milliseconds.
+        int: the execution time in nanoseconds.
         bool: the assertion result.
     """
 
     def execute_bind_call(execution_pass_pipeline: Optional[list[str]] = pass_pipeline):
         if not execution_pass_pipeline:
-            execution_pass_pipeline = """builtin.module(
-                canonicalize,
-                buffer-deallocation-pipeline,
-                convert-bufferization-to-memref,
-                convert-linalg-to-loops,
-                scf-forall-to-parallel,
-                convert-scf-to-openmp,
-                expand-strided-metadata,
-                finalize-memref-to-llvm,
-                convert-scf-to-cf,
-                lower-affine,
-
-                convert-openmp-to-llvm,
-                convert-vector-to-llvm,
-                convert-math-to-llvm,
-                convert-math-to-libm,
-                finalize-memref-to-llvm,
-                convert-func-to-llvm,
-                convert-index-to-llvm,
-                convert-arith-to-llvm,
-                convert-cf-to-llvm,
-
-                reconcile-unrealized-casts,
-                canonicalize,
-                cse
+            execution_pass_pipeline = f"""builtin.module(
+                {', '.join(PASS_PIPELINE)}
             )"""
         else:
             execution_pass_pipeline = "builtin.module(" + ", ".join(execution_pass_pipeline) + ")"

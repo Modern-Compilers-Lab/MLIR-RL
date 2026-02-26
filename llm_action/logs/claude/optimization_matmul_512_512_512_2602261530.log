@@ -1,0 +1,139 @@
+# MLIR Optimization Log — matmul_512_512_512
+# Started: 2026-02-26 15:30
+# Shape: (512x512) @ (512x512) -> 512x512, f64
+# Hardware: Intel Xeon E5-2680 v4 (Broadwell), AVX2 (4-wide f64), 28 cores, L1=32KB, L2=256KB, L3=35MB
+# Kernel: linalg.matmul with tag="operation_0"
+
+---
+
+## Lessons from previous runs:
+- Best for 256_512_1024: forall[4,8] + K[64] + [4,8,16] + vectorize + unroll_K×4 → 1.497ms
+- f64 on AVX2: 4-wide vectorization, target vector<4x8x16xf64>=512 elements
+- hoist_loop_invariant_subsets HURTS for large shapes
+- Default bufferization pipeline (innerparallel + full_unroll=true) is CRITICAL
+- K outer=64 is optimal; N_L2 tiling hurts (causes A double reads)
+- For square matrices: need to balance M/N parallelism
+
+---
+
+## Phase 0: Baseline & PyTorch Reference
+
+- MLIR baseline: 346.640704 ms
+- PyTorch baseline: 0.39196 ms
+- Gap: ~884x
+
+---
+
+## Phase 1: Schedule Search (forall + tile_K + tile_reg + vectorize + unroll)
+## Applying best schedule from matmul_256_512_1024 as starting point
+
+
+## Candidate 1: forall[4,8] + K[64] + [4,8,16] + vectorize + unroll_K×4
+- Time: 2.110 ms | Speedup vs baseline: 164x
+
+## Candidate 2: forall[8,4] + K[64] + [4,8,16] + vectorize + unroll_K×4
+- Time: 1.884 ms | Better than C1 (M-heavier)
+
+## Candidate 3: forall[4,4] + K[64] + [4,8,16] + vectorize + unroll_K×4
+- Time: 1.574 ms | *** BEST SO FAR ***
+- Key: Square 512×512 benefits from fewer, larger tiles (16 threads, M=128/N=128 per thread)
+- Per-thread working set: ~256KB ≈ L2 boundary → good cache behavior
+
+---
+
+## Phase 2: K tile size exploration (on top of forall[4,4])
+
+
+## Candidate 4: forall[4,4] + K[32] + [4,8,16] + vectorize + unroll_K×2
+- Time: 1.504 ms | *** NEW BEST ***
+- K=32 → A_tile=128×32=32KB, B_tile=32×128=32KB → BOTH FIT IN L1!
+
+## Candidate 5: forall[4,4] + K[128] + [4,8,16] + vectorize + unroll_K×8
+- Time: 2.393 ms | WORSE (code bloat + register pressure from 8× unroll)
+
+### K tile summary: K=32 optimal (L1-fitting tiles), K=64 close, K=128 much worse
+
+---
+
+## Phase 3: Inner tile dimension exploration (on top of [4,4] + K[32])
+
+
+## Candidate 6: forall[4,4] + K[32] + [8,8,8] + vectorize + unroll_K×4
+- vector<8x8x8xf64>=512 elements
+- Time: 1.347 ms | NEW BEST (squarer tiles better than [4,8,16])
+
+## Candidate 7: forall[4,4] + K[32] + [4,8,8] + vectorize + unroll_K×4
+- vector<4x8x8xf64>=256 elements
+- Time: 1.299 ms | *** BEST SO FAR ***
+- Key: Narrower M inner (4 vs 8) with K_inner=8 reduces register pressure
+
+### Inner tile summary: [4,8,8] optimal; squarer tiles better than [4,8,16]
+
+---
+
+## Phase 4: Further K outer refinement with [4,8,8] inner tile
+
+
+## Candidate 8: forall[4,4] + K[16] + [4,8,8] + vectorize + unroll_K×2
+- Time: 2.107 ms | WORSE (too many outer K iterations: 512/16=32, overhead dominates)
+
+### K tile summary with [4,8,8]: K=32 is optimal (A/B fit in L1)
+
+---
+
+## Phase 5: 3-level K tiling (L2=64 + L1=32) + [4,8,8]
+
+
+## Candidate 9: forall[4,4] + K_L2[64] + K_L1[32] + [4,8,8] + vectorize + unroll_K×4
+- Time: 1.601 ms | WORSE (3-level K overhead, no benefit over flat K=32)
+
+---
+
+## Phase 6: Alternative schedule exploration
+
+## Candidate 10: forall[4,4] + no K outer + [4,8,8] single-level + vectorize + unroll_K×8
+- Schedule: forall[4,4] → tile_for [4,8,8] → vectorize → unroll×8 (no separate K outer)
+- Time: 1.877 ms | WORSE
+- Root cause: no K outer → A slice is 128×512=4MB per thread, overwhelms L2 cache
+- Confirms: K outer=32 is essential for L1 locality
+
+## Candidate 11: forall[4,4] + K[32] + [4,8,8] + vectorize + unroll_K×4 + unroll_mloop×2
+- Added M inner loop unroll ×2 after K unroll (M loop: 128/4=32 iters → 16 after unroll)
+- Time: 1.510 ms | WORSE (M unroll increases code size / register pressure)
+
+## Candidate 12: forall[8,4] + K[32] + [4,8,8] + vectorize + unroll_K×4
+- Changed forall from [4,4] (16 threads, M=128/N=128) to [8,4] (32 threads, M=64/N=128)
+- A_tile=64×32=16KB (under L1), B_tile=32×128=32KB (at L1 boundary)
+- Time: 1.313 ms | Slightly WORSE than [4,4]
+- Confirms: [4,4] = 16 threads with square 128×128 per-thread tile is optimal for 512×512
+
+## Candidate 13: forall[4,4] + K[32] + [4,8,4] + vectorize + unroll_K×8
+- Smaller K_inner=4, vector<4x8x4xf64>=128 elements, 8 fully-unrolled copies
+- Time: 1.556 ms | WORSE (more unroll copies with smaller vectors = more overhead)
+
+### Phase 6 Summary
+- None of: no-K-outer, M-unroll, [8,4] threads, smaller K-inner improve over C7
+- Best remains C7: 1.299 ms
+
+---
+
+## FINAL SUMMARY
+
+- **BEST**: Candidate 7 — 1.299 ms
+- Schedule: forall[4,4] num_threads + tile_for [0,0,32] (K outer) + tile_for [4,8,8] (register) + vectorize [4,8,8] + unroll_K×4
+- Vectors: vector<4x8x8xf64> = 256 elements (well within 512-element limit)
+- Speedup vs baseline (346.641ms): **266.9x**
+- Speedup vs PyTorch (0.39196ms): **0.302x (3.3x slower)**
+
+### Key Learnings for matmul_512_512_512
+- Square matrix benefits from square thread distribution: [4,4] (16 threads) beats [4,8], [8,4] (32 threads)
+- K outer=32 is optimal: A_tile=128×32=32KB and B_tile=32×128=32KB BOTH fit in L1 (32KB each)
+- K outer=64 overflows L1; K outer=16 has too much loop overhead
+- Inner tile [4,8,8] (vector<4x8x8xf64>=256 elem) beats [8,8,8] (512 elem) and [4,8,16] (512 elem)
+  - Smaller vector reduces register pressure for square computation
+- K inner unroll×4 is full unroll (32/8=4 iterations) — optimal
+- Adding further unrolls (M×2, N×2, kloop1×2) all worse
+- 3-level K tiling same or worse than 2-level K=32
+- No-K-outer schedule is much worse (A tile spills from L2)
+- Default bufferization pipeline (innerparallel + full_unroll=true) is CRITICAL
+- Performance wall: 3.3× from PyTorch due to MKL micro-kernels + prefetching + Turbo boost

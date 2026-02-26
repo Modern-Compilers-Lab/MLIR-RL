@@ -6,6 +6,10 @@ class ClaudeModel(str, Enum):
     HAIKU = "claude-haiku-4-5" # fastest model with near-frontier intelligence (1$/M-input, 5$/M-output)
     SONNET = "claude-sonnet-4-5" # smart model for complex agents and coding (3$/M-input, 15$/M-output)
     OPUS = "claude-opus-4-5" # premium model combining maximum intelligence with practical performance (5$/M-input, 25$/M-output)
+    
+class GeminiModel(str, Enum):
+    GEMINI_2_5_FLASH = "gemini-2.5-flash" # Google's Gemini 2.5 Flash model, optimized for speed and efficiency.
+    GEMINI_2_5_PRO = "gemini-2.5-pro" # Google's Gemini 2.5 Pro model, designed for high performance and advanced capabilities.
 
 class KernelType(str, Enum):
     MIXED = "mixed"

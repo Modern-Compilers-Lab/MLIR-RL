@@ -1,0 +1,23 @@
+# MLIR Optimization Log — matmul_128_256_128
+# Date: 2026-02-26 01:04
+# Shape: M=128, K=256, N=128, dtype=f64
+# Target: Intel Xeon E5-2680 v4 (Broadwell), AVX2 (4xf64 = 256-bit)
+# Objective: Maximum speedup over PyTorch baseline
+
+## Hardware Notes
+- AVX2: 4-wide f64 vectors
+- L1: 32KB/core → ~16x16xf64 tiles (~2KB)
+- L2: 256KB/core → ~128x128xf64 tiles (~128KB)
+- L3: 35MB shared
+- 28 cores available (2 NUMA nodes, 14 cores each)
+
+## Strategy Plan
+1. Baseline (no transform)
+2. PyTorch baseline for speedup reference
+3. Schedule A: Simple tiling (32,32,32) + vectorize
+4. Schedule B: Parallelization + tiling + vectorize
+5. Schedule C: Hierarchical tiling (L2→L1) + vectorize
+6. Schedule D: Forall parallelization + tiling + vectorize
+
+---
+

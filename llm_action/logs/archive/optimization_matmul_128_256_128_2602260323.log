@@ -1,0 +1,34 @@
+# Optimization Log: matmul_128_256_128
+# Shape: 128x256 @ 256x128 → 128x128 (f64)
+# Started: 2602260323
+
+## Shape Analysis
+- M=128, K=256, N=128
+- f64: 4 doubles per AVX2 256-bit register
+- Prior memory: known winning schedule for this exact shape
+
+## Steps
+
+### Step 0 — Baseline
+- Baseline: 7.4974 ms (success=true)
+- PyTorch: 0.035037 ms
+
+### Candidate 1: forall[8,8] + K=32 + reg[4,4,4] + vec[4,4,4]
+- Time: 0.049053 ms | Speedup: 152.8x | vs PyTorch: 0.71x
+
+### Candidate 2: forall[8,8] + K=32 + reg[4,4,8] + vec[4,4,8]
+- Time: 0.050677 ms | Speedup: ~148x | vs PyTorch: 0.69x — WORSE
+
+### Candidate 3: forall[8,8] + K=32 + reg[4,4,4] + vec[4,4,4] + unroll k_loop(factor=4)
+- Time: 0.047929 ms | Speedup: 156.4x | vs PyTorch: 0.73x — BEST ✓
+
+### Candidate 4: forall[8,8] + K=32 + reg[4,8,4] + vec[4,8,4]
+- Time: 0.050214 ms — WORSE
+
+### Candidate 5: forall[8,8] + K=32 + reg[4,4,4] + vec + full-unroll k2_loop(factor=8)
+- Time: 0.048649 ms — slightly worse than C3
+
+## FINAL BEST
+- Schedule: forall[8,8] + K=32 + reg[4,4,4] + vec[4,4,4] + unroll k_loop factor=4
+- Time: 0.047929 ms | Speedup: 156.4x over baseline | vs PyTorch: 0.73x (PyTorch=0.035037ms)
+- Session ended before further exploration
