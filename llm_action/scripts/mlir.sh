@@ -1,7 +1,6 @@
 #!/bin/bash
 
 # Define the resource requirements here using #SBATCH
-# Mirrors torch.sh exactly for fair benchmarking.
 
 #SBATCH -J mlir_exec
 #SBATCH -p compute
@@ -21,10 +20,11 @@ module load miniconda-nobashrc 2> /dev/null
 eval "$(conda shell.bash hook)"
 
 # Activate any environments if required
-conda activate llvm-build
+# conda activate llvm-build
+conda activate mlir
 
 # Source MLIR-specific environment (PYTHONPATH, MLIR_SHARED_LIBS, etc.)
-source scripts/setup_env.sh
+# source scripts/setup_env.sh
 
 # Thread-affinity settings (critical for SLURM performance)
 # Without these, OpenMP/MKL threads migrate across NUMA domains
@@ -32,6 +32,10 @@ source scripts/setup_env.sh
 export OMP_NUM_THREADS=$(nproc)
 export OMP_PROC_BIND=close
 export OMP_PLACES=cores
+export OMP_SCHEDULE=static
+export OMP_DYNAMIC=FALSE
+export OMP_WAIT_POLICY=passive
+export KMP_BLOCKTIME=0
 
 # Execute the code
 # Usage: sbatch llm_action/scripts/mlir.sh <code_file> [--transform-file <path>] [--pass-pipeline <pipeline>]

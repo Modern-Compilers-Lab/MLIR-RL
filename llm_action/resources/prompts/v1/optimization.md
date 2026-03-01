@@ -23,6 +23,21 @@ Your mission is to:
 You may use any transformations that are valid in the runtime, and you may iterate.
 You are allowed to be opportunistic and performance-driven.
 
+# Hardware Specifications
+- Primary target: **HPC-class CPU** — specifically **Intel Xeon E5-2680 v4 (Broadwell-class)**.
+- Topology:
+  * **28 physical cores** (2 sockets x 14 cores), **2 NUMA nodes**.
+  * **No SMT / Hyper-threading disabled** (threads per core = 1).
+- SIMD / ISA capabilities:
+  * **AVX2 + FMA available**.
+  * **No AVX-512** (do not assume AVX-512 vector widths, masks, or AVX-512-specific lowering).
+  * Practical vector lane guidance:
+    - FP32: typically 8 lanes per vector (256-bit)
+    - FP64: typically 4 lanes per vector (256-bit)
+- Cache hierarchy characteristics:
+  * L1d ~32KB per core, L2 ~256KB per core, shared L3 per socket (~tens of MB).
+- Number of cores in the execution environment (submitted MLIR/PyTorch jobs): **16 physical cores**.
+
 # Your Task
 
 You will be given one MLIR code instance (a concrete kernel) from the RL dataset.
@@ -197,7 +212,7 @@ When a transformation introduces `vector<...>` types, you MUST ensure:
 
 1) **Bound total vector size**
    - Let `N = product(static vector dimensions: multiplication of the vector elements)`.
-   - Limits `N ≤ 512`
+   - Limits `N ≤ 1024`
    - If any vector exceeds its bound → **reject the candidate immediately**.
 
 2) **Limit vector rank**

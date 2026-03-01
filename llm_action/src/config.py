@@ -8,8 +8,12 @@ GEMINI_LLM_MODEL = GeminiModel.GEMINI_2_5_FLASH
 GEMINI_LLM_TEMPERATURE = 1.0
 
 # Execution
+N_CORES = 16
 CODE_TRANSFORM_TIMEOUT = 10  # seconds
 CODE_EXECUTION_TIMEOUT = 10  # seconds
+
+# Transformation
+VECTORIZATION_SIZE_LIMIT = 1024  # Max vectorization size to consider for transformations
 
 # History
 NUM_HISTORY_RUNS = 10

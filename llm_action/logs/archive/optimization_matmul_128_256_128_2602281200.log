@@ -1,0 +1,106 @@
+# MLIR Optimization Log — matmul_128_256_128
+# Started: 2026-02-28 12:00
+# Shape: (128x256) @ (256x128) -> 128x128, f64
+# Hardware: Intel Xeon E5-2680 v4 (Broadwell), AVX2 (4-wide f64), 28 cores, L1=32KB, L2=256KB, L3=35MB
+
+---
+
+## Phase 0: Baseline & PyTorch Reference
+
+- MLIR baseline: 6.307 ms
+- PyTorch baseline: 0.0355 ms
+- Gap: ~178x
+
+---
+
+## Candidate 1: forall[16,1] + K[64] + [4,8,4] + hoist + vectorize (prev best schedule)
+
+- Transform: forall tile_sizes [8,0] (16 threads), K=64, inner=[4,8,4], hoist C, vectorize
+- Vectors: vector<4x8x4xf64> = 128 elements — VALID
+- Execution: 0.0578 ms (SUCCESS)
+- Speedup vs baseline: 109x
+- Speedup vs PyTorch: 0.614x (1.63x slower)
+
+## Candidate 2: forall[16,1] + K[64] + [4,8,8] + vectorize + unroll_K×8
+
+- Transform: forall tile_sizes [8,0], K=64, inner=[4,8,8], vectorize, unroll K_inner ×8 (full)
+- Vectors: vector<4x8x8xf64> = 256 elements — VALID
+- Execution: 0.0491 ms (SUCCESS)
+- Speedup vs baseline: 128x
+- Speedup vs PyTorch: 0.723x (1.38x slower)
+- *** BEST SO FAR: 0.0491 ms ***
+
+## Candidate 3: forall[16,1] + K[32] + [4,8,8] + vectorize + unroll_K×4
+
+- Transform: forall tile_sizes [8,0], K=32 (L1-friendly), inner=[4,8,8], vectorize, unroll×4
+- Execution: 0.0547 ms — WORSE than K=64
+
+## Candidate 4: forall[16,1] + K[64] + [4,8,16] + vectorize + unroll_K×4
+
+- Transform: forall tile_sizes [8,0], K=64, inner=[4,8,16], vectorize, unroll K_inner ×4 (full)
+- Vectors: vector<4x8x16xf64> = 512 elements — AT LIMIT, VALID
+- Execution: 0.0400 ms (SUCCESS)
+- Speedup vs baseline: 158x
+- Speedup vs PyTorch: 0.888x (1.13x slower)
+- *** NEW BEST: 0.0400 ms ***
+
+## Candidate 5: forall[8,4] 2D + K[64] + [4,8,16] + vectorize + unroll_K×4
+
+- 2D parallelism: 32 threads (M=16, N=32 per thread)
+- Execution: 0.0463 ms — WORSE than C4
+
+## Candidate 6: forall[32,1] M-only + K[64] + [4,8,16] + vectorize + unroll_K×4
+
+- 32 threads, M=4 per thread
+- Execution: 0.0489 ms — WORSE (too fine-grained)
+
+## Candidate 7: forall[16,1] + K[128] + [4,8,16] + vectorize + unroll_K×8
+
+- K=128, 2 outer iterations, 8-way K unroll
+- Execution: 0.0467 ms — WORSE (K=128 B_tile spills L2)
+
+## Candidate 8: forall[16,1] + K[64] + [8,4,16] + vectorize + unroll_K×4
+
+- Wider M inner, narrower N: vector<8x4x16xf64>=512
+- Execution: 0.0489 ms — WORSE ([4,8,16] is optimal balance)
+
+## Candidate 9: forall[16,1] + K[64] + [4,8,16] + hoist + vectorize (no unroll)
+
+- Hoist C tile from K inner (4 iterations), vectorize [4,8,16]
+- Execution: 0.0551 ms — WORSE (hoist adds register pressure with 4 K iters, unroll is better)
+
+---
+
+## FINAL SUMMARY
+
+- **BEST**: Candidate 4 — 0.0400 ms
+- Schedule: forall tile_sizes [8,0] (16 threads) + tile_for [0,0,64] (K outer) + tile_for [4,8,16] (register) + vectorize [4,8,16] + unroll K_inner ×4
+- Vectors: vector<4x8x16xf64> = 512 elements (at limit)
+- Speedup vs baseline (6.307ms): **157.8x**
+- Speedup vs PyTorch (0.0355ms): **0.888x (1.13x slower)**
+
+### Best Transform Schedule
+```
+module attributes {transform.with_named_sequence} {
+  transform.named_sequence @__transform_main(%arg0: !transform.any_op) {
+    %matmul = transform.structured.match attributes{tag = "operation_0"} in %arg0 : (!transform.any_op) -> !transform.any_op
+    %tiled_forall, %forall_op = transform.structured.tile_using_forall %matmul tile_sizes [8, 0]
+      : (!transform.any_op) -> (!transform.any_op, !transform.any_op)
+    %tiled_k, %kloop = transform.structured.tile_using_for %tiled_forall tile_sizes [0, 0, 64]
+      : (!transform.any_op) -> (!transform.any_op, !transform.any_op)
+    %tiled_reg, %mloop, %nloop, %kloop_inner = transform.structured.tile_using_for %tiled_k tile_sizes [4, 8, 16]
+      : (!transform.any_op) -> (!transform.any_op, !transform.any_op, !transform.any_op, !transform.any_op)
+    transform.structured.vectorize %tiled_reg vector_sizes [4, 8, 16] : !transform.any_op
+    transform.loop.unroll %kloop_inner {factor = 4} : !transform.any_op
+    transform.yield
+  }
+}
+```
+
+### Key Learnings (vs previous run on same shape)
+- [4,8,16] + unroll×4 beats [4,8,4] + hoist: 0.040 vs 0.051 ms (22% improvement)
+- Larger K inner (16) with full unroll produces more compute per FMA group
+- 16 threads (M-only) is optimal for M=128 (8 rows per thread)
+- K outer=64 is optimal; K=32 too many iterations, K=128 spills L2
+- Unroll is better than hoist for this shape with [4,8,16] vectors
+- 2D parallelism [8,4] worse — N-partitioning fragments B matrix
