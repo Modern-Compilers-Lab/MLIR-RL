@@ -20,7 +20,8 @@ module load miniconda-nobashrc 2> /dev/null
 eval "$(conda shell.bash hook)"
 
 # Activate any environments if required
-conda activate llvm-build
+# conda activate llvm-build
+conda activate mlir
 
 # Thread-affinity settings (critical for SLURM performance)
 # Without these, OpenMP/MKL threads migrate across NUMA domains
@@ -28,6 +29,10 @@ conda activate llvm-build
 export OMP_NUM_THREADS=$(nproc)
 export OMP_PROC_BIND=close
 export OMP_PLACES=cores
+export OMP_SCHEDULE=static
+export OMP_DYNAMIC=FALSE
+export OMP_WAIT_POLICY=passive
+export KMP_BLOCKTIME=0
 
 # Execute the code
 # Usage: sbatch llm_action/scripts/torch.sh <M> <K> <N> [--dtype float64] [--fill-value 0.0] [--warmup-iters 5] [--bench-iters 5]

@@ -22,7 +22,8 @@ module load miniconda-nobashrc 2> /dev/null
 eval "$(conda shell.bash hook)"
 
 # Activate any environments if required
-conda activate llvm-build
+# conda activate llvm-build
+conda activate mlir
 
 # Parse arguments passed after sbatch: sbatch claude.sh --kernel-type matmul --kernel-number 2
 KERNEL_ARGS="$@"
@@ -31,12 +32,12 @@ KERNEL_ARGS="$@"
 claude /mcp
 
 # Execute claude for once
-claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_optimization.py $KERNEL_ARGS)"
+# claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_optimization.py $KERNEL_ARGS)"
 
 # Execute claude for multiple iterations
-# for ((i = 0 ; i < 3 ; i++ )); do
-#     claude --continue --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_optimization.py $KERNEL_ARGS)";
-# done
+for ((i = 0 ; i < 100 ; i++ )); do
+    claude --continue --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_optimization.py $KERNEL_ARGS)";
+done
 
 # Example usage:
 # sbatch llm_action/scripts/claude.sh --kernel-type matmul --kernel-number 1

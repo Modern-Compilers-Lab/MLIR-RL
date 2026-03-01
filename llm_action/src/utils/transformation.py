@@ -202,7 +202,8 @@ PASS_PIPELINE = [
     "lower-affine",
 
     "convert-openmp-to-llvm",
-    "convert-vector-to-llvm",
+    "convert-ub-to-llvm",
+    "convert-vector-to-llvm{enable-x86vector}",
     "convert-math-to-llvm",
     "convert-math-to-libm",
     "finalize-memref-to-llvm",
