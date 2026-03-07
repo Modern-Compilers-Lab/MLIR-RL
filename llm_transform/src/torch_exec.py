@@ -9,22 +9,47 @@ import time
 PARENT_DIR = Path(__file__).parents[1]
 
 
-def op(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+def matmul_op(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     return torch.mm(a, b)
+
+
+def matmul_inputs(size: dict[str, int]) -> list[torch.Tensor]:
+    return [
+        torch.full((size['M'], size['K']), 2, dtype=torch.float64),
+        torch.full((size['K'], size['N']), 2, dtype=torch.float64)
+    ]
+
+
+def conv_2d_op(input: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
+    return torch.nn.functional.conv2d(input, weight)
+
+
+def conv_2d_inputs(size: dict[str, int]) -> list[torch.Tensor]:
+    return [
+        torch.full((size['N'], size['C'], size['H'], size['W']), 2, dtype=torch.float64),
+        torch.full((size['F'], size['C'], size['KH'], size['KW']), 2, dtype=torch.float64)
+    ]
 
 
 def main():
     parser = argparse.ArgumentParser(description='Run PyTorch matmul with specified id.')
-    parser.add_argument('--id', type=int, required=True, help='The unique identifier for the MLIR code to run.')
-    args = parser.parse_known_args()[0]
+    parser.add_argument('id', type=str, help='The unique identifier for the MLIR code to transform. It takes the form "{name}_{instance}", where "name" is the name of the benchmark (e.g. "matmul") and "instance" is the specific instance (e.g. "0", "1", etc.).')
+    args = parser.parse_args()
+    name, instance = args.id.rsplit("_", 1)
 
-    with open(PARENT_DIR / "data" / "matmul" / "sizes.json", 'r') as f:
+    with open(PARENT_DIR / "data" / name / "sizes.json", 'r') as f:
         sizes = json.load(f)
-    matmul_size = sizes[str(args.id)]
-    inputs = [
-        torch.full((matmul_size['M'], matmul_size['K']), 2, dtype=torch.float64),
-        torch.full((matmul_size['K'], matmul_size['N']), 2, dtype=torch.float64)
-    ]
+    size = sizes[instance]
+
+    match name:
+        case "matmul":
+            op = matmul_op
+            inputs = matmul_inputs(size)
+        case "conv_2d":
+            op = conv_2d_op
+            inputs = conv_2d_inputs(size)
+        case _:
+            raise ValueError(f"Unsupported benchmark name: {name}")
 
     torch.set_grad_enabled(False)
     nthreads = int(os.popen('nproc').read().strip())

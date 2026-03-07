@@ -3,6 +3,7 @@ import ctypes
 import argparse
 from statistics import median
 import numpy as np
+import torch
 
 from mlir.ir import Context, Module, MemRefType, IntegerType, F64Type, F32Type
 from mlir.runtime import get_ranked_memref_descriptor
@@ -13,8 +14,9 @@ from transformation import compile_aot, transform_module, bufferize_module, appl
 PARENT_DIR = Path(__file__).parents[2]
 
 
-def transform_and_run(id: int, transform_schedule: str, mlir_passes: str, llvm_passes, llvm_flags: str, llc_flags: str, bufferize_first: bool):
-    with open(PARENT_DIR / 'data' / 'matmul' / f'{id}.mlir', 'r') as f:
+def transform_and_run(id: str, transform_schedule: str, mlir_passes: str, llvm_passes, llvm_flags: str, llc_flags: str, bufferize_first: bool):
+    name, instance = id.rsplit("_", 1)
+    with open(PARENT_DIR / 'data' / name / f'{instance}.mlir', 'r') as f:
         code = f.read()
 
     with Context() as ctx:
@@ -30,7 +32,16 @@ def transform_and_run(id: int, transform_schedule: str, mlir_passes: str, llvm_p
         bufferize_module(module)
 
     inputs, outputs = create_params(module)
-    expected = np.matmul(inputs[0], inputs[1])
+    match name:
+        case "matmul":
+            expected = np.matmul(inputs[0], inputs[1])
+        case "conv_2d":
+            expected = torch.nn.functional.conv2d(
+                torch.from_numpy(inputs[0]),
+                torch.from_numpy(inputs[1])
+            ).numpy()
+        case _:
+            raise ValueError(f"Unsupported benchmark name: {name}")
     args_list = convert_to_args(inputs, outputs)
 
     apply_pipeline_to_module(module, mlir_passes)
@@ -102,7 +113,7 @@ def create_params(module: Module):
     return inputs, outputs
 
 
-def convert_to_args(inputs: list[np.ndarray], outputs: list[np.ndarray]) -> list[ctypes._Pointer[ctypes.Structure]]:
+def convert_to_args(inputs: list[np.ndarray], outputs: list[np.ndarray]) -> list:
     """Converts input arrays and output structure into ctypes arguments for MLIR execution.
 
     Prepares arguments in the format required by the MLIR execution engine. Each argument
@@ -126,9 +137,9 @@ def convert_to_args(inputs: list[np.ndarray], outputs: list[np.ndarray]) -> list
 
 def main():
     parser = argparse.ArgumentParser(description='Transform and run MLIR code with specified schedules and passes.')
-    parser.add_argument('--id', type=int, required=True, help='The unique identifier for the MLIR code to transform.')
-    parser.add_argument(['--transform_schedule_file', '-t'], type=str, required=True, help='The file containing the transformation schedule to apply.')
-    parser.add_argument(['--mlir_passes_file', '-p'], type=str, required=True, help='The file containing the MLIR passes to apply during lowering.')
+    parser.add_argument('-i', '--id', type=str, required=True, help='The unique identifier for the MLIR code to transform. It takes the form "{name}_{instance}", where "name" is the name of the benchmark (e.g. "matmul") and "instance" is the specific instance (e.g. "0", "1", etc.).')
+    parser.add_argument('-t', '--transform_schedule_file', type=str, required=True, help='The file containing the transformation schedule to apply.')
+    parser.add_argument('-p', '--mlir_passes_file', type=str, required=True, help='The file containing the MLIR passes to apply during lowering.')
     parser.add_argument('--llvm_passes', type=str, default="default<O3>", help='LLVM opt pass pipeline to run before JIT (e.g. "licm,loop-unroll").')
     parser.add_argument('--llvm_flags', type=str, default="", help='Comma-separated LLVM CL flags (e.g. "enable-loop-versioning-licm,licm-mssa-max-acc-promotion=1000").')
     parser.add_argument('--llc_flags', type=str, default="", help='Comma-separated flags for llc codegen (e.g. "align-loops=32,enable-split-loopiv-heuristic").')
@@ -143,3 +154,7 @@ def main():
         mlir_passes = f.read()
 
     print(transform_and_run(args.id, transform_schedule, mlir_passes, args.llvm_passes, args.llvm_flags, args.llc_flags, not args.no_bufferize))
+
+
+if __name__ == "__main__":
+    main()

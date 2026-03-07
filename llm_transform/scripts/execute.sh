@@ -2,7 +2,7 @@
 
 # Define the resource requirements here using #SBATCH
 
-#SBATCH -J eval_matmul
+#SBATCH -J execute
 #SBATCH -p compute
 #SBATCH --reservation=c2
 #SBATCH --exclusive
@@ -11,8 +11,8 @@
 #SBATCH -c 28
 #SBATCH --mem=100G
 #SBATCH -t 1-00
-#SBATCH -o logs/%j.out
-#SBATCH -e logs/%j.err
+#SBATCH -o logs/jobs/%x_%j.out
+#SBATCH -e logs/jobs/%x_%j.err
 
 # Resource requiremenmt commands end here
 
@@ -34,12 +34,28 @@ export KMP_BLOCKTIME=infinite
 
 # Execute the code
 set -eo pipefail
+FULL_SCRIPT_PATH=$(scontrol show job "$SLURM_JOB_ID" | awk -F= '/Command=/{print $2}' | cut -d' ' -f1)
+cd "$(dirname "$(dirname "$(realpath "$FULL_SCRIPT_PATH")")")"
 
-cd "$(dirname "$(dirname "$(realpath "$0")")")"
+orig_args=("$@")
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        -i|--id) CODE_ID="$2";;
+        --id=*) CODE_ID="${1#--id=}";;
+    esac
+    shift
+done
+if [ -z "$CODE_ID" ]; then
+    echo "Error: Missing required argument -i or --id" >&2
+    exit 1
+fi
+set -- "${orig_args[@]}"
+echo "Evaluating code $CODE_ID:"
 
 echo "Base:"
-# TIME_BASE=$(python src/utils/execution.py -t resources/base_schedule.mlir -p resources/base_passes.txt)
+# TIME_BASE=$(python src/utils/execution.py -i $CODE_ID -t resources/base_schedule.mlir -p resources/base_passes.txt)
 # Return saved values since the base doesn't change
+MATMUL_TYPE="${CODE_ID##*_}"
 case $MATMUL_TYPE in
   1) TIME_BASE=17707650426 ;;
   2) TIME_BASE=346113949 ;;
@@ -72,7 +88,7 @@ echo "Execution time (ns): $TIME_OPT"
 
 echo "PyTorch:"
 conda activate torch-cpu
-TIME_TORCH=$(python torch_matmul.py $@) 2>"$ERR_FILE"
+TIME_TORCH=$(python src/torch_exec.py $CODE_ID) 2>"$ERR_FILE"
 EXIT_CODE=$?
 if [ $EXIT_CODE -ne 0 ]; then
   echo "Error: PyTorch execution failed (exit code $EXIT_CODE):" >&2
@@ -82,10 +98,22 @@ if [ $EXIT_CODE -ne 0 ]; then
 fi
 re='^[0-9]+$'
 if ! [[ $TIME_TORCH =~ $re ]]; then
-   echo "Error: TIME_TORCH is not a number" >&2; exit 1
+  echo "Error: TIME_TORCH is not a number" >&2; exit 1
 fi
-# TIME_TORCH=19321849
 echo "Execution time (ns): $TIME_TORCH"
 echo "--------------------------"
 echo "Speedup over Base: $(echo "scale=4; $TIME_BASE / $TIME_OPT" | bc)x"
-echo "Slowdown compared to PyTorch: $(echo "scale=4; $TIME_OPT / $TIME_TORCH" | bc)x"
+SLOWDOWN=$(echo "scale=4; $TIME_OPT / $TIME_TORCH" | bc)
+echo "Slowdown compared to PyTorch: ${SLOWDOWN}x"
+
+# Log performance metrics to the experiment directory if it exists
+STATS_DIR="logs/stats"
+LAST_ID=$(ls -1 "$STATS_DIR" 2>/dev/null | sort -n | tail -1)
+if [ -z "$LAST_ID" ]; then
+  echo "Error: Couldn't the current experiment directory in $STATS_DIR" >&2
+  exit 1
+fi
+EXPERIMENT_DIR="$STATS_DIR/$LAST_ID"
+if [ -n "$EXPERIMENT_DIR" ]; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') | id=$CODE_ID | slowdown=${SLOWDOWN}x" >> "$EXPERIMENT_DIR/performance.log"
+fi
