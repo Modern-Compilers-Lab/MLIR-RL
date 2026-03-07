@@ -228,8 +228,8 @@ def lower_schedule(
 ) -> dict[str, str]:
     """
     Apply the given transformation schedule to the MLIR code associated with the given ID. Lower using
-    the specified MLIR and LLVM passes. Compile to assembly. Return the transformed MLIR ("mlir_transformed"),
-    the resulting LLVM ("llvm"), the optimized LLVM ("llvm_opt"), and the generated assembly ("asm").
+    the specified MLIR and LLVM passes. Compile to assembly. Save intermediate outputs to out/<id>/ and
+    return file paths for the transformed MLIR, LLVM IR, optimized LLVM IR, and assembly.
 
     Args:
         id (str): The unique identifier for the MLIR code to transform. It takes the form "{name}_{instance}", where "name" is the name of the benchmark (e.g. "matmul") and "instance" is the specific instance (e.g. "0", "1", etc.).
@@ -241,11 +241,11 @@ def lower_schedule(
         bufferize_first (bool, optional): Whether to apply bufferization before applying the transformation schedule. Defaults to True.
 
     Returns:
-        dict: a dictionary containing:
-            - "mlir_transformed": the transformed MLIR code after applying the transformation schedule
-            - "llvm": the generated LLVM IR after lowering the transformed MLIR
-            - "llvm_opt": the generated LLVM IR after applying llvm opt with the specified passes and flags
-            - "asm": the generated assembly code after compiling with llc and the specified flags
+        dict: a dictionary containing file paths to the generated outputs:
+            - "mlir_transformed": path to the transformed MLIR file after applying the transformation schedule
+            - "llvm": path to the generated LLVM IR file after lowering the transformed MLIR
+            - "llvm_opt": path to the generated LLVM IR file after applying llvm opt with the specified passes and flags
+            - "asm": path to the generated assembly file after compiling with llc and the specified flags
     """
 
     return transform_and_lower(id, transform_schedule, mlir_passes, llvm_passes, llvm_flags, llc_flags, bufferize_first)

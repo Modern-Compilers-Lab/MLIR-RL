@@ -15,6 +15,9 @@ PARENT_DIR = Path(__file__).parents[2]
 def transform_and_lower(id: str, transform_schedule: str, mlir_passes: str, llvm_passes, llvm_flags: str, llc_flags: str, bufferize_first: bool):
     results: dict[str, str] = {}
 
+    out_dir = PARENT_DIR / 'out' / id
+    out_dir.mkdir(parents=True, exist_ok=True)
+
     name, instance = id.rsplit("_", 1)
     mlir_path = PARENT_DIR / 'data' / name / f'{instance}.mlir'
     if not mlir_path.exists():
@@ -30,14 +33,16 @@ def transform_and_lower(id: str, transform_schedule: str, mlir_passes: str, llvm
         bufferize_module(module)
 
     transform_module(module, transform_schedule)
-    results['mlir_transformed'] = str(module)
+    mlir_transformed_path = out_dir / 'transformed.mlir'
+    mlir_transformed_path.write_text(str(module))
+    results['mlir_transformed'] = str(mlir_transformed_path)
 
     if not bufferize_first:
         bufferize_module(module)
 
     apply_pipeline_to_module(module, mlir_passes)
 
-    with compile_aot(str(module), llvm_passes, llvm_flags, llc_flags, intermediate_outs=results):
+    with compile_aot(str(module), llvm_passes, llvm_flags, llc_flags, out_dir=out_dir, intermediate_outs=results):
         pass
 
     return results
@@ -69,7 +74,7 @@ def transform_module(module: Module, transform_schedule: str):
 
 
 @contextlib.contextmanager
-def compile_aot(mlir_code: str, llvm_passes: str, llvm_flags: str, llc_flags: str, intermediate_outs: dict | None = None):
+def compile_aot(mlir_code: str, llvm_passes: str, llvm_flags: str, llc_flags: str, out_dir: Path | None = None, intermediate_outs: dict | None = None):
     """Compile MLIR to shared lib via opt+llc and run via ctypes (no JIT)."""
     if 'CONDA_PREFIX' not in os.environ:
         raise EnvironmentError("No Conda environment detected. Please activate a Conda environment before running this function.")
@@ -88,8 +93,10 @@ def compile_aot(mlir_code: str, llvm_passes: str, llvm_flags: str, llc_flags: st
         )
         if result_llvm.returncode != 0:
             raise RuntimeError(f"mlir-translate failed:\n{result_llvm.stderr}")
-        if intermediate_outs is not None:
-            intermediate_outs['llvm'] = result_llvm.stdout
+        if intermediate_outs is not None and out_dir is not None:
+            llvm_path = out_dir / 'llvm.ll'
+            llvm_path.write_text(result_llvm.stdout)
+            intermediate_outs['llvm'] = str(llvm_path)
 
         # Optimize with opt (llvm_flags go to opt as CL options)
         opt_cmd = ["opt", "--mcpu=native", f"--passes={llvm_passes}", "-S"]
@@ -104,8 +111,10 @@ def compile_aot(mlir_code: str, llvm_passes: str, llvm_flags: str, llc_flags: st
         )
         if result_opt.returncode != 0:
             raise RuntimeError(f"opt failed:\n{result_opt.stderr}")
-        if intermediate_outs is not None:
-            intermediate_outs['llvm_opt'] = result_opt.stdout
+        if intermediate_outs is not None and out_dir is not None:
+            llvm_opt_path = out_dir / 'llvm_opt.ll'
+            llvm_opt_path.write_text(result_opt.stdout)
+            intermediate_outs['llvm_opt'] = str(llvm_opt_path)
 
         # Compile to object file (llc gets codegen-specific flags)
         llc_cmd = ["llc", "-relocation-model=pic", "--mcpu=native", "-O3"]
@@ -128,8 +137,10 @@ def compile_aot(mlir_code: str, llvm_passes: str, llvm_flags: str, llc_flags: st
         )
         if result_asm.returncode != 0:
             raise RuntimeError(f"llc (asm) failed:\n{result_asm.stderr}")
-        if intermediate_outs is not None:
-            intermediate_outs['asm'] = result_asm.stdout
+        if intermediate_outs is not None and out_dir is not None:
+            asm_path = out_dir / 'asm.s'
+            asm_path.write_text(result_asm.stdout)
+            intermediate_outs['asm'] = str(asm_path)
 
         # Link to shared library
         result_link = subprocess.run([
