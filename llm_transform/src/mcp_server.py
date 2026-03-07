@@ -1,3 +1,5 @@
+import json
+from datetime import datetime
 from pathlib import Path
 import re
 import subprocess
@@ -9,8 +11,39 @@ from fastmcp import FastMCP
 from utils.transformation import transform_and_lower
 
 PARENT_DIR = Path(__file__).parents[1]
+_LOG_FILE = PARENT_DIR / "logs" / "claude_optimization.log"
+_BEST_DIR = PARENT_DIR / "logs" / "best"
+_BEST_STATE_FILE = _BEST_DIR / "state.json"
 
 mcp = FastMCP("mlir-transform")
+
+
+def _load_best_state() -> dict[str, float]:
+    if _BEST_STATE_FILE.exists():
+        with open(_BEST_STATE_FILE, 'r') as f:
+            return json.load(f)
+    return {}
+
+
+def _save_best_state(best_state: dict[str, float]):
+    _BEST_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(_BEST_STATE_FILE, 'w') as f:
+        json.dump(best_state, f, indent=2)
+
+
+def _save_best_config(id: str, transform_schedule: str, mlir_passes: str,
+                      llvm_passes: str, llvm_flags: str, llc_flags: str):
+    name, instance = id.rsplit("_", 1)
+    config_dir = _BEST_DIR / name / instance
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "schedule.mlir").write_text(transform_schedule)
+    (config_dir / "passes.txt").write_text(mlir_passes)
+    lines = [f"llvm_passes={llvm_passes}"]
+    if llvm_flags:
+        lines.append(f"llvm_flags={llvm_flags}")
+    if llc_flags:
+        lines.append(f"llc_flags={llc_flags}")
+    (config_dir / "llvm-llc-passes-flags.txt").write_text("\n".join(lines) + "\n")
 
 
 @mcp.tool()
@@ -113,6 +146,81 @@ def run_schedule(
 
 
 @mcp.tool()
+def log_iteration(
+    id: str,
+    iteration: int,
+    slowdown: float = -1.0,
+    summary: str = "",
+    transform_schedule: str = "",
+    mlir_passes: str = "",
+    llvm_passes: str = "default<O3>",
+    llvm_flags: str = "",
+    llc_flags: str = "",
+    error: str = "",
+) -> str:
+    """
+    Log an optimization iteration result. Call this after every run_schedule attempt.
+
+    Appends the result to logs/claude_optimization.log in real time.
+    If the slowdown is a new best for the benchmark, automatically saves the full
+    configuration to logs/best/<name>/<instance>/.
+
+    Args:
+        id: Benchmark ID (e.g. "matmul_1").
+        iteration: Iteration number for this benchmark.
+        slowdown: Measured slowdown vs PyTorch. Use -1 (default) if the run failed.
+        summary: Brief description of what was tried in this iteration.
+        transform_schedule: The transform schedule used.
+        mlir_passes: The MLIR passes used.
+        llvm_passes: The LLVM passes used.
+        llvm_flags: LLVM flags used.
+        llc_flags: LLC flags used.
+        error: Error message if the run failed.
+
+    Returns:
+        Status message indicating whether this was a new best result.
+    """
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    _LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+    if error or slowdown < 0:
+        entry = f"\n[{timestamp}] {id} | iter={iteration} | ERROR | {summary}\n"
+        if error:
+            entry += f"  Error: {error}\n"
+        with open(_LOG_FILE, 'a') as f:
+            f.write(entry)
+        return "Logged (error, no slowdown recorded)"
+
+    slowdown_str = f"{slowdown:.4f}x"
+    entry = f"\n[{timestamp}] {id} | iter={iteration} | {slowdown_str} | {summary}\n"
+
+    best_state = _load_best_state()
+    is_new_best = id not in best_state or slowdown < best_state[id]
+    if is_new_best:
+        old_best = best_state.get(id)
+        best_state[id] = slowdown
+        _save_best_state(best_state)
+        _save_best_config(id, transform_schedule, mlir_passes, llvm_passes, llvm_flags, llc_flags)
+        if old_best is not None:
+            entry += f"  *** NEW BEST for {id} (previous: {old_best:.4f}x) ***\n"
+        else:
+            entry += f"  *** FIRST RESULT for {id} ***\n"
+
+    with open(_LOG_FILE, 'a') as f:
+        f.write(entry)
+
+    if is_new_best:
+        if old_best is not None:
+            msg = f"New best for {id}: {slowdown_str} (previous: {old_best:.4f}x)"
+        else:
+            msg = f"First result for {id}: {slowdown_str}"
+        msg += " — config saved to logs/best/"
+        return msg
+
+    return f"Logged. Current best for {id}: {best_state[id]:.4f}x"
+
+
+@mcp.tool()
 def lower_schedule(
     id: str, transform_schedule: str, mlir_passes: str,
     llvm_passes: str = "default<O3>", llvm_flags: str = "", llc_flags: str = "",
@@ -141,113 +249,6 @@ def lower_schedule(
     """
 
     return transform_and_lower(id, transform_schedule, mlir_passes, llvm_passes, llvm_flags, llc_flags, bufferize_first)
-
-
-@mcp.prompt()
-def optimization_prompt() -> str:
-    """Provide a detailed prompt for the optimization task"""
-
-    return """Read README.md thoroughly before starting.
-
-## Your Task
-
-For every MLIR benchmark in `data/`, generate optimized configurations that achieve <0.5x slowdown vs PyTorch. A configuration consists of:
-
-1. **Transform schedule** (required) — an MLIR transform dialect module
-2. **MLIR pass pipeline** (required) — the lowering pass pipeline string
-3. **LLVM passes** (optional) — opt pass pipeline (default: `"default<O3>"`)
-4. **LLVM flags** (optional) — comma-separated flags for opt
-5. **LLC flags** (optional) — comma-separated flags for llc codegen
-
-Use `run_schedule` to test configurations and `lower_schedule` to inspect intermediate output.
-
-## Target Hardware
-
-**Intel Xeon E5-2680 v4 @ 2.40GHz (Broadwell)**
-- 28 cores (2 sockets × 14), 2 NUMA nodes
-- L1d: 32KB/core, L2: 256KB/core, L3: 35MB shared/socket
-- AVX2 + FMA, NO AVX-512
-- 256-bit vectors = 4 doubles or 8 floats
-
-## Workflow
-
-1. **Discover** — List `data/`, read each `sizes.json` and `.mlir` to understand operation types, dimensions, and data types. Read `resources/base_schedule.mlir` and `resources/base_passes.txt` as starting points.
-
-2. **Baseline** — For each benchmark ID, call `run_schedule` with the base schedule and base passes. Record the baseline slowdown.
-
-3. **Iterate** — For each benchmark, repeatedly generate new configurations:
-   a. Design a transform schedule and pass pipeline (and optionally LLVM/LLC passes/flags)
-   b. Test with `run_schedule`, record the slowdown
-   c. If needed, call `lower_schedule` to inspect MLIR, LLVM IR, and assembly
-   d. Use insights to generate the next configuration
-   e. Log every attempt to `logs/claude_optimization.log`
-
-4. **Converge** — Per benchmark, stop when: slowdown < 0.5x (target met).
-
-## What to Explore in Configurations
-
-**Transform schedules:**
-- Tiling (tile sizes tuned to cache hierarchy and problem dimensions)
-- Vectorization (match AVX2 width)
-- Loop interchange, unrolling, fusion
-- Parallelization for large problems
-
-**Pass pipelines:**
-- Different orderings and combinations of MLIR lowering passes
-- Toggle `bufferize_first`
-
-**LLVM/LLC flags:**
-- Different LLVM and codegen passes and flags
-
-Adapt to each operation type and size — what works for a large matmul may not work for a small convolution.
-
-## Web Search
-
-Search aggressively when you need:
-- MLIR transform dialect docs/examples (https://mlir.llvm.org/docs/Dialects/Transform/)
-- Debugging help for error messages
-- Optimization techniques for specific operation types
-- LLVM pass and flag documentation
-
-## Progress Logging
-
-Write all progress to `logs/claude_optimization.log` in real-time:
-
-```
-=== MLIR Optimization Log ===
-
-## Benchmark Discovery
-[benchmarks, sizes, operation types]
-
-## Optimization Progress
-
-### {benchmark_id}
-| Iter | Slowdown vs PyTorch | Configuration Summary |
-|------|---------------------|-----------------------|
-| 0    | 15.2x              | Baseline (no-op schedule, default passes) |
-| 1    | 4.1x               | Tiling 32x32, default passes |
-| 2    | 1.8x               | Tiling 64x64 + vectorize, -mcpu=broadwell |
-| ...  | ...                | ... |
-
-## Best Configurations
-[per benchmark: the full schedule, passes, and flags that achieved the best result]
-
-## Final Summary
-[key insights, what worked, recommendations]
-```
-
-## Guidelines
-
-- Test one change at a time when possible to isolate what helps
-- Inspect assembly (via `lower_schedule`) to verify vectorization/tiling take effect
-- Comment your schedules to document what each transformation does
-- Handle errors gracefully — log them, analyze, try a variation
-- Log the **full configuration** (schedule + passes + flags) for your best result per benchmark
-
-## Success Criteria
-
-**Target:** Slowdown vs PyTorch < 0.5x for every benchmark
-"""
 
 
 if __name__ == "__main__":

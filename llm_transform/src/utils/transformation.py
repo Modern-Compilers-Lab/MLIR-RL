@@ -30,6 +30,7 @@ def transform_and_lower(id: str, transform_schedule: str, mlir_passes: str, llvm
         bufferize_module(module)
 
     transform_module(module, transform_schedule)
+    results['mlir_transformed'] = str(module)
 
     if not bufferize_first:
         bufferize_module(module)

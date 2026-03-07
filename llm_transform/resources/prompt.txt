@@ -10,7 +10,7 @@ For every MLIR benchmark in `data/`, generate optimized configurations that achi
 4. **LLVM flags** (optional) — comma-separated flags for opt
 5. **LLC flags** (optional) — comma-separated flags for llc codegen
 
-Use `run_schedule` to test configurations and `lower_schedule` to inspect intermediate output.
+Use `run_schedule` to test configurations, `lower_schedule` to inspect intermediate output, and `log_iteration` to log every attempt.
 
 ## Target Hardware
 
@@ -31,7 +31,7 @@ Use `run_schedule` to test configurations and `lower_schedule` to inspect interm
    b. Test with `run_schedule`, record the slowdown
    c. If needed, call `lower_schedule` to inspect MLIR, LLVM IR, and assembly
    d. Use insights to generate the next configuration
-   e. Log every attempt to `logs/claude_optimization.log`
+   e. Call `log_iteration` after every `run_schedule` attempt (pass the full configuration so best results are auto-saved)
 
 4. **Converge** — Per benchmark, stop when: slowdown < 0.5x (target met).
 
@@ -62,38 +62,18 @@ Search aggressively when you need:
 
 ## Progress Logging
 
-Write all progress to `logs/claude_optimization.log` in real-time:
+Call `log_iteration` after every `run_schedule` attempt. Pass the **full configuration** (schedule, passes, flags) so that:
+- Every attempt is appended to `logs/claude_optimization.log` in real time
+- When a new best slowdown is achieved, the configuration is automatically saved to `logs/best/<name>/<instance>/`
 
-```
-=== MLIR Optimization Log ===
-
-## Benchmark Discovery
-[benchmarks, sizes, operation types]
-
-## Optimization Progress
-
-### {benchmark_id}
-| Iter | Slowdown vs PyTorch | Configuration Summary |
-|------|---------------------|-----------------------|
-| 0    | 15.2x              | Baseline (no-op schedule, default passes) |
-| 1    | 4.1x               | Tiling 32x32, default passes |
-| 2    | 1.8x               | Tiling 64x64 + vectorize, -mcpu=broadwell |
-| ...  | ...                | ... |
-
-## Best Configurations
-[per benchmark: the full schedule, passes, and flags that achieved the best result]
-
-## Final Summary
-[key insights, what worked, recommendations]
-```
+If a `run_schedule` call fails, still call `log_iteration` with the error message and slowdown=-1.
 
 ## Guidelines
 
 - Test one change at a time when possible to isolate what helps
 - Inspect assembly (via `lower_schedule`) to verify vectorization/tiling take effect
 - Comment your schedules to document what each transformation does
-- Handle errors gracefully — log them, analyze, try a variation
-- Log the **full configuration** (schedule + passes + flags) for your best result per benchmark
+- Handle errors gracefully — log them via `log_iteration` with the error, analyze, try a variation
 
 ## Success Criteria
 

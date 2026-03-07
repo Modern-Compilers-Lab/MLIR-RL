@@ -17,6 +17,7 @@ data/
 resources/
   base_schedule.mlir         # Empty (no-op) transform schedule
   base_passes.txt            # Default MLIR lowering pass pipeline
+  prompt.txt                 # Prompt used for Claude optimization (not for LLM use)
 src/
   mcp_server.py              # MCP server exposing the two tools below
   torch_exec.py              # PyTorch reference execution for comparison

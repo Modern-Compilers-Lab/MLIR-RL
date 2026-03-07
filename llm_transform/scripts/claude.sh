@@ -46,10 +46,10 @@ log_tokens() {
 
 # Start claude code sessions
 rm -f logs/jobs/*
-OUTPUT=$(claude --dangerously-skip-permissions --print --verbose --output-format=json /mcp__llm-tranform__optimization_prompt)
+OUTPUT=$(claude --dangerously-skip-permissions --print --verbose --output-format=json "$(cat resources/prompt.txt)")
 log_tokens "$OUTPUT" 0
 for ((i = 0 ; i < 99 ; i++ )); do
-    OUTPUT=$(claude --continue --dangerously-skip-permissions --print --verbose --output-format=json /mcp__llm-tranform__optimization_prompt)
+    OUTPUT=$(claude --continue --dangerously-skip-permissions --print --verbose --output-format=json "$(cat resources/prompt.txt)")
     log_tokens "$OUTPUT" $((i + 1))
 done
 
