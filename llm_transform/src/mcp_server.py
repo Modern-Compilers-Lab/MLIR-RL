@@ -101,21 +101,20 @@ def run_schedule(
     if not bufferize_first:
         cmd.append('--no-bufferize')
 
-    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-    job_id = result.stdout.strip()
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        job_id = result.stdout.strip()
 
-    # Wait for the job to complete and get the output
-    while True:
-        squeue_result = subprocess.run(['squeue', '-j', job_id, '-h'], capture_output=True, text=True)
-        if squeue_result.returncode != 0:
-            raise RuntimeError(f"squeue command failed: {squeue_result.stderr}")
-        if squeue_result.stdout.strip() == "":
-            break
-        time.sleep(1)
-
-    # Delete the temporary files
-    Path(transform_schedule_tmp.name).unlink()
-    Path(mlir_passes_tmp.name).unlink()
+        # Wait for the job to complete and get the output
+        while True:
+            squeue_result = subprocess.run(['squeue', '-j', job_id, '-h'], capture_output=True, text=True, check=True)
+            if squeue_result.stdout.strip() == "":
+                break
+            time.sleep(1)
+    finally:
+        # Delete the temporary files
+        Path(transform_schedule_tmp.name).unlink()
+        Path(mlir_passes_tmp.name).unlink()
 
     # Read the results of the job
     output_file = PARENT_DIR / "logs" / "jobs" / f"{exec_script_name}_{job_id}.out"
