@@ -121,26 +121,27 @@ def run_schedule(
     output_file = PARENT_DIR / "logs" / "jobs" / f"{exec_script_name}_{job_id}.out"
     error_file = PARENT_DIR / "logs" / "jobs" / f"{exec_script_name}_{job_id}.err"
 
-    # Check for errors first
-    if error_file.exists() and error_file.stat().st_size > 0:
-        with open(error_file, 'r') as f:
-            error_content = f.read()
-        raise RuntimeError(f"Job {job_id} failed with error:\n{error_content}")
+    try:
+        # Check for errors first
+        if error_file.exists() and error_file.stat().st_size > 0:
+            with open(error_file, 'r') as f:
+                error_content = f.read()
+            raise RuntimeError(f"Execution failed with error:\n{error_content}")
 
-    # Read the output and extract the slowdown compared to PyTorch
-    if not output_file.exists():
-        raise RuntimeError(f"Output file {output_file} not found for job {job_id}")
-    with open(output_file, 'r') as f:
-        output_content = f.read().strip()
-    last_line = output_content.splitlines()[-1]
-    match = re.search(r"Slowdown compared to PyTorch: ([\d.]+)x", last_line)
-    if not match:
-        raise RuntimeError(f"Unexpected output format in job {job_id} output: {output_content}")
-    slowdown = float(match.group(1))
-
-    # Clean up the output files
-    output_file.unlink(missing_ok=True)
-    error_file.unlink(missing_ok=True)
+        # Read the output and extract the slowdown compared to PyTorch
+        if not output_file.exists():
+            raise RuntimeError(f"Output file {output_file} not found for job {job_id}")
+        with open(output_file, 'r') as f:
+            output_content = f.read().strip()
+        last_line = output_content.splitlines()[-1]
+        match = re.search(r"Slowdown compared to PyTorch: ([\d.]+)x", last_line)
+        if not match:
+            raise RuntimeError(f"Unexpected output format in job {job_id} output: {output_content}")
+        slowdown = float(match.group(1))
+    finally:
+        # Clean up the output files
+        output_file.unlink(missing_ok=True)
+        error_file.unlink(missing_ok=True)
 
     return slowdown
 
