@@ -1,0 +1,106 @@
+TASK:
+How to do vectorization in MLIR Transform dialect?
+
+RESPONSE:
+**1. Retrieved Documentation (verbatim)**  
+
+---  
+
+**`transform.structured.vectorize`** (category *Structured (Linalg) Transform Operations*)  
+
+```
+operation ::= `transform.structured.vectorize` $target oilist(
+              `vector_sizes` custom<DynamicIndexList>(
+              $vector_sizes,
+              $static_vector_sizes,
+              $scalable_sizes))
+              attr-dict
+              `:` type($target)(`,`type($vector_sizes)^)?
+```
+
+Vectorize the target ops, which must be Linalg ops.  
+
+*If no vector sizes are given* the vectorizer infers shapes from the target op (regular vectorization).  
+
+```
+transform.structured.vectorize %target : !transform.any_op
+```
+
+*If explicit sizes are supplied* masked vectors of the given size are used (masked vectorization).  
+
+```
+transform.structured.vectorize %target vector_sizes [1, 4] : !transform.any_op
+```
+
+The vector sizes can be static or dynamic (SSA values). For dynamic values the handle must map to exactly one payload op with exactly one index‑typed result.  
+
+> **Note:** the input vector sizes must be ≥ the corresponding iteration‑space sizes.  
+> Typically applied after tiling the Linalg op to the desired tile size.  
+
+---  
+
+**`transform.structured.vectorize_children_and_apply_patterns`** (category *Structured (Linalg) Transform Operations*)  
+
+```
+operation ::= `transform.structured.vectorize_children_and_apply_patterns` $target
+               attr-dict `:` functional-type(operands, results)
+```
+
+Vectorizes *all* children contained in the given `target` using the attributes of this op.  
+* Only works on structured ops that operate on shaped types (no loops or straight‑line ops).  
+* The target must have the “isolated from above” property.  
+* Internally applies a set of rewrite patterns that enable vectorization and clean‑up.  
+
+Key attributes (optional):  
+
+| Attribute | Type | Meaning |
+|-----------|------|---------|
+| `fold_type_extensions_into_contract` | `UnitAttr` | Fold type‑extension ops into `vector.contract`. |
+| `vectorize_padding` | `UnitAttr` | Enable vectorization of `tensor.pad`. |
+| `disable_multi_reduction_to_contract_patterns` | `UnitAttr` | Prevent lowering `vector.multi_reduction` → `vector.contract`. |
+| `disable_transfer_permutation_map_lowering_patterns` | `UnitAttr` | Prevent lowering `vector.transfer` with permutation maps to explicit transposes. |
+
+Result: handle to the (still isolated) transformed op.  
+
+---  
+
+**2. Answer (actionable bullets)**  
+
+1. **Select the Linalg op(s) to vectorize** – obtain a handle (e.g., via `transform.foreach_match` or `transform.get_result`).  
+2. **(Optional) Tile the op** to the desired tile size so that the vector sizes you will request are ≤ the loop bounds.  
+3. **Apply `transform.structured.vectorize`** on the handle:  
+   * Use no `vector_sizes` for automatic inference, **or** supply a static/dynamic list (`[1,4]`, etc.) to force masked vectorization.  
+4. **If you need to vectorize an entire region** (e.g., a function body) and want the builtin cleanup patterns, use `transform.structured.vectorize_children_and_apply_patterns` on a region handle that is *isolated from above*.  
+5. **Check for failure** – both ops produce a silenceable failure if the target is not a Linalg op or vectorization constraints are violated.  
+
+**3. Minimal Transform IR skeleton**  
+
+```mlir
+transform.apply_patterns @__transform_main {
+  // 1. Find the Linalg op(s) with the attribute tag "operation_0".
+  %ops = transform.foreach_match %root
+          attributes{{tag = "operation_0"}} : !transform.any_op
+
+  // 2. (Optional) Tile to a convenient size.
+  //    %tiled = transform.structured.tile_using_for %ops
+  //            tile_sizes = [8, 8] : !transform.any_op
+
+  // 3. Vectorize – let the vectorizer infer sizes.
+  %vec = transform.structured.vectorize %ops : !transform.any_op
+
+  // 4. Or vectorize a whole region with cleanup patterns.
+  //    %vec = transform.structured.vectorize_children_and_apply_patterns %region
+}
+```
+
+**4. Constraints / Preconditions**  
+
+- The `target` handle must refer to **Linalg ops** (for `vectorize`) or to an **isolated-from‑above region** (for `vectorize_children_and_apply_patterns`).  
+- If providing dynamic `vector_sizes`, the handle must map to a **single payload op** with a **single index‑typed result**.  
+- Vector sizes must be **≥** the corresponding iteration‑space dimensions of the target op.  
+- For best results, the op should be **tiled** beforehand to match the intended vector width.  
+
+**5. Lookup keys used**  
+
+- `( "Structured (Linalg) Transform Operations", "transform.structured.vectorize" )`  
+- `( "Structured (Linalg) Transform Operations", "transform.structured.vectorize_children_and_apply_patterns" )`

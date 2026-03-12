@@ -1,0 +1,126 @@
+{
+  "intents": [
+    {
+      "name": "Data Locality and Cache Utilization",
+      "description": "Restructure loop nests to maximize temporal and spatial data reuse within each level of the cache hierarchy (L1, L2, L3).",
+      "rationale": "Compute-bound loop nests (matmul, convolution) achieve peak performance only when working sets fit in cache. Without tiling, capacity misses dominate execution time on Broadwell's 32KB L1d / 256KB L2. Promotion into contiguous buffers eliminates stride conflicts and TLB pressure.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Partition loop iteration spaces into smaller blocks (tiles) so that the data accessed per tile fits within a target cache level.",
+          "rationale": "Tiling is the primary mechanism for controlling working-set size and enabling temporal reuse across loop iterations. It directly reduces cache misses for all three kernel types.",
+          "action_template": "Tiling(tile_sizes) OR Tiling(loop_id, factor) OR Tiling(loop_band, tile_sizes) — tile_sizes is a vector with one entry per loop dimension (0 means do not tile that dimension); loop_id selects a single loop to tile by factor."
+        },
+        {
+          "name": "Promotion",
+          "description": "Copy a sub-tensor accessed within a tile into a contiguous temporary buffer (scratchpad) in a faster memory level before computation.",
+          "rationale": "After tiling, operand sub-tiles may still be accessed with large strides or suffer cache-line conflicts. Promotion into a packed, contiguous buffer ensures unit-stride access and eliminates conflict misses.",
+          "action_template": "Promotion(operand_id) OR Promotion(operand_id, memory_level) — operand_id identifies which input/output operand to promote; memory_level optionally targets a specific cache level."
+        },
+        {
+          "name": "Packing",
+          "description": "Rearrange an operand's data layout by copying it into a transformed layout that matches the access pattern of tiled loop nests.",
+          "rationale": "Standard row-major or column-major layouts cause strided accesses in inner loops. Packing into tile-friendly blocked layouts (e.g., panel-major) ensures contiguous vector loads and maximizes cache line utilization.",
+          "action_template": "Packing(operand_id, packed_layout) OR Packing(operand_id) — operand_id selects which operand to repack; packed_layout optionally specifies the target layout strategy."
+        },
+        {
+          "name": "Multi-Level Tiling",
+          "description": "Apply hierarchical tiling with multiple tile size levels, producing nested tile loops corresponding to different cache levels (e.g., L2 tiles containing L1 tiles).",
+          "rationale": "A single tiling level cannot exploit the full cache hierarchy. Multi-level tiling targets L2 for outer tiles and L1 for inner tiles, maximizing reuse at both levels — critical for large matmul and convolution working sets.",
+          "action_template": "MultiLevelTiling(tile_sizes_list) OR MultiLevelTiling(num_levels, tile_sizes_per_level) — tile_sizes_list is a list of tile-size vectors, one per cache level; num_levels specifies how many levels of tiling to apply."
+        }
+      ]
+    },
+    {
+      "name": "SIMD Exploitation",
+      "description": "Expose and exploit data-level parallelism through vectorization of innermost loops, aligned with AVX2 vector widths and FMA capabilities.",
+      "rationale": "Without SIMD utilization, the kernel runs at 1/4 (FP64) or 1/8 (FP32) of peak throughput on Broadwell AVX2. Vectorization, combined with proper loop ordering and unrolling, is essential to approach peak FLOP rates.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Vectorization",
+          "description": "Map the innermost loop iterations onto SIMD vector lanes, producing vector operations that process multiple elements per instruction.",
+          "rationale": "Directly translates loop iterations into AVX2 vector instructions (4xFP64 or 8xFP32 per cycle). This is the primary mechanism for exploiting instruction-level data parallelism on the target CPU.",
+          "action_template": "Vectorization(target_loop, vector_width) OR Vectorization(loop_band, vector_width) — target_loop selects which loop to vectorize; vector_width specifies the number of SIMD lanes (e.g., 4 for FP64 AVX2)."
+        },
+        {
+          "name": "Loop Unrolling",
+          "description": "Replicate the loop body multiple times, reducing loop overhead and exposing independent instructions for pipelining and out-of-order execution.",
+          "rationale": "FMA instructions have multi-cycle latency; unrolling exposes independent multiply-accumulate chains that the CPU can pipeline. Also reduces branch overhead and enables register-level reuse of loaded values.",
+          "action_template": "LoopUnrolling(loop_id, unroll_factor) OR LoopUnrolling(loop_band, unroll_factor) — loop_id selects which loop to unroll; unroll_factor specifies the replication count."
+        },
+        {
+          "name": "Loop Interchange",
+          "description": "Permute the ordering of loops in a loop nest to place the loop with the most contiguous memory access pattern in the innermost position.",
+          "rationale": "Vectorization and cache-line utilization require unit-stride memory access in the innermost loop. Interchange ensures the dimension with stride-1 access is innermost, enabling efficient vector loads/stores.",
+          "action_template": "LoopInterchange(loop_band, permutation) OR LoopInterchangeSwap(loop_id_a, loop_id_b) — permutation is an ordering vector for the loop band; or swap two specific loops."
+        },
+        {
+          "name": "Peeling",
+          "description": "Separate a loop into a main body with a trip count divisible by a given factor and a remainder loop handling leftover iterations.",
+          "rationale": "Vectorization requires trip counts aligned to vector width. Peeling isolates remainder iterations so the main loop can be cleanly vectorized without scalar fallback or masked operations.",
+          "action_template": "Peeling(loop_id, peel_factor) OR Peeling(loop_id) — loop_id selects which loop to peel; peel_factor optionally specifies alignment (defaults to vector width)."
+        }
+      ]
+    },
+    {
+      "name": "Parallelism and Work Distribution",
+      "description": "Distribute independent loop iterations across CPU cores to exploit thread-level parallelism on the multi-core, multi-socket system.",
+      "rationale": "The target system has 28 cores across 2 NUMA nodes. Large problem sizes (e.g., 256x512x1024 matmul, 128-batch convolution) have abundant parallelism in outer loops. Effective parallel distribution can yield near-linear speedup, but requires care to avoid false sharing and NUMA penalties.",
+      "priority": "medium",
+      "transformations": [
+        {
+          "name": "Parallelization",
+          "description": "Mark parallel loop dimensions for concurrent execution across multiple CPU cores using thread-level work distribution.",
+          "rationale": "Outer parallel loops (batch, output spatial, output channels) can be distributed across cores with minimal synchronization. This is the primary mechanism for utilizing all 28 cores on the target system.",
+          "action_template": "Parallelization(loop_id) OR Parallelization(loop_band, parallel_dims) — loop_id selects a single loop to parallelize; parallel_dims selects multiple parallel dimensions from a loop band."
+        },
+        {
+          "name": "Loop Distribution",
+          "description": "Split a loop body containing multiple independent statements into separate loops, each executing one statement over the full iteration range.",
+          "rationale": "Distribution can separate independent computations to improve cache behavior per loop, enable selective parallelization of individual loops, and break dependencies that prevent vectorization or tiling.",
+          "action_template": "LoopDistribution(loop_id) OR LoopDistribution(loop_id, partition_points) — loop_id selects which loop to distribute; partition_points optionally specifies how to split the body."
+        },
+        {
+          "name": "Loop Fusion",
+          "description": "Merge two adjacent loops with compatible iteration spaces into a single loop, improving producer-consumer data locality.",
+          "rationale": "When a producer loop's output is immediately consumed by a subsequent loop, fusion eliminates the intermediate materialization and keeps data in registers or L1 cache. Reduces memory traffic for chained operations.",
+          "action_template": "LoopFusion(loop_id_a, loop_id_b) OR LoopFusion(target_ops) — loop_id_a and loop_id_b identify two adjacent loops to fuse; target_ops identifies producer-consumer operation pairs."
+        }
+      ]
+    },
+    {
+      "name": "Iteration Space Restructuring",
+      "description": "Transform the shape and structure of the iteration space to enable or improve the effectiveness of other optimizations (tiling, vectorization, parallelization).",
+      "rationale": "Some loop nests — especially convolutions with sliding windows or generics with non-trivial indexing — have irregular or suboptimal iteration structures. Restructuring (decomposition, padding, lowering) can normalize them into forms amenable to standard high-performance transformations.",
+      "priority": "medium",
+      "transformations": [
+        {
+          "name": "Decomposition",
+          "description": "Break a compound operation into a sequence of simpler operations over sub-problems, exposing intermediate results and enabling per-stage optimization.",
+          "rationale": "Complex operations like convolutions can be decomposed into simpler loop nests (e.g., im2col + matmul) that are individually easier to tile, vectorize, and parallelize with well-known strategies.",
+          "action_template": "Decomposition(target_op) OR Decomposition(target_op, decomposition_strategy) — target_op identifies the operation to decompose; decomposition_strategy optionally specifies the decomposition method (e.g., im2col, Winograd)."
+        },
+        {
+          "name": "Padding",
+          "description": "Extend tensor dimensions to ensure alignment with tile sizes, vector widths, or other hardware-required boundaries.",
+          "rationale": "Misaligned dimensions cause vector remainder loops, partial cache line utilization, and irregular tile shapes. Padding to multiples of vector width or tile size eliminates these inefficiencies at the cost of minor extra computation on padded elements.",
+          "action_template": "Padding(operand_id, pad_to_multiple) OR Padding(pad_sizes) — operand_id selects which operand to pad; pad_to_multiple specifies the alignment target; pad_sizes specifies explicit padding per dimension."
+        },
+        {
+          "name": "Canonicalization",
+          "description": "Apply semantics-preserving simplifications to the IR, such as constant folding, dead code elimination, and operation normalization.",
+          "rationale": "After sequences of transformations, the IR may contain redundant operations, trivial loops, or un-simplified expressions. Canonicalization cleans the IR so subsequent transformations see a normalized form, preventing spurious failures.",
+          "action_template": "Canonicalization() — no parameters; applies a fixed set of simplification rules to the entire IR module."
+        },
+        {
+          "name": "Generalization",
+          "description": "Convert a named structured operation (e.g., matmul, conv) into its equivalent generic loop-nest form, exposing the full iteration space for arbitrary restructuring.",
+          "rationale": "Named operations constrain which transformations can be applied. Generalization to linalg.generic exposes all loop dimensions and indexing maps, enabling unrestricted tiling, interchange, and fusion that named-op interfaces may not support.",
+          "action_template": "Generalization(target_op) — target_op identifies the named operation to convert to its generic loop-nest equivalent."
+        }
+      ]
+    }
+  ]
+}

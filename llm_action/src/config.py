@@ -1,4 +1,4 @@
-from llm_action.src.models import ClaudeModel, GeminiModel
+from llm_action.src.models import ClaudeModel, GeminiModel, GroqModel
 
 # LLM
 CLAUDE_LLM_MODEL = ClaudeModel.HAIKU
@@ -6,6 +6,9 @@ CLAUDE_LLM_TEMPERATURE = 1.0
 
 GEMINI_LLM_MODEL = GeminiModel.GEMINI_2_5_FLASH
 GEMINI_LLM_TEMPERATURE = 1.0
+
+GROQ_LLM_MODEL = GroqModel.GPT_OSS_120B
+GROQ_LLM_TEMPERATURE = 1.0
 
 # Execution
 N_CORES = 16

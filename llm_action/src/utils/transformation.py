@@ -147,6 +147,7 @@ module attributes {transform.with_named_sequence} {
         transform.bufferization.empty_tensor_to_alloc_tensor %empty : (!transform.op<"tensor.empty">) -> !transform.op<"bufferization.alloc_tensor">
 
         %f0 = transform.structured.match ops{["func.func"]} in %arg0 : (!transform.any_op) -> !transform.any_op
+        
         transform.apply_patterns to %f0 {
             transform.apply_patterns.vector.transfer_permutation_patterns
             transform.apply_patterns.vector.reduction_to_contract

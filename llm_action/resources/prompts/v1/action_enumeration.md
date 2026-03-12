@@ -331,12 +331,11 @@ Acceptable kernel-specific examples (when framed generically):
 ## Examples (non-exhaustive):
 - Tiling / blocking
 - Interchange (loop permutation)
-- Fusion (producer-consumer)
 - Vectorization (SIMD-friendly restructuring)
 - Parallelization / distribution
+- Promotion
 - Packing / layout transformation
 - Unrolling / jamming / peeling
-- Decomposition of complex ops
 - Bufferization strategy (conceptual)
 - Canonicalization / simplification (conceptual)
 - Special kernel-specific operations (e.g., im2col for convolution)
@@ -395,8 +394,8 @@ class ActionEnumeration(BaseModel):
 
 # Output Constraints
 
-- Produce **2-3 optimization intents**.
-- Each intent must contain **2-3 transformations**.
+- Produce **3-5 optimization intents**.
+- Each intent must contain **3-5 transformations**.
 - Use consistent transformation names across intents (avoid duplicates with different names).
 - Keep descriptions concise (1-2 sentences).
 - Do **not** include parameter knobs, preconditions, ordering rules, or code.

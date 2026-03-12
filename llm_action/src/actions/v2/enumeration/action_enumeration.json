@@ -1,0 +1,70 @@
+{
+  "intents": [
+    {
+      "name": "Data Locality Optimization",
+      "description": "Restructure loop nests and data layout to maximize cache utilization across the L1/L2/L3 hierarchy, reducing memory traffic and improving data reuse.",
+      "rationale": "All three kernel types (contraction, convolution, elementwise) operate on large tensors that exceed cache capacity. Without explicit blocking and layout control, performance is dominated by cache misses. On Broadwell with 32KB L1d and 256KB L2, fitting working sets into cache levels is the single most impactful optimization.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Partition the iteration space of a loop nest into smaller blocks (tiles) so that the working set of each tile fits within a target cache level.",
+          "rationale": "Tiling is the foundational transformation for cache locality in dense loop nests. It converts streaming access patterns into blocked patterns with high temporal reuse, directly reducing L1/L2 cache misses for both compute-bound and memory-bound kernels.",
+          "action_template": "Tiling(tile_sizes) OR Tiling(loop_id, factor) OR Tiling(loop_band, tile_sizes) — tile_sizes is a vector of integers (one per loop in the band, 0 means do not tile that loop); factor is a single tile size for one specific loop."
+        },
+        {
+          "name": "Loop Interchange",
+          "description": "Reorder the loops in a loop nest to change the iteration order, improving spatial locality and enabling more effective tiling or vectorization.",
+          "rationale": "Loop ordering determines memory access stride patterns. Placing the dimension with stride-1 access innermost maximizes spatial locality and cache line utilization. Interchange also enables tiling and vectorization by positioning the right loops at the right depths.",
+          "action_template": "LoopInterchange(loop_band, permutation) OR LoopInterchangeSwap(loop_id_a, loop_id_b) OR LoopInterchangeMove(loop_id, target_depth) — permutation is an ordering vector; swap exchanges two specific loops; move repositions one loop to a target depth."
+        },
+        {
+          "name": "Packing",
+          "description": "Copy a tile of data into a contiguous temporary buffer with a layout optimized for the subsequent computation, eliminating non-unit stride accesses and TLB pressure.",
+          "rationale": "After tiling, the original data layout may cause non-contiguous accesses within tiles (especially for non-innermost dimensions). Packing rearranges data into dense, contiguous micro-panels that eliminate conflict misses, reduce TLB pressure, and enable efficient vectorized loads. This is standard practice in high-performance BLAS implementations.",
+          "action_template": "Packing(target_operand, packed_sizes) OR Packing(target_operand, loop_band, inner_permutation) — target_operand identifies which input/output to pack; packed_sizes specifies the tile dimensions for packing; inner_permutation controls the layout within the packed buffer."
+        }
+      ]
+    },
+    {
+      "name": "SIMD and Compute Throughput",
+      "description": "Map loop computations onto SIMD vector instructions and maximize instruction-level parallelism to fully utilize the CPU's AVX2+FMA execution units.",
+      "rationale": "The target Broadwell CPU can execute 4 FP64 FMA operations per cycle per core via AVX2. Without vectorization and sufficient ILP, only a fraction of peak FLOPS is achieved. For compute-bound kernels (matmul, convolution), this is the difference between 1x and 4-8x single-core throughput. For memory-bound elementwise kernels, vectorization reduces instruction count and improves bandwidth utilization.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Vectorization",
+          "description": "Map an innermost loop onto SIMD vector operations, processing multiple data elements per instruction using the available vector ISA (AVX2, 256-bit).",
+          "rationale": "Vectorization directly multiplies throughput by the vector width (4x for FP64 on AVX2). It is essential for approaching peak performance on any modern CPU. The innermost loop must operate on contiguous data for efficient vector loads/stores.",
+          "action_template": "Vectorization(target_loop, vector_width) OR Vectorization(loop_band, vector_sizes) — target_loop identifies which loop to vectorize; vector_width is the number of elements per vector; vector_sizes is a vector specifying widths per loop (0 means do not vectorize that loop)."
+        },
+        {
+          "name": "Unrolling",
+          "description": "Replicate the loop body multiple times within a single iteration, reducing loop overhead and exposing instruction-level parallelism to the hardware scheduler.",
+          "rationale": "Unrolling reduces branch overhead, exposes independent operations for out-of-order execution and FMA pipelining, and enables register-level data reuse. When combined with vectorization, unrolling keeps the vector FMA units fully occupied by overlapping independent multiply-accumulate chains.",
+          "action_template": "Unrolling(target_loop, unroll_factor) OR Unrolling(loop_band, unroll_factors) — unroll_factor is the number of times to replicate the loop body; unroll_factors is a vector (one per loop, 0 or 1 means no unrolling)."
+        }
+      ]
+    },
+    {
+      "name": "Coarse-Grain Parallelism",
+      "description": "Distribute work across multiple CPU cores by parallelizing outer loop dimensions, and reduce inter-core synchronization overhead through producer-consumer fusion.",
+      "rationale": "The target machine has 28 physical cores across 2 NUMA nodes. Exploiting thread-level parallelism is necessary to scale beyond single-core performance. However, this is medium priority because parallelization amplifies the quality of the single-core schedule — a well-tiled, vectorized kernel scales linearly, while a poorly optimized one just multiplies cache pressure.",
+      "priority": "medium",
+      "transformations": [
+        {
+          "name": "Parallelization",
+          "description": "Distribute iterations of an outer parallel loop across multiple CPU cores, partitioning the iteration space for concurrent execution.",
+          "rationale": "Thread-level parallelism is required to utilize all 28 cores. Outer parallel loops (batch, output dimensions) in contraction and convolution kernels are natural candidates. For elementwise operations, any loop dimension can be parallelized. Work distribution granularity must balance load and avoid oversubscription.",
+          "action_template": "Parallelization(target_loop, num_threads) OR Parallelization(loop_band, distribution_strategy) — target_loop identifies the loop to parallelize; num_threads controls the degree of parallelism; distribution_strategy specifies how iterations are assigned to threads."
+        },
+        {
+          "name": "Fusion",
+          "description": "Merge adjacent producer-consumer loop nests into a single loop nest, eliminating intermediate buffers and improving data locality between dependent operations.",
+          "rationale": "Fusion reduces memory traffic by keeping intermediate results in registers or cache instead of materializing them to memory. It also reduces synchronization barriers between parallel regions and improves cache utilization when multiple operations share data. This is particularly relevant when the RL agent composes multiple transformations that create intermediate loop nests.",
+          "action_template": "Fusion(producer_op, consumer_op) OR Fusion(target_op, fusion_depth) — producer_op and consumer_op identify the operations to fuse; fusion_depth controls how many loop levels are fused (full fusion vs. partial/tile-level fusion)."
+        }
+      ]
+    }
+  ]
+}
