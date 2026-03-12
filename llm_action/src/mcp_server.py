@@ -4,6 +4,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
+from typing import Optional
 
 from fastmcp import FastMCP
 from llm_action.src.utils.transformation import run_transform_code, BUFFERIZATION_AND_LOWER_V_TRANSFORM_CODE, PASS_PIPELINE
@@ -211,7 +212,7 @@ def execute_torch_matmul_by_shape(M: int, K: int, N: int) -> float:
         raise RuntimeError(f"Could not parse execution time from job {job_id} output:\n{output}")
 
 @mcp.tool()
-def measure_speedup(mlir_base_execution_time: float, mlir_optimized_execution_time: float, torch_execution_time: float) -> dict[str, float]:
+def measure_speedup(mlir_base_execution_time: float, mlir_optimized_execution_time: float, torch_execution_time: Optional[float] = None) -> dict[str, float]:
     """
     Measures the speedup achieved by MLIR transformations.
     
@@ -228,7 +229,7 @@ def measure_speedup(mlir_base_execution_time: float, mlir_optimized_execution_ti
     Args:
         mlir_base_execution_time: Execution time of original (unoptimized) MLIR code in milliseconds
         mlir_optimized_execution_time: Execution time of transformed (optimized) MLIR code in milliseconds
-        torch_execution_time: execution time of PyTorch baseline in milliseconds
+        torch_execution_time (Optional): execution time of PyTorch baseline in milliseconds
     
     Returns:
         dict with:
@@ -237,7 +238,7 @@ def measure_speedup(mlir_base_execution_time: float, mlir_optimized_execution_ti
     """
     result = {
         "speedup": mlir_base_execution_time / mlir_optimized_execution_time,
-        "speedup_to_torch": torch_execution_time / mlir_optimized_execution_time
+        "speedup_to_torch": torch_execution_time / mlir_optimized_execution_time if torch_execution_time else -1
     }
     return result
 

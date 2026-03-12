@@ -3,13 +3,13 @@ import json
 from typing import List, Tuple, Union, Optional
 
 from llm_action.src.utils.misc import random_id
-from llm_action.src.models import ClaudeModel, KernelType, ActionEnumeration, ActionPackage, DocTreeNode, Documentation
+from llm_action.src.models import ClaudeModel, KernelType, ActionEnumeration, ActionPackage, DocTreeNode, Documentation, InputType
 from llm_action.src.utils.scrape import collect_md_tree, collect_md_doc
 
 from llm_action.src.config import ACTION_ENUMERATION_CACHE, CLAUDE_LLM_MODEL
 
-def load_kernel_code(kernel_type: KernelType, kernel_number: int = 2) -> str:
-    dir = f"llm_action/data/{kernel_type.value}"
+def load_kernel_code(kernel_type: KernelType, kernel_number: int = 2, input_type: InputType = InputType.MEMREF) -> str:
+    dir = f"llm_action/data/{input_type.value}/{kernel_type.value}"
     match kernel_type:
         case KernelType.MATMUL:
             name = "Matrix Multiplication"
@@ -37,8 +37,8 @@ def load_kernel_code(kernel_type: KernelType, kernel_number: int = 2) -> str:
         code = f.read()
     return code
 
-def load_kernel_code_template(kernel_type: KernelType) -> str:
-    dir = f"llm_action/data/{kernel_type.value}"
+def load_kernel_code_template(kernel_type: KernelType, input_type: InputType = InputType.MEMREF) -> str:
+    dir = f"llm_action/data/{input_type.value}/{kernel_type.value}"
     match kernel_type:
         case KernelType.MATMUL:
             name = "Matrix Multiplication"

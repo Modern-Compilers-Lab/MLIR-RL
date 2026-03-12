@@ -1,3 +1,5 @@
+import argparse
+
 from llm_action.src.prompts.system_description import get_system_description_prompt
 from llm_action.src.utils.persistence import save_prompt
 
@@ -118,12 +120,11 @@ Acceptable kernel-specific examples (when framed generically):
 ## Examples (non-exhaustive):
 - Tiling / blocking
 - Interchange (loop permutation)
-- Fusion (producer-consumer)
 - Vectorization (SIMD-friendly restructuring)
 - Parallelization / distribution
+- Promotion
 - Packing / layout transformation
 - Unrolling / jamming / peeling
-- Decomposition of complex ops
 - Bufferization strategy (conceptual)
 - Canonicalization / simplification (conceptual)
 - Special kernel-specific operations (e.g., im2col for convolution)
@@ -202,7 +203,7 @@ class ActionEnumeration(BaseModel):
 Remember:
 Your output is a **catalog of candidate RL macro actions**. It is intentionally abstract and feeds directly into Layer 2, which will turn these ideas into executable and parameterized MLIR actions."""
 
-def get_layer1_system_prompt(intents_num_min: int = 2, intents_num_max: int = 3, transformations_num_min: int = 2, transformations_num_max: int = 3) -> str:
+def get_layer1_system_prompt(intents_num_min: int = 2, intents_num_max: int = 4, transformations_num_min: int = 3, transformations_num_max: int = 5) -> str:
     return f"""{get_agent_identity()}
 {get_agent_position()}
 {get_agent_role()}
@@ -212,4 +213,12 @@ def get_layer1_system_prompt(intents_num_min: int = 2, intents_num_max: int = 3,
 """
 
 if __name__ == "__main__":
-    save_prompt(get_layer1_system_prompt(), version="1", name="action_enumeration")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--intents_num_min", type=int, default=3)
+    parser.add_argument("--intents_num_max", type=int, default=5)
+    parser.add_argument("--transformations_num_min", type=int, default=3)
+    parser.add_argument("--transformations_num_max", type=int, default=5)
+    args = parser.parse_args()
+
+    prompt = get_layer1_system_prompt(args.intents_num_min, args.intents_num_max, args.transformations_num_min, args.transformations_num_max)    
+    save_prompt(prompt, version="1", name="action_enumeration")

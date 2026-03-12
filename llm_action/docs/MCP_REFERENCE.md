@@ -123,7 +123,7 @@ Args:
 Returns:
     float: the median execution time in milliseconds.
 
-## measure_speedup(mlir_base_execution_time: float, mlir_optimized_execution_time: float, torch_execution_time: float) -> dict[str, float]
+## measure_speedup(mlir_base_execution_time: float, mlir_optimized_execution_time: float, torch_execution_time: Optional[float] = None) -> dict[str, float]
 Measures the speedup achieved by MLIR transformations.
 
 This tool compares the execution time of base code against transformed code
