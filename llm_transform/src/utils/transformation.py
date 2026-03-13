@@ -117,7 +117,7 @@ def compile_aot(mlir_code: str, llvm_passes: str, llvm_flags: str, llc_flags: st
             intermediate_outs['llvm_opt'] = str(llvm_opt_path)
 
         # Compile to object file (llc gets codegen-specific flags)
-        llc_cmd = ["llc", "-relocation-model=pic", "--mcpu=native", "-O3"]
+        llc_cmd = ["llc", "-relocation-model=pic", "-mcpu=native", "-O3"]
         if llc_flags:
             for flag in llc_flags.split(','):
                 flag = flag.strip()

@@ -110,7 +110,7 @@ echo "Slowdown compared to PyTorch: ${SLOWDOWN}x"
 STATS_DIR="logs/stats"
 LAST_ID=$(ls -1 "$STATS_DIR" 2>/dev/null | sort -n | tail -1)
 if [ -z "$LAST_ID" ]; then
-  echo "Error: Couldn't the current experiment directory in $STATS_DIR" >&2
+  echo "Error: Couldn't find the current experiment directory in $STATS_DIR" >&2
   exit 1
 fi
 EXPERIMENT_DIR="$STATS_DIR/$LAST_ID"
