@@ -31,7 +31,7 @@ For every MLIR benchmark in `data/`, generate optimized configurations that achi
 4. **LLVM flags** (optional) — comma-separated flags for opt
 5. **LLC flags** (optional) — comma-separated flags for llc codegen
 
-Use `run_schedule` to test configurations, `lower_schedule` to inspect intermediate output, and `log_iteration` to log every attempt.
+Use `run_schedule` to test and log configurations, and `lower_schedule` to inspect intermediate output.
 
 ## Target Hardware
 
@@ -56,11 +56,10 @@ Use `run_schedule` to test configurations, `lower_schedule` to inspect intermedi
 
 4. **Iterate** — For each benchmark, repeatedly generate new configurations:
    a. Design a transform schedule and pass pipeline (and optionally LLVM/LLC passes/flags)
-   b. Test with `run_schedule`, record the slowdown
+   b. Test with `run_schedule` (include a summary describing what you're trying — results are automatically logged and best configs saved)
    c. If needed, call `lower_schedule` to inspect MLIR, LLVM IR, and assembly
    d. Use insights to generate the next configuration
-   e. Call `log_iteration` after every `run_schedule` attempt (pass the full configuration so best results are auto-saved)
-   f. **If progress stalls** (3+ attempts with no improvement), stop and re-evaluate:
+   e. **If progress stalls** (5+ attempts with no improvement), stop and re-evaluate:
       - Inspect the generated assembly — is vectorization actually happening? Are there unnecessary spills or redundant loads?
       - Consider a fundamentally different approach (e.g., switch from tiling-first to fusion-first, try different loop orderings, change the pass pipeline structure)
       - Search the web for how others solve this specific optimization problem
@@ -97,18 +96,16 @@ Search aggressively when you need:
 
 ## Progress Logging
 
-Call `log_iteration` after every `run_schedule` attempt. Pass the **full configuration** (schedule, passes, flags) so that:
-- Every attempt is appended to `logs/claude_optimization.log` in real time
+`run_schedule` automatically logs every attempt:
+- Every result (slowdown or error) is appended to `logs/claude_optimization.log` in real time
 - When a new best slowdown is achieved, the configuration is automatically saved to `logs/best/<name>/<instance>/`
-
-If a `run_schedule` call fails, still call `log_iteration` with the error message and slowdown=-1.
 
 ## Guidelines
 
 - Test one change at a time when possible to isolate what helps
 - Inspect assembly (via `lower_schedule`) to verify vectorization/tiling take effect
 - Comment your schedules to document what each transformation does
-- Handle errors gracefully — log them via `log_iteration` with the error, analyze, try a variation
+- Handle errors gracefully — `run_schedule` logs errors automatically; analyze the error and try a variation
 - Reason about what the hardware wants (contiguous access, full vectors, data in cache) and work backwards to the transforms that achieve it
 - When stuck, pivot to a fundamentally different strategy rather than repeating small tweaks on a failing approach
 - If a technique works on one benchmark, try adapting it to others

@@ -46,33 +46,89 @@ def _save_best_config(id: str, transform_schedule: str, mlir_passes: str,
     (config_dir / "llvm-llc-passes-flags.txt").write_text("\n".join(lines) + "\n")
 
 
+def _log_result(
+    id: str, slowdown: float, summary: str,
+    transform_schedule: str, mlir_passes: str,
+    llvm_passes: str, llvm_flags: str, llc_flags: str,
+    error: str,
+) -> str:
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    _LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+    if error or slowdown < 0:
+        entry = f"\n[{timestamp}] {id} | ERROR | {summary}\n"
+        if error:
+            entry += f"  Error: {error}\n"
+        with open(_LOG_FILE, 'a') as f:
+            f.write(entry)
+        return f"Run failed: {error}" if error else "Run failed (no slowdown recorded)"
+
+    slowdown_str = f"{slowdown:.4f}x"
+    entry = f"\n[{timestamp}] {id} | {slowdown_str} | {summary}\n"
+
+    best_state = _load_best_state()
+    is_new_best = id not in best_state or slowdown < best_state[id]
+    if is_new_best:
+        old_best = best_state.get(id)
+        best_state[id] = slowdown
+        _save_best_state(best_state)
+        _save_best_config(id, transform_schedule, mlir_passes, llvm_passes, llvm_flags, llc_flags)
+        if old_best is not None:
+            entry += f"  *** NEW BEST for {id} (previous: {old_best:.4f}x) ***\n"
+        else:
+            entry += f"  *** FIRST RESULT for {id} ***\n"
+
+    with open(_LOG_FILE, 'a') as f:
+        f.write(entry)
+
+    if is_new_best:
+        if old_best is not None:
+            msg = f"Slowdown: {slowdown_str} — New best for {id} (previous: {old_best:.4f}x)"
+        else:
+            msg = f"Slowdown: {slowdown_str} — First result for {id}"
+        msg += " — config saved to logs/best/"
+        return msg
+
+    return f"Slowdown: {slowdown_str} — Current best for {id}: {best_state[id]:.4f}x"
+
+
 @mcp.tool()
 def run_schedule(
-    id: str, transform_schedule: str, mlir_passes: str,
+    id: str, transform_schedule: str, mlir_passes: str, summary: str,
     llvm_passes: str = "default<O3>", llvm_flags: str = "", llc_flags: str = "",
     bufferize_first: bool = True
-) -> float:
+) -> str:
     """
     Apply the given transformation schedule to the MLIR code associated with the given ID. Lower using
-    the specified MLIR and LLVM passes. Execute the resulting LLVM code and return the measured
-    slowdown compared to PyTorch optimized code.
+    the specified MLIR and LLVM passes. Execute the resulting LLVM code, log the result, and return
+    the measured slowdown compared to PyTorch optimized code.
 
     This is the main metric for evaluating the effectiveness of the transformation schedule. The slowdown
     must be minimized as much as possible, ideally reaching around 0.5x or better (i.e. the transformed code
     runs at least 2x faster than PyTorch).
 
+    The result (slowdown or error) is automatically logged to logs/claude_optimization.log.
+    If the slowdown is a new best for the benchmark, the full configuration is saved to logs/best/<name>/<instance>/.
+
     Args:
         id (str): The unique identifier for the MLIR code to transform. It takes the form "{name}_{instance}", where "name" is the name of the benchmark (e.g. "matmul") and "instance" is the specific instance (e.g. "0", "1", etc.).
         transform_schedule (str): The transformation schedule to apply, specified as a string of MLIR transformations.
         mlir_passes (str, optional): The MLIR passes to apply during lowering. Defaults to BASE_MLIR_PASSES.
+        summary (str): Brief description of what is being tried in this run.
         llvm_passes (str, optional): LLVM opt pass pipeline to run before JIT (e.g. "licm,loop-unroll"). Defaults to "default<O3>".
         llvm_flags (str, optional): Comma-separated LLVM CL flags (e.g. "enable-loop-versioning-licm,licm-mssa-max-acc-promotion=1000"). Defaults to empty string.
         llc_flags (str, optional): Comma-separated flags for llc codegen (e.g. "align-loops=32,enable-split-loopiv-heuristic"). Defaults to empty string.
         bufferize_first (bool, optional): Whether to apply bufferization before applying the transformation schedule. Defaults to True.
 
     Returns:
-        dict: the measured slowdown compared to PyTorch optimized code.
+        str: Status message with the measured slowdown and whether it was a new best.
     """
+    if not transform_schedule.strip():
+        raise ValueError("Transform schedule cannot be empty")
+    if not mlir_passes.strip():
+        raise ValueError("MLIR passes cannot be empty")
+    if not summary.strip():
+        raise ValueError("Summary cannot be empty")
 
     tmp_dir = PARENT_DIR / "tmp"
     with tempfile.NamedTemporaryFile(suffix=".mlir", mode="w", delete=False, dir=tmp_dir) as transform_schedule_tmp, \
@@ -120,104 +176,34 @@ def run_schedule(
     output_file = PARENT_DIR / "logs" / "jobs" / f"{exec_script_name}_{job_id}.out"
     error_file = PARENT_DIR / "logs" / "jobs" / f"{exec_script_name}_{job_id}.err"
 
+    slowdown = -1.0
+    error = ""
+
     try:
         # Check for errors first
         if error_file.exists() and error_file.stat().st_size > 0:
             with open(error_file, 'r') as f:
-                error_content = f.read()
-            raise RuntimeError(f"Execution failed with error:\n{error_content}")
+                error = f.read()
 
         # Read the output and extract the slowdown compared to PyTorch
-        if not output_file.exists():
+        elif not output_file.exists():
             raise RuntimeError(f"Output file {output_file} not found for job {job_id}")
-        with open(output_file, 'r') as f:
-            output_content = f.read().strip()
-        last_line = output_content.splitlines()[-1]
-        match = re.search(r"Slowdown compared to PyTorch: ([\d.]+)x", last_line)
-        if not match:
-            raise RuntimeError(f"Unexpected output format in job {job_id} output: {output_content}")
-        slowdown = float(match.group(1))
+        else:
+            with open(output_file, 'r') as f:
+                output_content = f.read().strip()
+            last_line = output_content.splitlines()[-1]
+            match = re.search(r"Slowdown compared to PyTorch: ([\d.]+)x", last_line)
+            if not match:
+                raise RuntimeError(f"Unexpected output format in job {job_id} output: {output_content}")
+            slowdown = float(match.group(1))
     finally:
         # Clean up the output files
         output_file.unlink(missing_ok=True)
         error_file.unlink(missing_ok=True)
 
-    return slowdown
-
-
-@mcp.tool()
-def log_iteration(
-    id: str,
-    iteration: int,
-    slowdown: float = -1.0,
-    summary: str = "",
-    transform_schedule: str = "",
-    mlir_passes: str = "",
-    llvm_passes: str = "default<O3>",
-    llvm_flags: str = "",
-    llc_flags: str = "",
-    error: str = "",
-) -> str:
-    """
-    Log an optimization iteration result. Call this after every run_schedule attempt.
-
-    Appends the result to logs/claude_optimization.log in real time.
-    If the slowdown is a new best for the benchmark, automatically saves the full
-    configuration to logs/best/<name>/<instance>/.
-
-    Args:
-        id: Benchmark ID (e.g. "matmul_1").
-        iteration: Iteration number for this benchmark.
-        slowdown: Measured slowdown vs PyTorch. Use -1 (default) if the run failed.
-        summary: Brief description of what was tried in this iteration.
-        transform_schedule: The transform schedule used.
-        mlir_passes: The MLIR passes used.
-        llvm_passes: The LLVM passes used.
-        llvm_flags: LLVM flags used.
-        llc_flags: LLC flags used.
-        error: Error message if the run failed.
-
-    Returns:
-        Status message indicating whether this was a new best result.
-    """
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    _LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-
-    if error or slowdown < 0:
-        entry = f"\n[{timestamp}] {id} | iter={iteration} | ERROR | {summary}\n"
-        if error:
-            entry += f"  Error: {error}\n"
-        with open(_LOG_FILE, 'a') as f:
-            f.write(entry)
-        return "Logged (error, no slowdown recorded)"
-
-    slowdown_str = f"{slowdown:.4f}x"
-    entry = f"\n[{timestamp}] {id} | iter={iteration} | {slowdown_str} | {summary}\n"
-
-    best_state = _load_best_state()
-    is_new_best = id not in best_state or slowdown < best_state[id]
-    if is_new_best:
-        old_best = best_state.get(id)
-        best_state[id] = slowdown
-        _save_best_state(best_state)
-        _save_best_config(id, transform_schedule, mlir_passes, llvm_passes, llvm_flags, llc_flags)
-        if old_best is not None:
-            entry += f"  *** NEW BEST for {id} (previous: {old_best:.4f}x) ***\n"
-        else:
-            entry += f"  *** FIRST RESULT for {id} ***\n"
-
-    with open(_LOG_FILE, 'a') as f:
-        f.write(entry)
-
-    if is_new_best:
-        if old_best is not None:
-            msg = f"New best for {id}: {slowdown_str} (previous: {old_best:.4f}x)"
-        else:
-            msg = f"First result for {id}: {slowdown_str}"
-        msg += " — config saved to logs/best/"
-        return msg
-
-    return f"Logged. Current best for {id}: {best_state[id]:.4f}x"
+    # Log the result
+    return _log_result(id, slowdown, summary, transform_schedule, mlir_passes,
+                       llvm_passes, llvm_flags, llc_flags, error)
 
 
 @mcp.tool()
@@ -247,6 +233,10 @@ def lower_schedule(
             - "llvm_opt": path to the generated LLVM IR file after applying llvm opt with the specified passes and flags
             - "asm": path to the generated assembly file after compiling with llc and the specified flags
     """
+    if not transform_schedule.strip():
+        raise ValueError("Transform schedule cannot be empty")
+    if not mlir_passes.strip():
+        raise ValueError("MLIR passes cannot be empty")
 
     return transform_and_lower(id, transform_schedule, mlir_passes, llvm_passes, llvm_flags, llc_flags, bufferize_first)
 
