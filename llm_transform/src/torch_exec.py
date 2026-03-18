@@ -20,14 +20,38 @@ def matmul_inputs(size: dict[str, int]) -> list[torch.Tensor]:
     ]
 
 
-def conv_2d_op(input: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
-    return torch.nn.functional.conv2d(input, weight)
+def conv_2d_op(input: torch.Tensor, weight: torch.Tensor, stride: int) -> torch.Tensor:
+    return torch.nn.functional.conv2d(input, weight, stride=stride)
 
 
-def conv_2d_inputs(size: dict[str, int]) -> list[torch.Tensor]:
+def conv_2d_inputs(size: dict[str, int]) -> list[torch.Tensor | int]:
     return [
         torch.full((size['N'], size['C'], size['H'], size['W']), 2, dtype=torch.float64),
-        torch.full((size['F'], size['C'], size['KH'], size['KW']), 2, dtype=torch.float64)
+        torch.full((size['F'], size['C'], size['KH'], size['KW']), 2, dtype=torch.float64),
+        size['S']
+    ]
+
+
+def pooling_op(input: torch.Tensor, kernel_size: tuple[int, int], stride: int) -> torch.Tensor:
+    return torch.nn.functional.max_pool2d(input, kernel_size, stride=stride)
+
+
+def pooling_inputs(size: dict[str, int]) -> list[torch.Tensor | int]:
+    return [
+        torch.full((size['N'], size['C'], size['H'], size['W']), 2, dtype=torch.float64),
+        (size['KH'], size['KW']),
+        size['S']
+    ]
+
+
+def add_op(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    return torch.add(a, b)
+
+
+def add_inputs(size: list[int]) -> list[torch.Tensor]:
+    return [
+        torch.full(size, 2, dtype=torch.float64),
+        torch.full(size, 2, dtype=torch.float64)
     ]
 
 
@@ -48,6 +72,12 @@ def main():
         case "conv_2d":
             op = conv_2d_op
             inputs = conv_2d_inputs(size)
+        case "pooling":
+            op = pooling_op
+            inputs = pooling_inputs(size)
+        case "add":
+            op = add_op
+            inputs = add_inputs(size)
         case _:
             raise ValueError(f"Unsupported benchmark name: {name}")
 

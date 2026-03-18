@@ -14,14 +14,22 @@ from transformation import compile_aot, transform_module, bufferize_module, appl
 PARENT_DIR = Path(__file__).parents[2]
 
 
-def torch_worker(q, name, inputs):
+def torch_worker(q, name, inputs: list[np.ndarray]):
     import torch
 
     match name:
         case "conv_2d":
             res = torch.nn.functional.conv2d(
                 torch.from_numpy(inputs[0]),
-                torch.from_numpy(inputs[1])
+                torch.from_numpy(inputs[1]),
+                stride=2,
+            ).numpy()
+            q.put(res)
+        case "pooling":
+            res = torch.nn.functional.max_pool2d(
+                torch.from_numpy(inputs[0]),
+                kernel_size=inputs[1].shape,
+                stride=2
             ).numpy()
             q.put(res)
         case _:
@@ -65,6 +73,10 @@ def transform_and_run(id: str, transform_schedule: str, mlir_passes: str, llvm_p
             expected = np.matmul(inputs[0], inputs[1])
         case "conv_2d":
             expected = get_expected_pytorch(name, inputs)
+        case "pooling":
+            expected = get_expected_pytorch(name, inputs)
+        case "add":
+            expected = inputs[0] + inputs[1]
         case _:
             raise ValueError(f"Unsupported benchmark name: {name}")
     args_list = convert_to_args(inputs, outputs)

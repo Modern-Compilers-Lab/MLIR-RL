@@ -46,7 +46,7 @@ tmp/                         # Temporary files (not for LLM use)
 
 ## MLIR Code Format
 
-Each `.mlir` file in `data/` contains a function with a linalg operation tagged `{tag = "operation"}`. This tag is how the transform schedule identifies the target operation. Example (`matmul/2.mlir`):
+Each `.mlir` file in `data/` contains a function with linalg operations tagged `{tag = "..."}`. This tag is how the transform schedule identifies the target operation. Example (`matmul/2.mlir`):
 
 ```mlir
 func.func @main(%arg0: tensor<512x512xf64>, %arg1: tensor<512x512xf64>)

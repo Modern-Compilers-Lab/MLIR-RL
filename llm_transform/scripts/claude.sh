@@ -3,7 +3,6 @@
 # Define the resource requirements here using #SBATCH
 
 #SBATCH -J claude
-#SBATCH -q c2
 #SBATCH -p compute
 #SBATCH -c 8
 #SBATCH --mem=32G
