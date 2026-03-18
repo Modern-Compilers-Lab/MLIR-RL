@@ -5,7 +5,7 @@ module {
     %new = tensor.empty() : tensor<112x112x120x150xf64>
     %arg2 = linalg.fill ins(%c0 : f64) outs(%new : tensor<112x112x120x150xf64>) -> tensor<112x112x120x150xf64>
     %0 = call @nanoTime() : () -> i64
-    %1 = linalg.add ins(%arg0, %arg1 : tensor<112x112x120x150xf64>, tensor<112x112x120x150xf64>) outs(%arg2 : tensor<112x112x120x150xf64>) -> tensor<112x112x120x150xf64>
+    %1 = linalg.add {tag = "operation"} ins(%arg0, %arg1 : tensor<112x112x120x150xf64>, tensor<112x112x120x150xf64>) outs(%arg2 : tensor<112x112x120x150xf64>) -> tensor<112x112x120x150xf64>
     %2 = call @nanoTime() : () -> i64
     %3 = arith.subi %2, %0 : i64
     return %1, %3 : tensor<112x112x120x150xf64>, i64

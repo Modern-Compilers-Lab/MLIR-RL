@@ -74,7 +74,7 @@ def transform_module(module: Module, transform_schedule: str):
 
 
 @contextlib.contextmanager
-def compile_aot(mlir_code: str, llvm_passes: str, llvm_flags: str, llc_flags: str, out_dir: Path | None = None, intermediate_outs: dict | None = None):
+def compile_aot(mlir_code: str, llvm_passes: str, llvm_flags: str, llc_flags: str, out_dir: Path | None = None, intermediate_outs: dict | None = None, timeout: int = 60):
     """Compile MLIR to shared lib via opt+llc and run via ctypes (no JIT)."""
     if 'CONDA_PREFIX' not in os.environ:
         raise EnvironmentError("No Conda environment detected. Please activate a Conda environment before running this function.")
@@ -86,11 +86,15 @@ def compile_aot(mlir_code: str, llvm_passes: str, llvm_flags: str, llc_flags: st
 
     try:
         # MLIR → LLVM IR
-        result_llvm = subprocess.run(
-            ["mlir-translate", "--mlir-to-llvmir"],
-            input=mlir_code, text=True,
-            capture_output=True
-        )
+        try:
+            result_llvm = subprocess.run(
+                ["mlir-translate", "--mlir-to-llvmir"],
+                input=mlir_code, text=True,
+                capture_output=True, timeout=timeout
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(f"mlir-translate timed out after {timeout} seconds.")
+
         if result_llvm.returncode != 0:
             raise RuntimeError(f"mlir-translate failed:\n{result_llvm.stderr}")
         if intermediate_outs is not None and out_dir is not None:
@@ -105,10 +109,15 @@ def compile_aot(mlir_code: str, llvm_passes: str, llvm_flags: str, llc_flags: st
                 flag = flag.strip()
                 if flag:
                     opt_cmd.insert(1, f"--{flag}")
-        result_opt = subprocess.run(
-            opt_cmd, input=result_llvm.stdout,
-            text=True, capture_output=True
-        )
+
+        try:
+            result_opt = subprocess.run(
+                opt_cmd, input=result_llvm.stdout,
+                text=True, capture_output=True, timeout=timeout
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(f"opt timed out after {timeout} seconds.")
+
         if result_opt.returncode != 0:
             raise RuntimeError(f"opt failed:\n{result_opt.stderr}")
         if intermediate_outs is not None and out_dir is not None:
@@ -123,18 +132,27 @@ def compile_aot(mlir_code: str, llvm_passes: str, llvm_flags: str, llc_flags: st
                 flag = flag.strip()
                 if flag:
                     llc_cmd.insert(1, f"--{flag}")
-        result_obj = subprocess.run(
-            llc_cmd + ["-filetype=obj", "-o", obj_file.name],
-            input=result_opt.stdout, text=True, capture_output=True
-        )
+
+        try:
+            result_obj = subprocess.run(
+                llc_cmd + ["-filetype=obj", "-o", obj_file.name],
+                input=result_opt.stdout, text=True, capture_output=True, timeout=timeout
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(f"llc (obj) timed out after {timeout} seconds.")
+
         if result_obj.returncode != 0:
             raise RuntimeError(f"llc (obj) failed:\n{result_obj.stderr}")
 
         # Compile to assembly for analysis
-        result_asm = subprocess.run(
-            llc_cmd + ["-filetype=asm"], input=result_opt.stdout,
-            text=True, capture_output=True
-        )
+        try:
+            result_asm = subprocess.run(
+                llc_cmd + ["-filetype=asm"], input=result_opt.stdout,
+                text=True, capture_output=True, timeout=timeout
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(f"llc (asm) timed out after {timeout} seconds.")
+
         if result_asm.returncode != 0:
             raise RuntimeError(f"llc (asm) failed:\n{result_asm.stderr}")
         if intermediate_outs is not None and out_dir is not None:
@@ -143,12 +161,16 @@ def compile_aot(mlir_code: str, llvm_passes: str, llvm_flags: str, llc_flags: st
             intermediate_outs['asm'] = str(asm_path)
 
         # Link to shared library
-        result_link = subprocess.run([
-            "gcc", "-shared", obj_file.name,
-            f"-L{conda_lib}", "-lomp",
-            "-lmlir_runner_utils", "-lmlir_c_runner_utils",
-            "-lm", f"-Wl,-rpath,{conda_lib}", "-o", so_file.name
-        ], text=True, capture_output=True)
+        try:
+            result_link = subprocess.run([
+                "gcc", "-shared", obj_file.name,
+                f"-L{conda_lib}", "-lomp",
+                "-lmlir_runner_utils", "-lmlir_c_runner_utils",
+                "-lm", f"-Wl,-rpath,{conda_lib}", "-o", so_file.name
+            ], text=True, capture_output=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(f"gcc linking timed out after {timeout} seconds.")
+
         if result_link.returncode != 0:
             raise RuntimeError(f"gcc linking failed:\n{result_link.stderr}")
 
