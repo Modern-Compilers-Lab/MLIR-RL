@@ -38,11 +38,11 @@ def _save_best_config(id: str, transform_schedule: str, mlir_passes: str,
     config_dir.mkdir(parents=True, exist_ok=True)
     (config_dir / "schedule.mlir").write_text(transform_schedule)
     (config_dir / "passes.txt").write_text(mlir_passes)
-    lines = [f'--llvm_passes="{llvm_passes}"']
+    lines = [f'--llvm_passes={llvm_passes}']
     if llvm_flags:
-        lines.append(f'--llvm_flags="{llvm_flags}"')
+        lines.append(f'--llvm_flags={llvm_flags}')
     if llc_flags:
-        lines.append(f'--llc_flags="{llc_flags}"')
+        lines.append(f'--llc_flags={llc_flags}')
     (config_dir / "llvm-llc-passes-flags.txt").write_text(" ".join(lines) + "\n")
 
 
