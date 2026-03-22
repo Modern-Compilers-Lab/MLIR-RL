@@ -103,8 +103,8 @@ fi
 echo "Execution time (ns): $TIME_TORCH"
 echo "--------------------------"
 echo "Speedup over Base: $(echo "scale=4; $TIME_BASE / $TIME_OPT" | bc)x"
-SLOWDOWN=$(echo "scale=4; $TIME_OPT / $TIME_TORCH" | bc)
-echo "Slowdown compared to PyTorch: ${SLOWDOWN}x"
+SPEEDUP=$(echo "scale=4; $TIME_TORCH / $TIME_OPT" | bc)
+echo "Speedup compared to PyTorch: ${SPEEDUP}x"
 
 # Log performance metrics to the experiment directory if it exists
 STATS_DIR="logs/stats"
@@ -115,5 +115,5 @@ if [ -z "$LAST_ID" ]; then
 fi
 EXPERIMENT_DIR="$STATS_DIR/$LAST_ID"
 if [ -n "$EXPERIMENT_DIR" ]; then
-    echo "$(date '+%Y-%m-%d %H:%M:%S') | id=$CODE_ID | slowdown=${SLOWDOWN}x" >> "$EXPERIMENT_DIR/performance.log"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') | id=$CODE_ID | speedup=${SPEEDUP}x" >> "$EXPERIMENT_DIR/performance.log"
 fi

@@ -11,30 +11,30 @@ PARENT_DIR = Path(__file__).parents[2]
 def parse_performance_log(log_path: Path):
     entries = defaultdict(list)
     pattern = re.compile(
-        r"(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) \| id=(?P<id>\S+) \| slowdown=(?P<slowdown>[\d.]+)x"
+        r"(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) \| id=(?P<id>\S+) \| speedup=(?P<speedup>[\d.]+)x"
     )
     with open(log_path) as f:
         for line in f:
             m = pattern.match(line.strip())
             if m:
                 code_id = m.group("id")
-                slowdown = float(m.group("slowdown"))
-                entries[code_id].append(slowdown)
+                speedup = float(m.group("speedup"))
+                entries[code_id].append(speedup)
     return entries
 
 
 def plot(entries: dict, output_path: Path):
     fig, ax = plt.subplots(figsize=(10, 6))
-    for code_id, slowdowns in sorted(entries.items()):
-        ax.plot(range(1, len(slowdowns) + 1), slowdowns, label=f"ID {code_id}")
+    for code_id, speedups in sorted(entries.items()):
+        ax.plot(range(1, len(speedups) + 1), speedups, label=f"ID {code_id}")
     ax.set_yscale("log")  # <--- Add this line
     # Optional: Format the ticks so they don't look like scientific notation
     from matplotlib.ticker import ScalarFormatter
     ax.yaxis.set_major_formatter(ScalarFormatter())
     ax.set_xlabel("Iteration")
-    ax.set_ylabel("Slowdown (vs PyTorch)")
+    ax.set_ylabel("Speedup (vs PyTorch)")
     ax.axhline(y=1.0, color="gray", linestyle="--", linewidth=0.8, label="PyTorch baseline")
-    ax.set_title("Slowdown over Time")
+    ax.set_title("Speedup over Time")
     ax.legend()
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
@@ -49,7 +49,7 @@ def plot(entries: dict, output_path: Path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Plot slowdown over time per CODE_ID")
+    parser = argparse.ArgumentParser(description="Plot speedup over time per CODE_ID")
     parser.add_argument("experiment_id", type=int, help="Experiment ID")
     parser.add_argument("--stats-dir", default="logs/stats", help="Stats directory (default: logs/stats)")
     args = parser.parse_args()

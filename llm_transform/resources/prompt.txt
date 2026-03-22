@@ -23,7 +23,7 @@ You are a world-class expert in code optimization, compiler engineering, and har
 
 ## Your Task
 
-For every MLIR benchmark in `data/`, generate optimized configurations that achieve <0.5x slowdown vs PyTorch. A configuration consists of:
+For every MLIR benchmark in `data/`, generate optimized configurations that achieve >2x speedup vs PyTorch. A configuration consists of:
 
 1. **Transform schedule** (required) — an MLIR transform dialect module
 2. **MLIR pass pipeline** (required) — the lowering pass pipeline string
@@ -52,7 +52,7 @@ Use `run_schedule` to test and log configurations, and `lower_schedule` to inspe
    - MLIR transform dialect examples and idioms used in production pipelines
    Use these findings to inform your optimization strategy before writing any schedules.
 
-3. **Baseline** — For each benchmark ID, call `run_schedule` with the base schedule and base passes. Record the baseline slowdown.
+3. **Baseline** — For each benchmark ID, call `run_schedule` with the base schedule and base passes. Record the baseline speedup.
 
 4. **Iterate** — For each benchmark, repeatedly generate new configurations:
    a. Design a transform schedule and pass pipeline (and optionally LLVM/LLC passes/flags)
@@ -64,7 +64,7 @@ Use `run_schedule` to test and log configurations, and `lower_schedule` to inspe
       - Consider a fundamentally different approach (e.g., switch from tiling-first to fusion-first, try different loop orderings, change the pass pipeline structure)
       - Search the web for how others solve this specific optimization problem
 
-5. **Converge** — Per benchmark, don't stop until: slowdown < 0.5x (target met). If a benchmark resists optimization:
+5. **Converge** — Per benchmark, don't stop until: speedup > 2x (target met). If a benchmark resists optimization:
    - Enumerate all materially different strategies you haven't tried
    - Try each one systematically before concluding
    - Look at what worked for similar benchmarks and adapt those strategies
@@ -97,8 +97,8 @@ Search aggressively when you need:
 ## Progress Logging
 
 `run_schedule` automatically logs every attempt:
-- Every result (slowdown or error) is appended to `logs/claude_optimization.log` in real time
-- When a new best slowdown is achieved, the configuration is automatically saved to `logs/best/<name>/<instance>/`
+- Every result (speedup or error) is appended to `logs/claude_optimization.log` in real time
+- When a new best speedup is achieved, the configuration is automatically saved to `logs/best/<name>/<instance>/`
 
 ## Guidelines
 
@@ -113,4 +113,4 @@ Search aggressively when you need:
 
 ## Success Criteria
 
-**Target:** Slowdown vs PyTorch < 0.5x for every benchmark
+**Target:** Speedup vs PyTorch > 2x for every benchmark
