@@ -10,8 +10,10 @@
 #SBATCH -c 16
 #SBATCH --mem=100G
 #SBATCH -t 00:10:00
-#SBATCH -o llm_action/logs/jobs/torch_%j.out
-#SBATCH -e llm_action/logs/jobs/torch_%j.err
+#SBATCH -o llm_action/logs/jobs/torch/%j.out
+#SBATCH -e llm_action/logs/jobs/torch/%j.err
+#SBATCH --mail-user=kb5213@nyu.edu
+#SBATCH --mail-type=FAIL
 
 # Resource requirement commands end here
 

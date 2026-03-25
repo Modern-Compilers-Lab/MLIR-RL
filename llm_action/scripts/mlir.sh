@@ -5,13 +5,14 @@
 #SBATCH -J mlir_exec
 #SBATCH -p compute
 #SBATCH --reservation=c2
-#SBATCH --qos=c2
 #SBATCH --exclusive
-#SBATCH -c 16
-#SBATCH --mem=100G
+#SBATCH -c 28
+#SBATCH --mem=64G
 #SBATCH -t 00:10:00
-#SBATCH -o llm_action/logs/jobs/mlir_%j.out
-#SBATCH -e llm_action/logs/jobs/mlir_%j.err
+#SBATCH -o llm_action/logs/jobs/mlir/%j.out
+#SBATCH -e llm_action/logs/jobs/mlir/%j.err
+#SBATCH --mail-user=kb5213@nyu.edu
+#SBATCH --mail-type=FAIL
 
 # Resource requirement commands end here
 

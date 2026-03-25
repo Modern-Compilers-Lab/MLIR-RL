@@ -29,7 +29,7 @@ The core challenge addressed is that **manual action-space design for compiler R
 This system replaces manual action design with a **multi-agent LLM-driven pipeline** that:
 1. reasons about *what optimizations are useful*,
 2. synthesizes *executable, parameterized actions* with contracts,
-3. verifies *composability and correctness* before integrating actions into an RL environment.
+3. verifies *composability and correctness* and establishes a benchmark before integrating actions into an RL environment.
 
 ## 2. High-Level Architecture
 
@@ -83,12 +83,12 @@ Key Properties:
 - Actions must be **stable, reusable, and parameterizable**.
 - Actions are independent artifacts that can be injected directly into an RL environment.
 
-Output Artifact
-- An **Action Package** (JSON + embedded Python code) that can be loaded and executed without human intervention.
+Output Artifact:
+- An **Action Package** (embedded Python code) that can be loaded and executed without human intervention.
 
-### Layer 3 — Schedule & Interaction Verification Agent
+### Layer 3 — Schedule & Interaction Verification and Benchmarking Agent
 
-Role: Acts as an **integration and validation agent**.
+Role: Acts as an **integration, validation and benchmarking agent**.
 
 Responsibility:
 - Combine synthesized actions into **sequences (schedules)**.
@@ -97,11 +97,12 @@ Responsibility:
   * preserve IR validity,
   * compose correctly with one another.
 - Discover **ordering constraints**, conflicts, and enabling relationships.
+- Benchmark the performance of different action sequences.
 
 Key Properties:
-- Performance optimality is *not* the primary concern here.
 - Focus is on **correctness, composability, and robustness**.
 - Failures are minimized to short, reproducible sequences.
+- Benchmarks are used to establish a performance baseline and guide future action synthesis.
 
 Output Artifact:
 - Validated action sequences.
@@ -170,6 +171,7 @@ Violating layer boundaries (e.g., Layer-1 writing transform code) is considered 
     - FP64: typically 4 lanes per vector (256-bit)
 - Cache hierarchy characteristics:
   * L1d ~32KB per core, L2 ~256KB per core, shared L3 per socket (~tens of MB).
+- Number of cores in the execution environment (submitted MLIR/PyTorch jobs): **28 physical cores**.
 - Optimization emphasis for this hardware:
   * **cache-aware tiling** (L1/L2-friendly) and **SIMD vectorization** (AVX2-level),
   * **coarse-grain parallelism** over outer loops (avoid oversubscription),
@@ -394,8 +396,8 @@ class ActionEnumeration(BaseModel):
 
 # Output Constraints
 
-- Produce **3-5 optimization intents**.
-- Each intent must contain **3-5 transformations**.
+- Produce **1-3 optimization intents**.
+- Each intent must contain **1-2 transformations**.
 - Use consistent transformation names across intents (avoid duplicates with different names).
 - Keep descriptions concise (1-2 sentences).
 - Do **not** include parameter knobs, preconditions, ordering rules, or code.

@@ -28,7 +28,7 @@ INPUT MLIR CODE:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--kernel-type", type=KernelType, choices=list(KernelType), default=KernelType.MATMUL)
-    parser.add_argument("--kernel-number", type=int, default=0)
+    parser.add_argument("--kernel-number", type=int, default=1)
     args = parser.parse_args()
 
     prompt = get_claude_run_prompt(kernel_type=args.kernel_type, kernel_number=args.kernel_number)

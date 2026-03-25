@@ -25,3 +25,15 @@ class ActionBase(ABC):
     @abstractmethod
     def postcondition(cls, before: str, after: str, params: dict) -> bool:
         pass
+
+    @classmethod
+    def params_size(cls) -> int:
+        return 0
+
+    @classmethod
+    def classes_per_slot(cls, n_loops: int) -> list[int]:
+        return []
+
+    @classmethod
+    def decode_params(cls, raw_slots: list[int], n_loops: int) -> dict:
+        return {}

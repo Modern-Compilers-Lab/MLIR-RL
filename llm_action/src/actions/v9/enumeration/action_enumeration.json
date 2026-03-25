@@ -1,0 +1,58 @@
+{
+  "intents": [
+    {
+      "name": "Cache Locality and Data Reuse",
+      "description": "Restructure the iteration space and data layout so that working sets fit within cache hierarchy levels (L1/L2), maximizing temporal and spatial data reuse.",
+      "rationale": "Dense loop nests operating on multi-dimensional tensors easily exceed cache capacity at typical sizes. Without blocking, repeated streaming from main memory dominates execution time. Tiling and packing are the most impactful optimizations for such workloads on cache-based CPU architectures.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Partition the iteration space into smaller blocks (tiles) so that the data accessed within each tile fits in a target cache level, converting long-range reuse into short-range reuse.",
+          "rationale": "Tiling is the foundational loop-nest optimization for cache locality. It reduces the working set per iteration block to fit L1 or L2 capacity, transforming O(N) reuse distances into O(tile_size) distances. Essential for any compute-intensive loop nest on cache-based hardware.",
+          "action_template": "Tiling(tile_sizes) OR Tiling(loop_id, factor) OR Tiling(loop_band, tile_sizes) — tile_sizes is a vector of per-loop tile factors where 0 means 'do not tile that loop'; loop_band identifies a contiguous band of loops to tile together"
+        },
+        {
+          "name": "Packing",
+          "description": "Copy tiled data into contiguous temporary buffers before computation, eliminating non-unit strides and cache-line conflicts within tiled blocks.",
+          "rationale": "After tiling, the accessed sub-arrays may still have large strides in memory, causing cache-line waste and TLB pressure. Packing reorganizes data into dense, contiguous layouts matching the tile shape, which improves prefetch efficiency and eliminates conflict misses. This is a standard technique in high-performance BLAS implementations.",
+          "action_template": "Packing(target_operand) OR Packing(target_operand, packed_sizes) — target_operand selects which operand to pack; packed_sizes optionally specifies the packing tile dimensions"
+        }
+      ]
+    },
+    {
+      "name": "SIMD Exploitation",
+      "description": "Restructure loops and map innermost computation to vector (SIMD) instructions to exploit the processor's data-parallel execution units.",
+      "rationale": "The target CPU provides AVX2 with FMA capable of 4 FP64 operations per vector instruction. Achieving peak throughput requires that the innermost loop operates on contiguous data at vector width. This needs both correct loop ordering and explicit vectorization mapping.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Vectorization",
+          "description": "Map the innermost loop computation to SIMD vector instructions, processing multiple data elements per cycle using the available vector execution units.",
+          "rationale": "Without vectorization, only scalar FP64 operations are used, leaving 75% of the AVX2 FMA throughput unused (4 lanes per vector). Vectorization is essential to approach peak FLOP/s on any modern CPU with wide SIMD units.",
+          "action_template": "Vectorization(target_loop, vector_width) OR Vectorization(loop_band, vector_width) — target_loop identifies which loop to vectorize; vector_width specifies the number of SIMD lanes (e.g., 4 for FP64 on AVX2)"
+        },
+        {
+          "name": "Loop Interchange",
+          "description": "Reorder (permute) loops in a loop nest to change which dimension is innermost, affecting memory access stride patterns and enabling contiguous vector loads/stores.",
+          "rationale": "Vectorization requires contiguous (unit-stride) memory access in the innermost loop. If the natural loop order produces strided or non-contiguous access, interchange can reposition a suitable loop to the innermost level. This directly enables efficient vector load/store operations and improves spatial locality.",
+          "action_template": "LoopInterchange(loop_band, permutation) OR LoopInterchangeSwap(adjacent_pair) OR LoopInterchangeMove(loop_id, new_position) — permutation is a reordering of loop indices; adjacent_pair swaps two neighboring loops; loop_id with new_position moves a specific loop"
+        }
+      ]
+    },
+    {
+      "name": "Coarse-Grain Parallelism",
+      "description": "Distribute independent iterations of outer loops across multiple CPU cores to exploit the multi-core and multi-socket hardware topology.",
+      "rationale": "The target machine has 28 physical cores across 2 NUMA nodes. After tiling creates independent work blocks, outer parallel loops can be distributed across cores for near-linear speedup. Rated medium because single-core optimizations (tiling + vectorization) typically yield larger per-core gains, and parallelization adds overhead that can hurt at small problem sizes.",
+      "priority": "medium",
+      "transformations": [
+        {
+          "name": "Parallelization",
+          "description": "Mark outer parallel loop dimensions for distribution across multiple threads or cores, partitioning the iteration space into independent work chunks.",
+          "rationale": "Dense loop nests with tiled outer dimensions expose embarrassingly parallel work. Distributing this across the 28 available cores multiplies throughput for large enough problem sizes. Proper granularity control avoids over-parallelization overhead.",
+          "action_template": "Parallelization(target_loop) OR Parallelization(loop_band, num_threads) — target_loop identifies which outer loop to parallelize; num_threads optionally controls the degree of parallelism"
+        }
+      ]
+    }
+  ]
+}

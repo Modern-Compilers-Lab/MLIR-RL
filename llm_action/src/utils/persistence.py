@@ -8,7 +8,7 @@ from llm_action.src.utils.scrape import collect_md_tree, collect_md_doc
 
 from llm_action.src.config import ACTION_ENUMERATION_CACHE, CLAUDE_LLM_MODEL
 
-def load_kernel_code(kernel_type: KernelType, kernel_number: int = 2, input_type: InputType = InputType.MEMREF) -> str:
+def load_kernel_code(kernel_type: KernelType, kernel_number: int = 1, input_type: InputType = InputType.TENSOR) -> str:
     dir = f"llm_action/data/{input_type.value}/{kernel_type.value}"
     match kernel_type:
         case KernelType.MATMUL:
@@ -37,7 +37,7 @@ def load_kernel_code(kernel_type: KernelType, kernel_number: int = 2, input_type
         code = f.read()
     return code
 
-def load_kernel_code_template(kernel_type: KernelType, input_type: InputType = InputType.MEMREF) -> str:
+def load_kernel_code_template(kernel_type: KernelType, input_type: InputType = InputType.TENSOR) -> str:
     dir = f"llm_action/data/{input_type.value}/{kernel_type.value}"
     match kernel_type:
         case KernelType.MATMUL:

@@ -214,10 +214,10 @@ def get_layer1_system_prompt(intents_num_min: int = 2, intents_num_max: int = 4,
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--intents_num_min", type=int, default=3)
-    parser.add_argument("--intents_num_max", type=int, default=5)
-    parser.add_argument("--transformations_num_min", type=int, default=3)
-    parser.add_argument("--transformations_num_max", type=int, default=5)
+    parser.add_argument("--intents_num_min", type=int, default=1)
+    parser.add_argument("--intents_num_max", type=int, default=3)
+    parser.add_argument("--transformations_num_min", type=int, default=1)
+    parser.add_argument("--transformations_num_max", type=int, default=2)
     args = parser.parse_args()
 
     prompt = get_layer1_system_prompt(args.intents_num_min, args.intents_num_max, args.transformations_num_min, args.transformations_num_max)    

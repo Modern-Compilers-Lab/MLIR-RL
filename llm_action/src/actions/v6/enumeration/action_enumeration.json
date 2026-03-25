@@ -1,0 +1,52 @@
+{
+  "intents": [
+    {
+      "name": "Cache Locality Optimization",
+      "description": "Restructure the loop nest iteration space to improve temporal and spatial data reuse across the L1/L2/L3 cache hierarchy, minimizing DRAM traffic.",
+      "rationale": "Dense loop nests like matrix multiplication access multiple large tensors with differing stride patterns. Without blocking, the working set exceeds cache capacity, causing performance to be bottlenecked by memory bandwidth rather than compute.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Partition the iteration space of a loop nest into smaller blocks (tiles) so that the data accessed within each tile fits in a target cache level.",
+          "rationale": "Tiling is the foundational transformation for cache-aware execution of dense loop nests. It converts O(N) capacity misses into O(N/B) block transfers, directly improving data reuse across all cache levels.",
+          "action_template": "Tiling(tile_sizes) OR Tiling(loop_id, factor) OR Tiling(loop_band, tile_sizes) — tile_sizes is a vector with one entry per loop dimension; a value of 0 means 'do not tile' that dimension. loop_id selects a specific loop and factor is the tile size for that loop. loop_band selects the band of loops to tile jointly."
+        },
+        {
+          "name": "Loop Interchange",
+          "description": "Permute the ordering of loops in a loop nest to change the memory access pattern, improving spatial locality or enabling more efficient vectorization of the innermost loop.",
+          "rationale": "Loop ordering determines which memory dimensions are traversed in the innermost position, directly affecting cache line utilization and stride patterns. Reordering can convert strided accesses into sequential scans, improving spatial locality.",
+          "action_template": "LoopInterchange(loop_band, permutation) OR LoopInterchangeSwap(loop_id_a, loop_id_b) — permutation is an array specifying the new loop ordering within the band. LoopInterchangeSwap swaps two specific loops identified by their indices."
+        }
+      ]
+    },
+    {
+      "name": "SIMD Exploitation",
+      "description": "Map loop iterations to hardware vector (SIMD) lanes to execute multiple data-parallel operations per clock cycle, targeting AVX2 256-bit vector units.",
+      "rationale": "The target CPU supports AVX2+FMA with 4-wide FP64 vector operations. Without vectorization, the kernel achieves at most 1/4 of the hardware peak throughput. Exploiting SIMD is essential for compute-bound loop nests.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Vectorization",
+          "description": "Convert scalar loop iterations into vector operations by mapping the innermost loop dimension onto SIMD lanes, enabling data-parallel execution.",
+          "rationale": "Vectorization directly translates loop parallelism into hardware SIMD throughput. For FP64 on AVX2, this provides up to a 4x speedup per core. The transformation requires the target loop to have contiguous memory access for efficient vector loads and stores.",
+          "action_template": "Vectorization(target_loop, vector_width) OR Vectorization(loop_band, vector_sizes) — target_loop identifies which loop to vectorize; vector_width specifies the number of SIMD lanes. vector_sizes is a vector with one entry per loop dimension specifying vectorization width (0 means do not vectorize that dimension)."
+        }
+      ]
+    },
+    {
+      "name": "Work Distribution",
+      "description": "Partition loop iterations across multiple CPU cores to exploit coarse-grain thread-level parallelism on the multi-core, multi-socket target.",
+      "rationale": "The target machine has 28 physical cores across 2 NUMA nodes. Single-threaded execution utilizes only ~3.5% of available compute. Distributing independent loop iterations across cores is necessary to scale performance, especially for large problem sizes.",
+      "priority": "medium",
+      "transformations": [
+        {
+          "name": "Parallelization",
+          "description": "Distribute iterations of parallel (non-reduction) loops across hardware threads, enabling concurrent execution on multiple CPU cores.",
+          "rationale": "Outer parallel loops in dense loop nests carry independent iterations that can execute concurrently. Parallelizing these loops enables near-linear scaling with core count for sufficiently large problem sizes, though benefit is shape-dependent and requires avoiding oversubscription.",
+          "action_template": "Parallelization(target_loop, num_threads) OR Parallelization(loop_band) — target_loop selects which parallel loop to distribute; num_threads optionally constrains the degree of parallelism. loop_band selects all parallelizable loops in the band for automatic distribution."
+        }
+      ]
+    }
+  ]
+}

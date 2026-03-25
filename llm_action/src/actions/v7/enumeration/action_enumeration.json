@@ -1,0 +1,52 @@
+{
+  "intents": [
+    {
+      "name": "Data Locality Optimization",
+      "description": "Restructure the iteration space to maximize temporal and spatial data reuse in the cache hierarchy, reducing main memory traffic for compute-intensive loop nests.",
+      "rationale": "Matrix multiplication has O(N^3) compute on O(N^2) data. Without tiling and proper loop ordering, the working set streams through cache with poor reuse, leaving most compute bandwidth unused. On the target Broadwell CPU with 32KB L1 and 256KB L2, blocking the iteration space to fit tile footprints in cache is the single most impactful optimization.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Partition the iteration space of a loop nest into smaller blocks (tiles) so that the data footprint of each tile fits within a target cache level, improving temporal reuse.",
+          "rationale": "Tiling is the foundational transformation for dense linear algebra on CPUs. It converts streaming memory access patterns into blocked patterns with high reuse, directly reducing cache misses and memory bandwidth pressure.",
+          "action_template": "Tiling(tile_sizes) OR Tiling(loop_id, factor) OR Tiling(loop_band, tile_sizes) — tile_sizes is a vector with one entry per loop dimension (0 means do not tile that dimension); factor is a single tile size for one loop"
+        },
+        {
+          "name": "Loop Interchange",
+          "description": "Permute the ordering of loops in a loop band to improve memory access patterns, enabling stride-1 access on the innermost loop for better spatial locality and vectorization readiness.",
+          "rationale": "Loop ordering determines memory access stride. For row-major tensors, having the innermost loop iterate along the last (contiguous) dimension enables sequential memory access and efficient cache line utilization. Incorrect loop order causes strided access, increasing cache misses and preventing efficient vectorization.",
+          "action_template": "LoopInterchange(loop_band, permutation) OR LoopInterchangeSwap(adjacent_pair) OR LoopInterchangeMove(loop_id, shift) — permutation is an ordering of loop indices; adjacent_pair swaps two neighboring loops; shift moves a loop by a relative offset"
+        }
+      ]
+    },
+    {
+      "name": "Compute Throughput Optimization",
+      "description": "Map loop nest computations onto SIMD vector hardware to maximize arithmetic throughput per cycle.",
+      "rationale": "The target CPU has AVX2+FMA capable of 4 FP64 multiply-add operations per cycle per core. Without vectorization, the kernel operates at a fraction of peak throughput. Exposing SIMD parallelism in the innermost loop is essential for performance on any compute-bound kernel.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Vectorization",
+          "description": "Map iterations of a loop dimension onto SIMD vector lanes, enabling the use of AVX2 vector instructions for parallel arithmetic on multiple data elements per cycle.",
+          "rationale": "Vectorization is required to utilize the 256-bit AVX2+FMA units on Broadwell. For FP64, this means processing 4 elements per vector instruction. Without it, the kernel is limited to scalar throughput, achieving at most 1/4 of peak FLOP rate.",
+          "action_template": "Vectorization(target_loop, vector_width) OR Vectorization(loop_band, vector_width) — target_loop identifies which loop to vectorize; vector_width specifies the number of SIMD lanes (elements per vector operation)"
+        }
+      ]
+    },
+    {
+      "name": "Scalability via Parallelism",
+      "description": "Distribute independent loop iterations across multiple CPU cores to exploit thread-level parallelism for larger workloads.",
+      "rationale": "The target machine has 28 physical cores across 2 NUMA nodes. For problem sizes where single-core performance is insufficient, distributing parallel (non-reduction) loop iterations across cores provides near-linear speedup. This is a standard optimization for any loop nest with independent outer iterations.",
+      "priority": "medium",
+      "transformations": [
+        {
+          "name": "Parallelization",
+          "description": "Distribute iterations of parallel (non-reduction) loops across available CPU cores using work partitioning, enabling concurrent execution of independent loop iterations.",
+          "rationale": "Outer loops of matrix multiplication iterate over independent output elements and are trivially parallelizable. On a 28-core machine, parallelization can provide up to 28x speedup for sufficiently large problem sizes, though overhead must be balanced against tile granularity.",
+          "action_template": "Parallelization(target_loop, num_threads) OR Parallelization(loop_band, distribution_strategy) — target_loop selects which parallel loop to distribute; num_threads controls thread count; distribution_strategy specifies how iterations are partitioned"
+        }
+      ]
+    }
+  ]
+}

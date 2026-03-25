@@ -1,0 +1,342 @@
+================================================================================
+MCP Optimization Log: matmul_128_256_128.mlir
+Date: 2026-03-18
+Source: llm_action/data/tensor/matmul/matmul_128_256_128.mlir
+Operation: linalg.matmul (128x256) x (256x128) -> (128x128), f64
+================================================================================
+
+BASELINE
+  Description: Original unoptimized linalg.matmul
+  Execution time: 5.552 ms
+  Correctness: PASS
+
+================================================================================
+PHASE 1: SINGLE TRANSFORMATIONS
+================================================================================
+
+CANDIDATE 1: Tiling [32, 32, 32]
+  Action: tiling_tool(tile_sizes=[32, 32, 32])
+  Precondition: PASS | Postcondition: PASS
+  Execution time: 2.085 ms | Speedup: 2.66x
+  Notes: Moderate tile size, good cache locality improvement.
+
+CANDIDATE 2: Tiling [64, 64, 64]
+  Action: tiling_tool(tile_sizes=[64, 64, 64])
+  Precondition: PASS | Postcondition: PASS
+  Execution time: 4.734 ms | Speedup: 1.17x
+  Notes: Large tiles, limited improvement. Tiles too big for L1 cache.
+
+CANDIDATE 3: Tiling [16, 16, 16]
+  Action: tiling_tool(tile_sizes=[16, 16, 16])
+  Precondition: PASS | Postcondition: PASS
+  Execution time: 1.788 ms | Speedup: 3.10x
+  Notes: Smaller tiles fit well in L1 cache, best single-tiling result.
+
+CANDIDATE 4: Parallelization (4 threads)
+  Action: parallelization_tool(num_threads=4)
+  Precondition: PASS | Postcondition: PASS
+  Execution time: 1.508 ms | Speedup: 3.68x
+
+CANDIDATE 5: Tiling [8, 8, 8]
+  Action: tiling_tool(tile_sizes=[8, 8, 8])
+  Precondition: PASS | Postcondition: PASS
+  Execution time: 3.780 ms | Speedup: 1.47x
+
+CANDIDATE 6: Tiling [16, 32, 16] (asymmetric)
+  Action: tiling_tool(tile_sizes=[16, 32, 16])
+  Precondition: PASS | Postcondition: PASS
+  Execution time: 1.746 ms | Speedup: 3.18x
+
+CANDIDATE 7: Parallelization (8 threads)
+  Action: parallelization_tool(num_threads=8)
+  Precondition: PASS | Postcondition: PASS
+  Execution time: 0.788 ms | Speedup: 7.04x
+
+CANDIDATE 8: Parallelization (16 threads)
+  Action: parallelization_tool(num_threads=16)
+  Precondition: PASS | Postcondition: PASS
+  Execution time: 0.437 ms | Speedup: 12.70x
+
+CANDIDATE 9: Parallelization (32 threads)
+  Action: parallelization_tool(num_threads=32)
+  Precondition: PASS | Postcondition: PASS
+  Execution time: 0.436 ms | Speedup: 12.74x
+
+CANDIDATE 10: Parallelization (64 threads)
+  Action: parallelization_tool(num_threads=64)
+  Precondition: PASS | Postcondition: PASS
+  Execution time: 0.346 ms | Speedup: 16.05x
+
+CANDIDATE 11: Parallelization (128 threads)
+  Action: parallelization_tool(num_threads=128)
+  Precondition: PASS | Postcondition: PASS
+  Execution time: 0.300 ms | Speedup: 18.51x
+
+CANDIDATE 12: Parallelization (256 threads) - dynamic shapes
+  Action: parallelization_tool(num_threads=256)
+  Precondition: PASS | Postcondition: PASS
+  Execution time: 0.517 ms | Speedup: 10.74x
+  Notes: Dynamic tensor shapes due to 128 not divisible by 256. Overhead hurts.
+
+================================================================================
+PHASE 2: TWO-LEVEL COMBINATIONS
+================================================================================
+
+CANDIDATE 13: Tiling [32,32,32] + Parallelization (4 threads)
+  Action: tiling -> parallelization (tile-first)
+  Execution time: 9.619 ms | Speedup: 0.58x (REGRESSION)
+  Notes: Parallelization inside inner tiled loop = excessive thread overhead.
+
+CANDIDATE 14: Tiling [16,16,16] + Parallelization (4 threads)
+  Action: tiling -> parallelization (tile-first)
+  Execution time: 76.074 ms | Speedup: 0.07x (SEVERE REGRESSION)
+
+CANDIDATE 15: Parallelization (8) + Tiling [0, 16, 32]
+  Action: parallelization(8) -> tiling(0, 16, 32)
+  Precondition: PASS | Postcondition: PASS
+  Execution time: 0.351 ms | Speedup: 15.80x
+
+CANDIDATE 16: Parallelization (32) + Tiling [0, 16, 32]
+  Action: parallelization(32) -> tiling(0, 16, 32)
+  Precondition: PASS | Postcondition: PASS
+  Execution time: 0.239 ms | Speedup: 23.23x
+
+CANDIDATE 17: Parallelization (64) + Tiling [0, 16, 32]
+  Action: parallelization(64) -> tiling(0, 16, 32)
+  Precondition: PASS | Postcondition: PASS
+  Execution time: 0.200 ms | Speedup: 27.76x
+
+CANDIDATE 18: Parallelization (128) + Tiling [0, 16, 32]
+  Action: parallelization(128) -> tiling(0, 16, 32)
+  Precondition: PASS | Postcondition: PASS
+  Execution time: 0.192 ms | Speedup: 28.92x
+
+CANDIDATE 19: Parallelization (128) + Tiling [0, 32, 64]
+  Action: parallelization(128) -> tiling(0, 32, 64)
+  Execution time: 0.280 ms | Speedup: 19.83x
+
+CANDIDATE 20: Parallelization (128) + Tiling [0, 64, 128]
+  Action: parallelization(128) -> tiling(0, 64, 128)
+  Execution time: 0.291 ms | Speedup: 19.08x
+
+CANDIDATE 21: Tiling [16,16,16] + Loop Interchange [2,0,1]
+  Action: tiling -> loop_interchange
+  Precondition: PASS | Postcondition: PASS
+  Execution time: 4.179 ms | Speedup: 1.33x
+
+================================================================================
+PHASE 3: MULTI-LEVEL TILING + PARALLELIZATION
+================================================================================
+
+CANDIDATE 22: P(128) + Tile(0,16,32) + Tile(0,0,8) [3-level tiling]
+  Action: parallelization(128) -> tiling(0,16,32) -> tiling(0,0,8)
+  Precondition: PASS | Postcondition: PASS
+  Execution time: 0.181 ms | Speedup: 30.67x
+  Notes: 3-level inner tiling: 1x32*32x16 -> 1x8*8x16 sub-blocks.
+
+CANDIDATE 23: P(128) + Tile(0,16,32) + Tile(0,0,8) + Tile(0,0,4) [4-level]
+  Action: ... -> tiling(0,0,4)
+  Precondition: PASS | Postcondition: PASS
+  Execution time: 0.166 ms | Speedup: 33.51x
+  Notes: 4-level K-split: further decomposing reduction dimension.
+
+CANDIDATE 24: P(128) + 3-level + Interchange [1,0,2]
+  Action: ... -> loop_interchange(1,0,2) on 3-level code
+  Precondition: PASS | Postcondition: PASS
+  Execution time: 0.177 ms | Speedup: 31.37x
+
+CANDIDATE 25: P(128) + 3-level + Tile [0,8,0] [N-split]
+  Action: ... -> tiling(0,8,0)
+  Execution time: 0.240 ms | Speedup: 23.13x
+
+================================================================================
+PHASE 4: VECTORIZATION (INITIAL)
+================================================================================
+
+CANDIDATE 26: P(128) + 4-level tiling + Vectorize [1,16,4]
+  Action: parallelization(128) -> tiling(0,16,32) -> tiling(0,0,8) -> tiling(0,0,4)
+          -> vectorization_tool(vector_sizes=[1,16,4])
+  Precondition: PASS | Postcondition: PASS
+  Execution time: 0.139 ms | Speedup: 40.06x
+  Notes: Vectorization on inner 1x4*4x16 kernel. Uses vector<1x16x4xf64> with
+         multi_reduction. First successful vectorization!
+
+CANDIDATE 27: P(128) + Tile(0,8,4) + Vectorize [1,8,4]
+  Action: parallelization(128) -> tiling(0,8,4) -> vectorization(1,8,4)
+  Precondition: PASS | Postcondition: PASS
+  Execution time: 0.136 ms | Speedup: 40.85x
+  Notes: Simpler 2-level path: P128 -> single tile(0,8,4) -> vectorize.
+         Inner kernel: 1x4*4x8, vectorized to vector<1x8x4xf64>.
+
+CANDIDATE 28: P(128) + Tile(0,4,4) + Vectorize [1,4,4]
+  Action: parallelization(128) -> tiling(0,4,4) -> vectorization(1,4,4)
+  Precondition: PASS | Postcondition: PASS
+  Execution time: 0.207 ms | Speedup: 26.82x
+  Notes: Smaller vector width (4), more loop iterations needed.
+
+CANDIDATE 29: P(128) + 3-level + Tile [0,8,0] [5-level N-split]
+  Action: 4-level + tiling(0,8,0)
+  Execution time: 0.249 ms | Speedup: 22.30x
+
+CANDIDATE 30: P(128) + 3-level + Tile [0,4,2] [5-level fine-grain]
+  Action: 4-level + tiling(0,4,2)
+  Execution time: 0.227 ms | Speedup: 24.46x
+
+================================================================================
+PHASE 5: WIDER VECTORIZATION EXPLORATION
+================================================================================
+
+Strategy: Systematically explore wider N-dimension vectors with smaller K to maximize
+SIMD utilization. Key constraint discovered: vectorization precondition requires
+M*N*K <= 64 elements total in the vector type.
+
+--- K=4 variants (matching vector element count: M*N*K) ---
+
+CANDIDATE 31: P(128) + Tile(0,16,4) + Vec(1,16,4)
+  Action: parallelization(128) -> tiling(0,16,4) -> vectorization(1,16,4)
+  Precondition: PASS | Postcondition: PASS | vector<1x16x4xf64> (64 elements)
+  Execution time: 0.136 ms | Speedup: 40.87x
+  Notes: Wider N=16 with K=4. Same performance as Candidate 27.
+
+--- K=2 variants (wider N possible) ---
+
+CANDIDATE 32: P(128) + Tile(0,16,2) + Vec(1,16,2)
+  Action: parallelization(128) -> tiling(0,16,2) -> vectorization(1,16,2)
+  Precondition: PASS | Postcondition: PASS | vector<1x16x2xf64> (32 elements)
+  Execution time: 0.133 ms | Speedup: 41.63x
+  Notes: Wider N=16 with smaller K=2 reduction. Slight improvement over K=4.
+
+CANDIDATE 33: P(128) + Tile(0,8,2) + Vec(1,8,2)
+  Action: parallelization(128) -> tiling(0,8,2) -> vectorization(1,8,2)
+  Precondition: PASS | Postcondition: PASS | vector<1x8x2xf64> (16 elements)
+  Execution time: 0.149 ms | Speedup: 37.28x
+
+CANDIDATE 34: P(128) + Tile(0,32,2) + Vec(1,32,2)
+  Action: parallelization(128) -> tiling(0,32,2) -> vectorization(1,32,2)
+  Precondition: PASS | Postcondition: PASS | vector<1x32x2xf64> (64 elements)
+  Execution time: 0.133 ms | Speedup: 41.63x
+  Notes: N=32 with K=2 matches N=16/K=2 performance.
+
+--- K=1 variants (broadcast-multiply pattern, widest possible N) ---
+
+CANDIDATE 35: P(128) + Tile(0,16,1) + Vec(1,16,1)
+  Action: parallelization(128) -> tiling(0,16,1) -> vectorization(1,16,1)
+  Precondition: PASS | Postcondition: PASS | vector<1x16x1xf64> (16 elements)
+  Execution time: 0.136 ms | Speedup: 40.82x
+
+CANDIDATE 36: P(128) + Tile(0,32,1) + Vec(1,32,1)  *** NEW BEST ***
+  Action: parallelization(128) -> tiling(0,32,1) -> vectorization(1,32,1)
+  Precondition: PASS | Postcondition: PASS | vector<1x32x1xf64> (32 elements)
+  Execution time: 0.122 ms | Speedup: 45.42x
+  Notes: BEST RESULT! Broadcast scalar from A, vector-multiply with 32-wide B row,
+         accumulate into C. 32 f64 = 256 bytes fits perfectly in 8 AVX-512 zmm registers.
+
+CANDIDATE 37: P(128) + Tile(0,64,1) + Vec(1,64,1)
+  Action: parallelization(128) -> tiling(0,64,1) -> vectorization(1,64,1)
+  Precondition: PASS | Postcondition: PASS | vector<1x64x1xf64> (64 elements)
+  Execution time: 0.166 ms | Speedup: 33.46x
+  Notes: Too wide — register spilling causes slowdown vs N=32.
+
+--- Multi-level tiling + K=1 vectorization ---
+
+CANDIDATE 38: P(128) + Tile(0,32,4) + Tile(0,0,1) + Vec(1,32,1)
+  Action: parallelization(128) -> tiling(0,32,4) -> tiling(0,0,1) -> vectorization(1,32,1)
+  Precondition: PASS | Postcondition: PASS | vector<1x32x1xf64>
+  Execution time: 0.140 ms | Speedup: 39.76x
+  Notes: Extra tiling level adds overhead vs simple Tile(0,32,1). K-blocking not
+         beneficial when vectorization already handles the reduction.
+
+FAILED VECTORIZATIONS (all sessions):
+  Phase 4 failures:
+  - vectorization(128,128,256) on base code: precondition FAIL
+  - vectorization(8,8,8) on tile(16,16,16): precondition FAIL
+  - vectorization(16,16,16) on tile(32,32,32): precondition FAIL
+  - vectorization(1,16,32) on P128+tile(0,16,32): precondition FAIL
+  - vectorization(1,8,16) on P128+tile(0,16,32): precondition FAIL
+  - vectorization(1,16,8) on P128+tile(0,16,32): precondition FAIL
+  Phase 5 failures (M*N*K > 64 elements):
+  - vectorization(1,32,4) on P128+tile(0,32,4): precondition FAIL (128 elements)
+  - vectorization(1,16,8) on P128+tile(0,16,8): precondition FAIL (128 elements)
+  - vectorization(1,32,8) on P128+tile(0,32,8): precondition FAIL (256 elements)
+  - vectorization(1,64,2) on P128+tile(0,64,2): precondition FAIL (128 elements)
+  - vectorization(1,128,1) on P128+tile(0,128,1): precondition FAIL (128 elements)
+
+================================================================================
+FINAL SUMMARY (UPDATED)
+================================================================================
+
+Rank | Candidate                              | Time (ms) | Speedup | Vec Elements
+-----|----------------------------------------|-----------|---------|-------------
+  1  | P(128)+Tile(0,32,1)+Vec(1,32,1)       |     0.122 | 45.42x  | 32
+  2  | P(128)+Tile(0,16,2)+Vec(1,16,2)       |     0.133 | 41.63x  | 32
+  3  | P(128)+Tile(0,32,2)+Vec(1,32,2)       |     0.133 | 41.63x  | 64
+  4  | P(128)+Tile(0,16,4)+Vec(1,16,4)       |     0.136 | 40.87x  | 64
+  5  | P(128)+Tile(0,8,4)+Vec(1,8,4)         |     0.136 | 40.85x  | 32
+  6  | P(128)+Tile(0,16,1)+Vec(1,16,1)       |     0.136 | 40.82x  | 16
+  7  | P(128)+4-level+Vec(1,16,4)            |     0.139 | 40.06x  | 64
+  8  | P(128)+Tile(0,32,4)+T(0,0,1)+V(1,32,1)|    0.140 | 39.76x  | 32
+  9  | P(128)+Tile(0,8,2)+Vec(1,8,2)         |     0.149 | 37.28x  | 16
+ 10  | P(128)+Tile(0,64,1)+Vec(1,64,1)       |     0.166 | 33.46x  | 64
+ 11  | P(128)+4-level K-split                 |     0.166 | 33.51x  | -
+ 12  | P(128)+3-level+Interchange             |     0.177 | 31.37x  | -
+ 13  | P(128)+3-level tiling                  |     0.181 | 30.67x  | -
+ 14  | P(128)+Tile(0,16,32)                   |     0.192 | 28.92x  | -
+ 15  | P(64)+Tile(0,16,32)                    |     0.200 | 27.76x  | -
+ 16  | P(128)+Tile(0,4,4)+Vec(1,4,4)         |     0.207 | 26.82x  | 16
+ 17  | P(32)+Tile(0,16,32)                    |     0.239 | 23.23x  | -
+ 18  | P(128)                                 |     0.300 | 18.51x  | -
+ 19  | P(64)                                  |     0.346 | 16.05x  | -
+ 20  | P(8)+Tile(0,16,32)                     |     0.351 | 15.80x  | -
+ 21  | P(16)                                  |     0.437 | 12.70x  | -
+ 22  | P(32)                                  |     0.436 | 12.74x  | -
+ 23  | P(8)                                   |     0.788 |  7.04x  | -
+ 24  | P(4)                                   |     1.508 |  3.68x  | -
+ 25  | Tile(16,32,16)                         |     1.746 |  3.18x  | -
+ 26  | Tile(16,16,16)                         |     1.788 |  3.10x  | -
+ 27  | Tile(32,32,32)                         |     2.085 |  2.66x  | -
+ 28  | Tile(8,8,8)                            |     3.780 |  1.47x  | -
+ 29  | Tile(16,16,16)+Interchange(2,0,1)      |     4.179 |  1.33x  | -
+ 30  | Tile(64,64,64)                         |     4.734 |  1.17x  | -
+  -- | BASELINE                               |     5.552 |  1.00x  | -
+ 31  | Tile(32,32,32)+P(4)                    |     9.619 |  0.58x  | -
+ 32  | Tile(16,16,16)+P(4)                    |    76.074 |  0.07x  | -
+
+BEST CANDIDATE: P(128) + Tile(0,32,1) + Vectorize(1,32,1)
+  Speedup: 45.42x (5.552 ms -> 0.122 ms)
+  Strategy:
+    1. Parallelize across 128 threads (1 row per thread)
+       -> scf.forall distributes 128 M-rows across threads
+    2. Tile inner matmul with tile_sizes=[0,32,1]
+       -> 256 K-iterations x 4 N-blocks of 32
+       -> Inner kernel: 1x1 * 1x32 (scalar-by-vector)
+    3. Vectorize with vector_sizes=[1,32,1] -> vector<1x32x1xf64>
+       -> Broadcast scalar A[i,k] across 32-wide vector
+       -> Element-wise multiply with B[k, j:j+32]
+       -> Accumulate via vector.multi_reduction <add> into C[i, j:j+32]
+       -> 32 f64 values = 256 bytes = 8 AVX-512 zmm registers (optimal fit)
+
+KEY INSIGHTS (UPDATED):
+  - Parallelization is the dominant factor: alone gives 7-18x depending on threads.
+  - Tiling alone provides 1.2-3.2x; optimal single tile = 16x16x16.
+  - Combining parallel-first + tiling-second is critical (reverse order regresses).
+  - Multi-level tiling (3-4 levels) improves over 2-level by ~10% (register blocking).
+  - Vectorization provides ~50% improvement on top of parallelization + tiling.
+
+  VECTORIZATION INSIGHTS:
+  - Vectorization precondition requires M*N*K <= 64 elements in the vector type.
+  - K=1 (broadcast pattern) with N=32 is optimal: avoids reduction overhead,
+    maximizes parallel SIMD lanes in the output dimension.
+  - N=32 is the sweet spot: fits in 8 AVX-512 registers without spilling.
+    N=64 (0.166ms) regresses due to register pressure.
+  - Reducing K from 4->2->1 while widening N progressively improved performance:
+    Vec(1,8,4)=0.136ms -> Vec(1,16,2)=0.133ms -> Vec(1,32,1)=0.122ms
+  - The K=1 pattern converts matmul to DAXPY: C[j] += A[k] * B[k,j] for 32 j-values.
+  - Multi-level tiling before K=1 vectorization adds overhead (Candidate 38: 0.140ms)
+    without benefit — the simple single-tile path is optimal.
+
+  100x target not reached (45.42x achieved): limited by hardware thread count (128)
+  and vectorization precondition (max 64 elements). Would need either more physical
+  cores, wider SIMD (AVX-512 with f32 instead of f64), or GPU offload.
+
+TOTAL CANDIDATES EXPLORED: 38 (32 executed, 11 vectorization precondition failures)
+================================================================================

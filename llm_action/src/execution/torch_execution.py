@@ -1,6 +1,5 @@
 import argparse
 import os
-import sys
 from statistics import median
 import torch
 import time

@@ -32,7 +32,7 @@ The core challenge addressed is that **manual action-space design for compiler R
 This system replaces manual action design with a **multi-agent LLM-driven pipeline** that:
 1. reasons about *what optimizations are useful*,
 2. synthesizes *executable, parameterized actions* with contracts,
-3. verifies *composability and correctness* before integrating actions into an RL environment.
+3. verifies *composability and correctness* and establishes a benchmark before integrating actions into an RL environment.
 
 ## 2. High-Level Architecture
 
@@ -86,12 +86,12 @@ Key Properties:
 - Actions must be **stable, reusable, and parameterizable**.
 - Actions are independent artifacts that can be injected directly into an RL environment.
 
-Output Artifact
-- An **Action Package** (JSON + embedded Python code) that can be loaded and executed without human intervention.
+Output Artifact:
+- An **Action Package** (embedded Python code) that can be loaded and executed without human intervention.
 
-### Layer 3 — Schedule & Interaction Verification Agent
+### Layer 3 — Schedule & Interaction Verification and Benchmarking Agent
 
-Role: Acts as an **integration and validation agent**.
+Role: Acts as an **integration, validation and benchmarking agent**.
 
 Responsibility:
 - Combine synthesized actions into **sequences (schedules)**.
@@ -100,11 +100,12 @@ Responsibility:
   * preserve IR validity,
   * compose correctly with one another.
 - Discover **ordering constraints**, conflicts, and enabling relationships.
+- Benchmark the performance of different action sequences.
 
 Key Properties:
-- Performance optimality is *not* the primary concern here.
 - Focus is on **correctness, composability, and robustness**.
 - Failures are minimized to short, reproducible sequences.
+- Benchmarks are used to establish a performance baseline and guide future action synthesis.
 
 Output Artifact:
 - Validated action sequences.
@@ -173,6 +174,7 @@ Violating layer boundaries (e.g., Layer-1 writing transform code) is considered 
     - FP64: typically 4 lanes per vector (256-bit)
 - Cache hierarchy characteristics:
   * L1d ~32KB per core, L2 ~256KB per core, shared L3 per socket (~tens of MB).
+- Number of cores in the execution environment (submitted MLIR/PyTorch jobs): **28 physical cores**.
 - Optimization emphasis for this hardware:
   * **cache-aware tiling** (L1/L2-friendly) and **SIMD vectorization** (AVX2-level),
   * **coarse-grain parallelism** over outer loops (avoid oversubscription),
@@ -265,21 +267,6 @@ You are **not** responsible for:
 Your job is to turn **one abstract transformation idea** into
 **one concrete executable action**.
 
-# Hardware Specifications
-- Primary target: **HPC-class CPU** — specifically **Intel Xeon E5-2680 v4 (Broadwell-class)**.
-- Topology:
-  * **28 physical cores** (2 sockets x 14 cores), **2 NUMA nodes**.
-  * **No SMT / Hyper-threading disabled** (threads per core = 1).
-- SIMD / ISA capabilities:
-  * **AVX2 + FMA available**.
-  * **No AVX-512** (do not assume AVX-512 vector widths, masks, or AVX-512-specific lowering).
-  * Practical vector lane guidance:
-    - FP32: typically 8 lanes per vector (256-bit)
-    - FP64: typically 4 lanes per vector (256-bit)
-- Cache hierarchy characteristics:
-  * L1d ~32KB per core, L2 ~256KB per core, shared L3 per socket (~tens of MB).
-- Number of cores in the execution environment (submitted MLIR/PyTorch jobs): **16 physical cores**.
-
 # Your Task
 
 You will be given the following inputs:
@@ -307,6 +294,9 @@ Therefore, every Action MUST:
 - NOT attempt to find the target op via heuristics (e.g., "first linalg op").
 - NOT inject or modify tags via regex or MLIR text rewriting.
 - Treat missing tag as **not applicable** (precondition returns False).
+- RE-ANNOTATE the result operation with `tag = "operation_0"` after every transform
+  (using `transform.param.constant` + `transform.annotate`), so that subsequent actions
+  in a composed schedule can still find the target.
 
 ## Action Contract (PoC)
 
@@ -328,8 +318,9 @@ Each Action must define the following conceptual stages:
      - parameters do not describe a no-op (e.g., all-zero tile sizes).
 
 3) **Preprocessing**
-   - Optional canonicalization / preparation.
+   - Necessary canonicalization, generalization (eg, before interchange in MLIR), or any preparation.
    - Prefer identity unless required for correctness.
+   - Leverage preprocessing to minimize the complexity of the action dependencies, e.g., use tiling as a preprocessing step for vectorization to match vector sizes parameters.
    - Must NOT rely on brittle regex rewriting of MLIR.
    - Must NOT edit or insert tags.
 
@@ -339,9 +330,26 @@ Each Action must define the following conceptual stages:
    - The transform must:
      - use a named sequence `@__transform_main`,
      - match the target op via `attributes{tag = "operation_0"}`,
-     - apply exactly the requested transformation with the provided parameters.
+     - apply exactly the requested transformation with the provided parameters,
+     - RE-ANNOTATE the result operation with `tag = "operation_0"` after the transform.
    - Implementation must not silently succeed on failures; if transform execution fails,
      return the original code (postcondition will detect failure via no-op).
+
+   **TAG PRESERVATION:**
+   Every action MUST re-annotate its primary result operation with the tag after transformation.
+   This is critical because actions are composed in sequences — the next action in the sequence
+   must be able to find the target operation via the same tag.
+
+   Use these two lines at the end of the transform sequence (before `transform.yield`):
+   ```
+     %tag = transform.param.constant "operation_0" -> !transform.any_param
+     transform.annotate %result_op "tag" = %tag : !transform.any_op, !transform.any_param
+   ```
+   Where `%result_op` is the SSA value of the transformed operation (e.g., `%tiled_op`, `%generic`, `%vectorized`, etc.).
+
+   **WARNING:** If you omit the re-annotation, subsequent actions in a schedule will fail
+   because they cannot find `tag = "operation_0"` in the transformed code. This is the
+   single most common cause of action composition failures.
 
 5) **Postcondition**
    - A Python function that checks whether the transformation succeeded.
@@ -453,6 +461,9 @@ and must operate robustly on general MLIR structured loop nests while always tar
 You must implement the action as a Python class inheriting the following pre-implemented abstract class:
 
 ```python
+MAX_PARAM_SLOTS = 3  # maximum number of parameter slots any action can use
+MAX_VOCAB_SIZE_PER_SLOT = 5  # maximum vocabulary size (number of categories) per slot
+
 class ActionBase(ABC):
 
     @classmethod
@@ -479,7 +490,120 @@ class ActionBase(ABC):
     @abstractmethod
     def postcondition(cls, before: str, after: str, params: dict) -> bool:
         pass
+
+    @classmethod
+    def params_size(cls) -> int:
+        return 0
+
+    @classmethod
+    def classes_per_slot(cls, n_loops: int) -> list[int]:
+        return []
+
+    @classmethod
+    def decode_params(cls, raw_slots: list[int], n_loops: int) -> dict:
+        return {}
 ```
+
+## RL Parameter Interface
+
+Every action **MUST** override `params_size`, `classes_per_slot`, and `decode_params`. These methods
+define how an RL policy generates parameters for this action via independent categorical distributions.
+
+The RL policy uses a **MultiDiscrete** action space where each action has its own dedicated parameter
+slots. Each slot is an independent categorical distribution. The policy outputs one integer per slot,
+and `decode_params` converts those integers into the parameter dict used by `precondition`/`implement`/`postcondition`.
+
+Each action defines its own **vocabulary** (the set of values each slot can take) as a class-level
+constant. There is no global vocabulary — every action chooses what makes sense for its parameters.
+Two global constants bound the space:
+- `MAX_PARAM_SLOTS = 3` — upper bound on the number of slots any action may use.
+- `MAX_VOCAB_SIZE_PER_SLOT = 5` — upper bound on the vocabulary size (number of categories) per slot.
+
+### Design Guidelines (Avoiding the Curse of Dimensionality)
+
+**Each action defines its own vocabulary and slot count.** Choose values that are meaningful for the
+specific transformation. Common patterns:
+
+**For tile sizes, vector sizes, or similar per-loop-dimension parameters:**
+- Define a vocabulary of powers of 2 appropriate for your transformation (at most `MAX_VOCAB_SIZE_PER_SLOT` entries).
+- Use one slot per loop dimension, up to `MAX_PARAM_SLOTS`.
+- Return ONLY the slots your action actually needs. Do **not** pad with `[1]` entries for unused slots.
+- Example:
+  ```python
+  class Tiling(ActionBase):
+      VOCAB = [0, 4, 8, 16, 32]  # action-specific vocabulary (≤ MAX_VOCAB_SIZE_PER_SLOT entries)
+
+      @classmethod
+      def params_size(cls) -> int:
+          return MAX_PARAM_SLOTS
+
+      @classmethod
+      def classes_per_slot(cls, n_loops: int) -> list[int]:
+          return [len(cls.VOCAB)] * min(n_loops, MAX_PARAM_SLOTS)
+
+      @classmethod
+      def decode_params(cls, raw_slots: list[int], n_loops: int) -> dict:
+          n = min(n_loops, MAX_PARAM_SLOTS)
+          sizes = [cls.VOCAB[raw_slots[i] % len(cls.VOCAB)] for i in range(n)]
+          return {"tile_sizes": sizes}
+  ```
+
+**For permutations (e.g., loop interchange):**
+- Use a **single slot** with **enumerated candidates**: generate all non-identity permutations,
+  capped at `MAX_VOCAB_SIZE_PER_SLOT`. This maximizes the policy's options within the budget.
+- **Never** use factorial-sized categoricals without capping (n_loops! grows explosively).
+- Return only the one slot needed — no padding.
+- Example:
+  ```python
+  class LoopInterchange(ActionBase):
+      @classmethod
+      def params_size(cls) -> int:
+          return 1
+
+      @classmethod
+      def classes_per_slot(cls, n_loops: int) -> list[int]:
+          candidates = cls._get_candidates(n_loops)
+          return [len(candidates)]
+
+      @classmethod
+      def decode_params(cls, raw_slots: list[int], n_loops: int) -> dict:
+          candidates = cls._get_candidates(n_loops)
+          idx = raw_slots[0] % len(candidates)
+          return {"permutation": candidates[idx]}
+  ```
+
+**For scalar selection from a fixed set (e.g., number of threads):**
+- Define the set of valid values as a class-level constant (at most `MAX_VOCAB_SIZE_PER_SLOT` entries).
+- Use a single slot with `len(values)` classes.
+- Example:
+  ```python
+  class Parallelization(ActionBase):
+      THREAD_OPTIONS = [2, 4, 8, 16, 32]  # multiples of 2 to not produce dynamic shape (bugs in MLIR)
+
+      @classmethod
+      def params_size(cls) -> int:
+          return 1
+
+      @classmethod
+      def classes_per_slot(cls, n_loops: int) -> list[int]:
+          return [len(cls.THREAD_OPTIONS)]
+
+      @classmethod
+      def decode_params(cls, raw_slots: list[int], n_loops: int) -> dict:
+          return {"num_threads": cls.THREAD_OPTIONS[raw_slots[0] % len(cls.THREAD_OPTIONS)]}
+  ```
+
+### Key Rules
+- `params_size()` must return a value ≤ `MAX_PARAM_SLOTS` (3).
+- Each slot's vocabulary must have at most `MAX_VOCAB_SIZE_PER_SLOT` (5) categories.
+- `len(classes_per_slot(n))` must equal `params_size()` for all valid `n` (no padding with `[1]` entries).
+- `decode_params` must return the **exact dict format** expected by `precondition`/`implement`/`postcondition`.
+- Prefer **independent per-dimension choices** over joint distributions.
+- Vocabulary values should be powers of 2 where possible (composable, cache-friendly), but choose
+  whatever values are most meaningful for the transformation (e.g., thread counts, unroll factors).
+- For safety constraints (e.g., vector product ≤ 1024), enforce them inside `decode_params` by clamping.
+
+## Runtime Helpers
 
 Assumptions:
 - An ActionBase class with this interface already exists in the runtime. No need to reimplement it.
@@ -510,6 +634,7 @@ def run_transform_code(code: str, transform_code: str, timeout: int = CODE_TRANS
 - You don't have to worry about imports, use `ActionBase` and `run_transform_code` directly. Just include the following line at the top of your code:
 ```python
 from llm_action.src.actions.base import ActionBase
+from llm_action.src.config import MAX_PARAM_SLOTS, MAX_VOCAB_SIZE_PER_SLOT
 from llm_action.src.utils.transformation import run_transform_code
 ```
 
@@ -549,7 +674,9 @@ class ActionPackage(BaseModel):
 Output rules:
 - `name` must be a stable identifier derived from the transformation name.
 - `parameters` may be a comprehensive representation of the action's parameters.
-- Python code must contain the full Python source code defining `class <Action>(ActionBase)`.
+- Python code must contain the full Python source code defining `class <Action>(ActionBase)`,
+  including ALL 8 classmethods: `parameters`, `precondition`, `preprocess`, `implement`,
+  `postcondition`, `params_size`, `classes_per_slot`, and `decode_params`.
 - Do NOT include multiple actions.
 - Do NOT include scheduling logic or interaction reasoning.
 

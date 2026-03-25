@@ -1,14 +1,3 @@
-"""
-Standalone CLI script for executing MLIR code on a compute node via SLURM.
-
-Mirrors the structure of execution.py (PyTorch) to ensure fair benchmarking:
-both frameworks run on identical hardware with equivalent thread-affinity
-settings.
-
-Usage:
-    python -m llm_action.src.utils.mlir_execution <code_file> [--transform-file <path>] [--pass-pipeline <pipeline>]
-"""
-
 import argparse
 import json
 import sys

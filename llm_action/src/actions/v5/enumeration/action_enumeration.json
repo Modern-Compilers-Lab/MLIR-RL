@@ -1,0 +1,90 @@
+{
+  "intents": [
+    {
+      "name": "Data Locality and Cache Utilization",
+      "description": "Restructure loop nests so that the working set of each innermost computation block fits within target cache levels (L1d, L2), maximizing temporal and spatial data reuse across all operands.",
+      "rationale": "For loop-nest-dominated kernels on CPUs with deep cache hierarchies, data locality is the single largest determinant of performance. Without cache-aware restructuring, memory bandwidth becomes the bottleneck long before compute is saturated.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Partition the iteration space into multi-dimensional blocks (tiles) so that the data footprint of each tile fits within a target cache level.",
+          "rationale": "Tiling converts O(N) capacity misses into O(N/T) by enabling temporal reuse within each tile. It is the foundational transformation for cache-aware execution of loop nests.",
+          "action_template": "Tiling(tile_sizes) OR Tiling(loop_band, tile_sizes) — tile_sizes is a vector with one entry per loop dimension; 0 means do not tile that dimension."
+        },
+        {
+          "name": "Loop Interchange",
+          "description": "Reorder loops within a loop band to improve spatial locality by placing the loop with stride-1 memory access in the innermost position.",
+          "rationale": "Loop ordering determines whether memory accesses are contiguous (stride-1) or strided. Interchange ensures the innermost loop traverses the fastest-varying dimension, reducing cache line waste and TLB pressure.",
+          "action_template": "LoopInterchange(loop_band, permutation) OR LoopInterchangeSwap(loop_band, loop_id_a, loop_id_b) — permutation is an ordering of loop indices within the band."
+        },
+        {
+          "name": "Packing",
+          "description": "Copy a sub-region of an operand into a contiguous temporary buffer with a layout optimized for the consuming loop nest, eliminating strided accesses and TLB thrashing.",
+          "rationale": "Even after tiling, operand sub-matrices may have non-unit strides in memory. Packing materializes them contiguously, guaranteeing stride-1 access and improving prefetcher effectiveness. This is a key technique in high-performance BLAS implementations.",
+          "action_template": "Packing(target_operand) OR Packing(target_operand, packed_sizes) — target_operand identifies which input/output to pack; packed_sizes optionally specifies the packing tile shape."
+        }
+      ]
+    },
+    {
+      "name": "SIMD Vectorization Exploitation",
+      "description": "Map innermost loop computations onto SIMD (AVX2) instructions and expose sufficient independent operations to keep vector functional units busy.",
+      "rationale": "The target CPU provides AVX2 with FMA, offering 4-wide f64 operations per cycle. Without vectorization, peak throughput is underutilized by 4x. Exploiting SIMD is essential for compute-bound loop nests.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Vectorization",
+          "description": "Replace scalar operations in the innermost loop with SIMD vector operations operating on multiple data elements simultaneously.",
+          "rationale": "Vectorization directly multiplies throughput by the vector width (4x for f64 on AVX2). It is required to approach peak FLOPS on any modern CPU with SIMD extensions.",
+          "action_template": "Vectorization(target_loop, vector_sizes) OR Vectorization(loop_band, vector_sizes) — vector_sizes specifies the number of elements per vector dimension; target_loop identifies which loop to vectorize."
+        },
+        {
+          "name": "Unrolling",
+          "description": "Replicate the loop body multiple times within a single iteration, reducing loop overhead and exposing more independent operations for instruction-level parallelism.",
+          "rationale": "Unrolling increases the number of in-flight FMA operations, helping saturate the FMA pipeline and hiding memory latency. It also reduces branch overhead for tight inner loops. Combined with vectorization, it is essential for high-throughput micro-kernels.",
+          "action_template": "Unrolling(target_loop, unroll_factor) OR Unrolling(loop_band, unroll_factor) — unroll_factor specifies how many iterations to replicate in the loop body."
+        }
+      ]
+    },
+    {
+      "name": "Coarse-Grain Parallelism",
+      "description": "Distribute independent iterations of outer loops across multiple CPU cores to exploit thread-level parallelism on the multi-core target.",
+      "rationale": "The target has 28 physical cores. For large problem sizes, single-core execution leaves most compute resources idle. Parallelizing outer tiled loops provides near-linear speedup with minimal synchronization overhead.",
+      "priority": "medium",
+      "transformations": [
+        {
+          "name": "Parallelization",
+          "description": "Mark outer parallel loops for concurrent execution across hardware threads, distributing independent iteration chunks to separate cores.",
+          "rationale": "Outer-loop parallelization is the simplest and most effective way to scale loop-nest performance across cores. After tiling, the outer tile loops are embarrassingly parallel and map directly to thread-level work partitioning.",
+          "action_template": "Parallelization(target_loop) OR Parallelization(loop_band, num_threads) — target_loop identifies which loop to parallelize; num_threads optionally constrains the degree of parallelism."
+        },
+        {
+          "name": "Fusion",
+          "description": "Merge adjacent loop nests operating on overlapping data into a single loop nest, reducing intermediate memory traffic and synchronization points.",
+          "rationale": "In computational graphs with producer-consumer relationships, fusion eliminates temporary buffers and keeps data in registers or cache between dependent operations. This reduces memory bandwidth demand and improves pipeline utilization.",
+          "action_template": "Fusion(producer_op, consumer_op) OR Fusion(target_ops) — identifies which adjacent operations to fuse into a single loop nest."
+        }
+      ]
+    },
+    {
+      "name": "Loop Nest Regularization",
+      "description": "Normalize loop bounds, simplify IR structure, and separate irregular boundary iterations to enable downstream transformations to apply cleanly and predictably.",
+      "rationale": "Many high-impact transformations (tiling, vectorization) require or benefit from regular loop bounds and clean IR. Regularization removes obstacles that would otherwise prevent or degrade the effectiveness of these transformations.",
+      "priority": "medium",
+      "transformations": [
+        {
+          "name": "Peeling",
+          "description": "Separate the first or last iterations of a loop that do not conform to a required alignment or tile size, producing a clean main loop with guaranteed trip count properties.",
+          "rationale": "When loop trip counts are not exact multiples of tile sizes or vector widths, the main loop body cannot assume uniform iteration counts. Peeling isolates the remainder, allowing the main loop to be aggressively optimized without correctness guards.",
+          "action_template": "Peeling(target_loop, peel_count) OR Peeling(target_loop) — peel_count specifies how many iterations to peel; if omitted, peel to the nearest alignment boundary."
+        },
+        {
+          "name": "Canonicalization",
+          "description": "Apply algebraic simplifications, constant folding, dead code elimination, and IR normalization to produce a clean canonical form amenable to pattern matching by downstream passes.",
+          "rationale": "Compiler transformations rely on pattern matching and structural assumptions. Canonicalization ensures the IR is in a normalized state where downstream passes can reliably recognize and transform optimization opportunities.",
+          "action_template": "Canonicalization() — a parameterless cleanup pass applied to the entire module to simplify and normalize the IR."
+        }
+      ]
+    }
+  ]
+}

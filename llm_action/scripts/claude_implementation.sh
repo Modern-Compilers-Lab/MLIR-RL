@@ -10,8 +10,8 @@
 #SBATCH -c 8
 #SBATCH --mem=100G
 #SBATCH -t 7-00
-#SBATCH -o llm_action/logs/jobs/claude_implementation_%j.out
-#SBATCH -e llm_action/logs/jobs/claude_implementation_%j.err
+#SBATCH -o llm_action/logs/jobs/claude/implem_%j.out
+#SBATCH -e llm_action/logs/jobs/claude/implem_%j.err
 #SBATCH --mail-user=kb5213@nyu.edu
 #SBATCH --mail-type=ALL
 
@@ -36,4 +36,4 @@ claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_im
 
 # Example usage:
 # sbatch llm_action/scripts/claude_implementation.sh
-# claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_implementation.py)"
+# python llm_action/src/prompts/action_implementation.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_implementation.py)"

@@ -2,12 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(conda run:*)",
-      "mcp__mlir-tools__list_transformations",
-      "mcp__mlir-tools__lookup_transformation",
-      "mcp__mlir-tools__measure_speedup",
-      "mcp__mlir-tools__execute_torch_matmul_by_shape",
-      "mcp__mlir-tools__transform_mlir_code",
-      "mcp__mlir-tools__execute_mlir_code"
+      "mcp__mlir-tools__*",
+      "Bash(grep -n \"params_size\\\\|classes_per_slot\\\\|decode_params\" /scratch/kb5213/workspace/MLIR-RL/llm_action/src/actions/v5/implementation/*.py)"
     ]
   },
   "enabledMcpjsonServers": [

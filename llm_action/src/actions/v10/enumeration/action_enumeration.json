@@ -1,0 +1,64 @@
+{
+  "intents": [
+    {
+      "name": "Data Locality and Reuse Optimization",
+      "description": "Restructure the iteration space and data layout so that working sets of loop-nest operands fit within cache hierarchy levels (L1/L2), maximizing temporal and spatial data reuse.",
+      "rationale": "Dense loop nests over large tensors suffer severe capacity and conflict misses without blocking. On Broadwell with 32KB L1d and 256KB L2, tiling and packing are essential to keep operand sub-blocks cache-resident during computation, directly determining achieved memory bandwidth utilization.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Partition the iteration space into smaller blocks (tiles) by strip-mining each loop dimension, so that the data footprint of each tile fits within a target cache level.",
+          "rationale": "Tiling is the foundational transformation for cache locality in loop nests. It converts O(N^3) capacity-miss traffic into O(N^3 / tile_volume) by ensuring temporal reuse of loaded data within each tile. Without tiling, operand matrices exceed cache capacity for any non-trivial problem size.",
+          "action_template": "Tiling(tile_sizes) OR Tiling(loop_band, tile_sizes) — tile_sizes is a vector with one entry per loop dimension; 0 means 'do not tile' that dimension."
+        },
+        {
+          "name": "Packing",
+          "description": "Copy sub-tiles of operand data into contiguous scratch buffers before computation, converting strided accesses into sequential unit-stride reads.",
+          "rationale": "Even after tiling, the original data layout may have large strides that cause TLB pressure and cache-line conflicts. Packing eliminates these by creating dense, contiguous copies of tile data, improving prefetcher effectiveness and avoiding power-of-two aliasing in set-associative caches.",
+          "action_template": "Packing(operand_id, packed_sizes) OR Packing(operand_id, pack_padding) — operand_id selects which operand to pack; packed_sizes controls the sub-tile dimensions of the packed buffer."
+        }
+      ]
+    },
+    {
+      "name": "SIMD and Instruction-Level Parallelism Exploitation",
+      "description": "Restructure the innermost computation to enable mapping onto SIMD vector instructions (AVX2) and to expose independent operations for out-of-order execution.",
+      "rationale": "On Broadwell with AVX2 + FMA, peak FP64 throughput requires processing 4 elements per cycle via vector FMA. Non-vectorized code uses at most 1/4 of peak throughput. Achieving vectorization requires a stride-1 innermost loop, which may require interchange from the original loop ordering.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Vectorization",
+          "description": "Map the innermost loop iterations onto SIMD vector lanes, replacing scalar operations with vector instructions that process multiple elements per cycle.",
+          "rationale": "Vectorization provides up to 4x throughput improvement for FP64 on AVX2 (256-bit vectors). Combined with FMA, this is the primary mechanism for approaching peak FLOP/s. The innermost loop must have unit-stride access on at least one operand for efficient vector load/store.",
+          "action_template": "Vectorization(vector_sizes) OR Vectorization(target_op, vector_sizes) — vector_sizes specifies the number of elements per vector lane for each relevant dimension."
+        },
+        {
+          "name": "Loop Interchange",
+          "description": "Reorder loops in the loop nest by permuting iteration dimensions, placing a stride-1 dimension innermost to enable vectorization and improve spatial locality.",
+          "rationale": "The default loop ordering may not have the most vectorization-friendly or cache-friendly dimension innermost. Interchange allows placing a contiguous-access dimension in the innermost position, which is a prerequisite for efficient SIMD vectorization and sequential memory access patterns.",
+          "action_template": "LoopInterchange(loop_band, permutation) OR LoopInterchangeSwap(loop_id_a, loop_id_b) — permutation is a reordering of loop indices within the band; swap exchanges two specific loops."
+        }
+      ]
+    },
+    {
+      "name": "Coarse-Grain Parallelism and Loop Overhead Reduction",
+      "description": "Distribute loop iterations across multiple CPU cores and reduce per-iteration overhead to improve throughput on multi-core hardware.",
+      "rationale": "With 28 physical cores available, parallelizing outer loops can provide near-linear speedup for sufficiently large problem sizes. Loop unrolling within each thread reduces branch overhead and exposes more independent instructions to the out-of-order engine, improving per-core ILP utilization. Impact is shape-dependent — small problem sizes may not benefit.",
+      "priority": "medium",
+      "transformations": [
+        {
+          "name": "Parallelization",
+          "description": "Distribute iterations of an outer parallel loop across CPU cores, enabling concurrent execution of independent loop iterations on multi-core hardware.",
+          "rationale": "Parallel loops in dense loop nests (e.g., outer dimensions of matmul) carry no loop-carried dependencies and can be freely distributed. This is essential for utilizing all 28 cores on the target machine, though tile size and grain size must be balanced to avoid false sharing and NUMA effects.",
+          "action_template": "Parallelization(loop_band, num_threads) OR Parallelization(target_op, num_threads) — num_threads controls how many parallel threads to distribute work across."
+        },
+        {
+          "name": "Loop Unrolling",
+          "description": "Replicate the loop body multiple times to reduce loop control overhead, increase the ratio of compute to branch instructions, and expose more independent operations for out-of-order scheduling.",
+          "rationale": "Unrolling the innermost or register-tile loops improves ILP by providing the out-of-order engine with more independent operations to schedule. It also amortizes loop branch costs and can enable better register allocation by the backend compiler. Excessive unrolling risks register pressure and I-cache pollution.",
+          "action_template": "LoopUnrolling(loop_id, unroll_factor) OR LoopUnrolling(loop_band, unroll_factor) — unroll_factor specifies the number of loop body copies."
+        }
+      ]
+    }
+  ]
+}

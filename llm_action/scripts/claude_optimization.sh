@@ -10,8 +10,8 @@
 #SBATCH -c 16
 #SBATCH --mem=100G
 #SBATCH -t 7-00
-#SBATCH -o llm_action/logs/jobs/claude_%j.out
-#SBATCH -e llm_action/logs/jobs/claude_%j.err
+#SBATCH -o llm_action/logs/jobs/claude/optim_%j.out
+#SBATCH -e llm_action/logs/jobs/claude/optim_%j.err
 #SBATCH --mail-user=kb5213@nyu.edu
 #SBATCH --mail-type=ALL
 

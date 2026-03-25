@@ -10,6 +10,7 @@ class ClaudeModel(str, Enum):
 class GroqModel(str, Enum):
     GPT_OSS_120B = "openai/gpt-oss-120b" # OpenAI open source model (120b)
     KIMI_K2 = "moonshotai/kimi-k2-instruct-0905" # KIMI
+    LLAMA_8b = "llama-3.1-8b-instant" # LLaMA 3.1 8B Instant
 
 class GeminiModel(str, Enum):
     GEMINI_2_5_FLASH = "gemini-2.5-flash" # Google's Gemini 2.5 Flash model, optimized for speed and efficiency.

@@ -1,4 +1,3 @@
-from llm_action.src.prompts.system_description import get_system_description_prompt
 from llm_action.src.utils.persistence import save_prompt
 
 from llm_action.src.config import VECTORIZATION_SIZE_LIMIT, N_CORES
