@@ -4,6 +4,7 @@
 
 #SBATCH -J claude
 #SBATCH -p compute
+##SBATCH -q c2
 #SBATCH -c 8
 #SBATCH --mem=32G
 #SBATCH -t 7-00
@@ -30,27 +31,30 @@ EXPERIMENT_DIR="$STATS_DIR/$EXPERIMENT_ID"
 mkdir -p "$EXPERIMENT_DIR"
 touch "$EXPERIMENT_DIR/performance.log"
 touch "$EXPERIMENT_DIR/tokens.log"
+export EXPERIMENT_DIR
 echo "Experiment ID: $EXPERIMENT_ID"
 
 # Log token usage from a claude JSON response
 log_tokens() {
     local output="$1"
-    local session="$2"
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     local input_tokens=$(echo "$output" | jq -r '.usage.input_tokens // 0')
     local output_tokens=$(echo "$output" | jq -r '.usage.output_tokens // 0')
     local total_tokens=$(( input_tokens + output_tokens ))
-    echo "$timestamp | session=$session | input=$input_tokens | output=$output_tokens | total=$total_tokens" >> "$EXPERIMENT_DIR/tokens.log"
+    echo "$timestamp | input=$input_tokens | output=$output_tokens | total=$total_tokens" >> "$EXPERIMENT_DIR/tokens.log"
 }
 
 # Start claude code sessions
 rm -f logs/jobs/*
-OUTPUT=$(claude --print --output-format=json "$(cat resources/prompt.txt)")
-log_tokens "$OUTPUT" 0
-for ((i = 0 ; i < 99 ; i++ )); do
-    OUTPUT=$(claude --continue --print --output-format=json "$(cat resources/prompt.txt)")
-    log_tokens "$OUTPUT" $((i + 1))
-done
+OUTPUT=$(claude --permission-mode dontAsk --print --output-format=json "$(cat resources/prompt.txt)")
+log_tokens "$OUTPUT"
+# for ((i = 0 ; i < 99 ; i++ )); do
+#     OUTPUT=$(claude --continue --print --output-format=json "$(cat resources/prompt.txt)")
+#     log_tokens "$OUTPUT"
+# done
 
 # Create performance plots
 python src/tools/plot_performance.py "$EXPERIMENT_ID"
+
+# Cleanup
+rm -rf out/* tmp/*

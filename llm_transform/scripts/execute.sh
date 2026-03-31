@@ -52,17 +52,17 @@ fi
 set -- "${orig_args[@]}"
 echo "Evaluating code $CODE_ID:"
 
-echo "Base:"
+# echo "Base:"
 # TIME_BASE=$(python src/utils/execution.py -i $CODE_ID -t resources/base_schedule.mlir -p resources/base_passes.txt)
 # Return saved values since the base doesn't change
-MATMUL_TYPE="${CODE_ID##*_}"
-case $MATMUL_TYPE in
-  1) TIME_BASE=17707650426 ;;
-  2) TIME_BASE=346113949 ;;
-  3) TIME_BASE=338921024 ;;
-  *) echo "Error: MATMUL_TYPE $MATMUL_TYPE does not exist" >&2; exit 1 ;;
-esac
-echo "Execution time (ns): $TIME_BASE"
+# MATMUL_TYPE="${CODE_ID##*_}"
+# case $MATMUL_TYPE in
+#   1) TIME_BASE=17707650426 ;;
+#   2) TIME_BASE=346113949 ;;
+#   3) TIME_BASE=338921024 ;;
+#   *) echo "Error: MATMUL_TYPE $MATMUL_TYPE does not exist" >&2; exit 1 ;;
+# esac
+# echo "Execution time (ns): $TIME_BASE"
 
 echo "Optimized:"
 ERR_FILE=$(mktemp)
@@ -102,7 +102,7 @@ if ! [[ $TIME_TORCH =~ $re ]]; then
 fi
 echo "Execution time (ns): $TIME_TORCH"
 echo "--------------------------"
-echo "Speedup over Base: $(echo "scale=4; $TIME_BASE / $TIME_OPT" | bc)x"
+# echo "Speedup over Base: $(echo "scale=4; $TIME_BASE / $TIME_OPT" | bc)x"
 SPEEDUP=$(echo "scale=4; $TIME_TORCH / $TIME_OPT" | bc)
 echo "Speedup compared to PyTorch: ${SPEEDUP}x"
 

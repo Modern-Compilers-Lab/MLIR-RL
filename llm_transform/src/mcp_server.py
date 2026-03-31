@@ -1,6 +1,7 @@
 import json
 from datetime import datetime
 from pathlib import Path
+import os
 import re
 import subprocess
 import tempfile
@@ -11,8 +12,9 @@ from fastmcp import FastMCP
 from utils.transformation import transform_and_lower
 
 PARENT_DIR = Path(__file__).parents[1]
-_LOG_FILE = PARENT_DIR / "logs" / "claude_optimization.log"
-_BEST_DIR = PARENT_DIR / "logs" / "best"
+_SESSION_DIR = Path(os.environ["EXPERIMENT_DIR"]) if "EXPERIMENT_DIR" in os.environ else PARENT_DIR / "logs"
+_LOG_FILE = _SESSION_DIR / "claude_optimization.log"
+_BEST_DIR = _SESSION_DIR / "best"
 _BEST_STATE_FILE = _BEST_DIR / "state.json"
 
 mcp = FastMCP("mlir-transform")
@@ -86,7 +88,7 @@ def _log_result(
             msg = f"Speedup: {speedup_str} — New best for {id} (previous: {old_best:.4f}x)"
         else:
             msg = f"Speedup: {speedup_str} — First result for {id}"
-        msg += " — config saved to logs/best/"
+        msg += f" — config saved to {_BEST_DIR}/"
         return msg
 
     return f"Speedup: {speedup_str} — Current best for {id}: {best_state[id]:.4f}x"
@@ -107,8 +109,8 @@ def run_schedule(
     must be maximized as much as possible, ideally reaching 2x or higher (i.e. the transformed code
     runs at least 2x faster than PyTorch).
 
-    The result (speedup or error) is automatically logged to logs/claude_optimization.log.
-    If the speedup is a new best for the benchmark, the full configuration is saved to logs/best/<name>/<instance>/.
+    The result (speedup or error) is automatically logged to the session directory.
+    If the speedup is a new best for the benchmark, the full configuration is saved to the session directory.
 
     Args:
         id (str): The unique identifier for the MLIR code to transform. It takes the form "{name}_{instance}", where "name" is the name of the benchmark (e.g. "matmul") and "instance" is the specific instance (e.g. "0", "1", etc.).
