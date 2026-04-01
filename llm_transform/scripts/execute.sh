@@ -107,13 +107,6 @@ SPEEDUP=$(echo "scale=4; $TIME_TORCH / $TIME_OPT" | bc)
 echo "Speedup compared to PyTorch: ${SPEEDUP}x"
 
 # Log performance metrics to the experiment directory if it exists
-STATS_DIR="logs/stats"
-LAST_ID=$(ls -1 "$STATS_DIR" 2>/dev/null | sort -n | tail -1)
-if [ -z "$LAST_ID" ]; then
-  echo "Error: Couldn't find the current experiment directory in $STATS_DIR" >&2
-  exit 1
-fi
-EXPERIMENT_DIR="$STATS_DIR/$LAST_ID"
 if [ -n "$EXPERIMENT_DIR" ]; then
     echo "$(date '+%Y-%m-%d %H:%M:%S') | id=$CODE_ID | speedup=${SPEEDUP}x" >> "$EXPERIMENT_DIR/performance.log"
 fi

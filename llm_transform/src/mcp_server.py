@@ -216,7 +216,7 @@ def lower_schedule(
 ) -> dict[str, str]:
     """
     Apply the given transformation schedule to the MLIR code associated with the given ID. Lower using
-    the specified MLIR and LLVM passes. Compile to assembly. Save intermediate outputs to out/<id>/ and
+    the specified MLIR and LLVM passes. Compile to assembly. Save intermediate outputs to <session_dir>/gen/<id>/ and
     return file paths for the transformed MLIR, LLVM IR, optimized LLVM IR, and assembly.
 
     Args:
@@ -240,7 +240,7 @@ def lower_schedule(
     if not mlir_passes.strip():
         raise ValueError("MLIR passes cannot be empty")
 
-    return transform_and_lower(id, transform_schedule, mlir_passes, llvm_passes, llvm_flags, llc_flags, bufferize_first)
+    return transform_and_lower(id, transform_schedule, mlir_passes, llvm_passes, llvm_flags, llc_flags, bufferize_first, _SESSION_DIR)
 
 
 if __name__ == "__main__":

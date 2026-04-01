@@ -12,10 +12,10 @@ from mlir.dialects.transform import interpreter
 PARENT_DIR = Path(__file__).parents[2]
 
 
-def transform_and_lower(id: str, transform_schedule: str, mlir_passes: str, llvm_passes, llvm_flags: str, llc_flags: str, bufferize_first: bool):
+def transform_and_lower(id: str, transform_schedule: str, mlir_passes: str, llvm_passes, llvm_flags: str, llc_flags: str, bufferize_first: bool, session_dir: Path):
     results: dict[str, str] = {}
 
-    out_dir = PARENT_DIR / 'out' / id
+    out_dir = session_dir / 'gen' / id
     out_dir.mkdir(parents=True, exist_ok=True)
 
     name, instance = id.rsplit("_", 1)

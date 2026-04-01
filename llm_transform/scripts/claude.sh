@@ -57,4 +57,4 @@ log_tokens "$OUTPUT"
 python src/tools/plot_performance.py "$EXPERIMENT_ID"
 
 # Cleanup
-rm -rf out/* tmp/*
+rm -rf tmp/*
