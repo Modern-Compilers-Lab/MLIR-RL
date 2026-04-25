@@ -1,0 +1,94 @@
+{
+  "intents": [
+    {
+      "name": "Data Locality & Cache Reuse",
+      "description": "Restructure the iteration space and data layout so that the working set of each loop nest level fits within the target cache hierarchy (L1/L2/L3), maximizing temporal and spatial reuse.",
+      "rationale": "For dense loop nests on this hardware, cache behavior dominates performance. Operand working sets easily exceed L1/L2 capacity, and naive loop orders cause non-unit-stride accesses. Tiling, interchange, packing, and promotion are the canonical techniques to bring data closer to compute.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Partition the iteration space into smaller blocks (tiles) whose operand footprint fits within a target cache level. Multi-level tiling enables hierarchical cache reuse across L1, L2, and L3.",
+          "rationale": "Tiling is the single most impactful transformation for loop nests with large iteration counts. Without tiling, at least one operand streams through cache with no reuse, causing capacity misses that dominate execution time.",
+          "action_template": "Tiling(tile_sizes) OR Tiling(loop_band, tile_sizes) — tile_sizes is a list with one entry per loop dimension; 0 means do not tile that dimension."
+        },
+        {
+          "name": "Loop Interchange",
+          "description": "Reorder the loops in a loop nest to change the traversal order of the iteration space, improving memory access patterns and enabling better reuse.",
+          "rationale": "The default loop order may cause non-unit-stride accesses on one or more operands. Interchange places the dimension with stride-1 access innermost, maximizing cache line utilization and enabling vectorization.",
+          "action_template": "LoopInterchange(loop_band, permutation) OR LoopInterchangeSwap(loop_id_a, loop_id_b) — permutation is a reordering of loop indices within the band."
+        },
+        {
+          "name": "Packing",
+          "description": "Copy operand data into contiguous, tile-shaped buffers that match the iteration order, eliminating non-unit-stride accesses and TLB pressure within tiles.",
+          "rationale": "Even after tiling, operand sub-matrices may not be contiguous in memory (e.g., accessing a column panel of a row-major matrix). Packing rearranges data into a layout that guarantees sequential access within each tile, which is critical for achieving near-peak throughput.",
+          "action_template": "Packing(operand_id, packed_sizes) OR Packing(operand_id, inner_perm, outer_perm) — operand_id identifies which operand to pack; packed_sizes and permutations control the packed layout."
+        },
+        {
+          "name": "Promotion",
+          "description": "Materialize a frequently reused sub-tensor into a faster memory space (e.g., stack-allocated buffer) to guarantee that the innermost computation operates from the fastest available storage.",
+          "rationale": "Promotion ensures that the micro-kernel's operands reside in L1 or registers rather than being re-fetched from L2/L3 on each access. It complements tiling by explicitly controlling data placement in the memory hierarchy.",
+          "action_template": "Promotion(operand_id, memory_space) OR Promotion(loop_band, operand_id) — operand_id selects the operand to promote; memory_space or loop_band context determines the target storage level."
+        }
+      ]
+    },
+    {
+      "name": "Compute Throughput & SIMD Utilization",
+      "description": "Maximize utilization of the CPU's SIMD functional units (AVX2 + FMA) and instruction-level parallelism by restructuring innermost loops for vectorization, unrolling, and clean trip counts.",
+      "rationale": "On Broadwell, peak FP64 throughput requires filling both FMA ports with independent vector operations every cycle. This demands vectorized inner loops, sufficient ILP from unrolling, and clean loop boundaries that avoid scalar remainder overhead.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Vectorization",
+          "description": "Map innermost loop iterations onto SIMD vector lanes, replacing scalar operations with vector instructions that process multiple data elements per cycle.",
+          "rationale": "AVX2 provides 4 FP64 lanes per 256-bit vector. Without vectorization, the CPU uses only one lane, leaving 75% of FP throughput unused. Vectorization is essential for approaching peak FLOPS.",
+          "action_template": "Vectorization(vector_sizes) OR Vectorization(loop_band, vector_sizes) — vector_sizes is a list specifying the number of elements to vectorize along each loop dimension; 0 means do not vectorize that dimension."
+        },
+        {
+          "name": "Unrolling",
+          "description": "Replicate the loop body multiple times to expose independent operations, reducing loop overhead and enabling the processor to pipeline instructions across multiple functional units.",
+          "rationale": "FMA latency on Broadwell is 5 cycles but throughput is 2/cycle. Saturating both FMA ports requires at least 10 independent FMA operations in flight simultaneously, which unrolling exposes by creating independent register-level computations.",
+          "action_template": "Unrolling(loop_id, factor) OR Unrolling(loop_band, unroll_factors) — factor/unroll_factors specify how many times to replicate each loop body."
+        },
+        {
+          "name": "Peeling",
+          "description": "Split a loop into a main body with a trip count divisible by a given factor and a remainder loop handling leftover iterations.",
+          "rationale": "Vectorization and unrolling require trip counts divisible by the vector width or unroll factor. Peeling isolates the clean main body from the scalar remainder, enabling aggressive optimization of the main loop without runtime checks.",
+          "action_template": "Peeling(loop_id) OR Peeling(loop_id, peel_count) — loop_id identifies the target loop; peel_count optionally specifies how many iterations to peel."
+        },
+        {
+          "name": "Padding",
+          "description": "Extend operand dimensions with zero-valued elements to make sizes divisible by tile sizes, vector widths, or alignment boundaries.",
+          "rationale": "When operand dimensions are not divisible by the tile or vector size, complex remainder handling is required. Padding eliminates this by ensuring uniform tile shapes throughout the iteration space, enabling simpler and faster generated code.",
+          "action_template": "Padding(operand_id, padding_sizes) OR Padding(target_op, pack_paddings) — operand_id or target_op identifies what to pad; padding_sizes controls the amount of padding per dimension."
+        }
+      ]
+    },
+    {
+      "name": "Parallelism & IR Simplification",
+      "description": "Distribute independent work across multiple CPU cores and simplify the IR to enable clean downstream lowering and code generation.",
+      "rationale": "With 28 physical cores available, parallelism is necessary to scale beyond single-core performance. IR simplification (canonicalization) is a supporting pass that cleans up after structural transformations, improving code quality for final lowering.",
+      "priority": "medium",
+      "transformations": [
+        {
+          "name": "Parallelization",
+          "description": "Distribute independent iterations of outer parallel loops across multiple CPU threads/cores for concurrent execution.",
+          "rationale": "Loop nests with parallel outer dimensions (no cross-iteration dependencies) can be trivially parallelized. For large problems, this provides near-linear speedup up to the core count, though it is secondary to getting single-core tiling and vectorization right.",
+          "action_template": "Parallelization(loop_id, num_threads) OR Parallelization(loop_band, mapping) — loop_id selects the parallel loop; num_threads or mapping controls how iterations are distributed."
+        },
+        {
+          "name": "Fusion",
+          "description": "Merge producer-consumer loop nests so that the consumer reads the producer's output directly from registers or cache, avoiding intermediate memory materialization.",
+          "rationale": "When a loop nest feeds into a subsequent operation (e.g., bias addition after contraction), fusion eliminates the round-trip through memory for the intermediate result. This reduces memory bandwidth pressure and improves cache utilization.",
+          "action_template": "Fusion(producer_op, consumer_op) OR Fusion(target_op, operand_id) — identifies the producer-consumer pair or the target operation and the operand through which fusion occurs."
+        },
+        {
+          "name": "Canonicalization",
+          "description": "Apply algebraic simplifications, constant folding, and IR normalization to clean up the program after structural transformations.",
+          "rationale": "Tiling, interchange, and other structural transforms often leave behind redundant operations, complex affine expressions, or unnecessary intermediate values. Canonicalization simplifies these, producing cleaner IR that lowers more efficiently to machine code.",
+          "action_template": "Canonicalization() OR Canonicalization(target_region) — applies simplification passes to the entire module or a specific region."
+        }
+      ]
+    }
+  ]
+}

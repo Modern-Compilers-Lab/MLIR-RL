@@ -6,7 +6,7 @@ from llm_action.src.config import (
 
 @dataclass
 class EnvConfig:
-    action_version: str = "v9"
+    action_version: str = "v10"
     param_mode: str = "multidiscrete"  # "multidiscrete", "two_policy", "llm"
     max_steps: int = MAX_STEPS
     benchmarks_name: str = "matmul"
@@ -23,7 +23,9 @@ class EnvConfig:
     no_action_penalty: float = -0.1
     reward_scale: str = "log"
     reward_mode: str = "final"  # "final", "intermediate", "schedule"
+    reward_baseline: str = "mlir"  # "mlir" or "torch"
     max_speedup_cap: float = 1000.0
+    history_mode: str = "success-encoding"  # "include-all", "ignore-failed", "success-encoding"
     unique_actions: bool = True
     verbose: bool = True
 

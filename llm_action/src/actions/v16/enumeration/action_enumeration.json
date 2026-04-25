@@ -1,0 +1,82 @@
+{
+  "intents": [
+    {
+      "name": "Data Locality and Cache Optimization",
+      "description": "Restructure iteration order and data layout to maximize temporal and spatial reuse across the L1/L2/L3 cache hierarchy, minimizing off-chip memory traffic for the 7-deep loop nest.",
+      "rationale": "The conv2d loop nest accesses three large tensors with complex reuse patterns. Without cache-aware blocking, working sets exceed cache capacity and execution becomes memory-bound. On Broadwell with 32KB L1d and 256KB L2, cache-aware data placement is the single most impactful optimization.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Partition the iteration space into multi-dimensional blocks whose working sets fit within a target cache level, enabling temporal data reuse across tile iterations.",
+          "rationale": "Tiling is the foundational loop-nest optimization. It converts large, cache-hostile iteration spaces into cache-resident blocks, reducing capacity misses by orders of magnitude. Multi-level tiling (L1/L2/L3) enables hierarchical reuse.",
+          "action_template": "Tiling(tile_sizes) — tile_sizes is a vector with one entry per loop dimension; 0 means 'do not tile that dimension'. OR Tiling(loop_band, tile_sizes) — applies tiling to a specific loop band."
+        },
+        {
+          "name": "Packing",
+          "description": "Copy and reorganize data into a contiguous buffer with a layout matching the tile access pattern, eliminating strided accesses and cache-line conflicts within tiles.",
+          "rationale": "After tiling, intra-tile accesses may still have large strides in the original layout, causing cache-line waste and TLB pressure. Packing transforms strided access into sequential access, maximizing cache-line utilization and enabling aligned vector loads.",
+          "action_template": "Packing(packed_sizes) — packed_sizes specifies the packing granularity per dimension; 0 means 'do not pack that dimension'. OR Packing(loop_band, packed_sizes)."
+        },
+        {
+          "name": "Promotion",
+          "description": "Explicitly copy frequently reused tile data into stack-allocated buffers, ensuring the working set resides in fast on-chip memory with predictable access latency.",
+          "rationale": "Promotion guarantees that reused data stays in L1/L2 by managing buffer placement explicitly, avoiding interference from other data. It is especially valuable when the same input tile is reused across multiple output computations.",
+          "action_template": "Promotion(tile_sizes) — tile_sizes controls the promoted region per dimension; 0 means 'do not promote that dimension'. OR Promotion(loop_band, buffer_sizes)."
+        }
+      ]
+    },
+    {
+      "name": "Compute Throughput and Vectorization",
+      "description": "Restructure the innermost loops to maximize utilization of AVX2 vector units, expose instruction-level parallelism, and ensure unit-stride memory access patterns for efficient SIMD execution.",
+      "rationale": "AVX2 with FMA provides up to 4x FP64 throughput over scalar code. Exploiting this requires the innermost loop to have independent iterations with contiguous memory access. Loop restructuring and unrolling further expose ILP for out-of-order execution on Broadwell.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Vectorization",
+          "description": "Map iterations of the innermost loop to SIMD vector lanes, replacing scalar operations with AVX2 vector instructions operating on multiple data elements simultaneously.",
+          "rationale": "Vectorization is essential for compute throughput on AVX2 hardware. A properly vectorized inner loop achieves 4x (FP64) or 8x (FP32) speedup over scalar execution. The loop must have independent iterations and unit-stride access for efficient vector load/store.",
+          "action_template": "Vectorization(vector_sizes) — vector_sizes specifies the vectorization width per dimension; values correspond to SIMD lane counts. OR Vectorization(loop_band, vector_width)."
+        },
+        {
+          "name": "Loop Interchange",
+          "description": "Permute the ordering of loops in the nest to place the most vectorization-friendly or stride-optimal loop innermost, improving memory access patterns and enabling downstream optimizations.",
+          "rationale": "Loop order determines memory access stride and data reuse patterns. Moving a unit-stride dimension innermost enables vectorization and reduces cache misses. For the 7-deep conv2d nest, interchange can transform column-major-like access into row-major sequential access.",
+          "action_template": "LoopInterchange(permutation) — permutation is a reordering of loop indices. OR LoopInterchangeSwap(loop_id_a, loop_id_b) — swaps two specific loops. OR LoopInterchangeMove(loop_id, target_position)."
+        },
+        {
+          "name": "Loop Unrolling",
+          "description": "Replicate the loop body multiple times per iteration, reducing branch overhead and exposing independent instructions for out-of-order execution and register-level data reuse.",
+          "rationale": "Unrolling reduces loop control overhead and exposes instruction-level parallelism. On Broadwell's out-of-order core, moderate unrolling (2-8x) enables better scheduling and register reuse. Combined with vectorization, unrolling along an outer dimension yields a vectorized micro-kernel with high arithmetic intensity.",
+          "action_template": "LoopUnrolling(tile_size, unroll_factor) — tile_size selects the loop trip count to target, unroll_factor specifies how many iterations to unroll. OR LoopUnrolling(loop_id, unroll_factor)."
+        }
+      ]
+    },
+    {
+      "name": "Work Distribution and Iteration Space Restructuring",
+      "description": "Distribute computation across multiple CPU cores for parallel execution and apply structural transformations that reshape the iteration space to enable more effective downstream optimizations.",
+      "rationale": "With 28 physical cores available, single-threaded execution leaves most compute capacity idle. Parallelizing outer loops provides near-linear speedup for embarrassingly parallel dimensions. Additionally, structural transformations like im2col can convert irregular access patterns into regular ones amenable to highly optimized schedules.",
+      "priority": "medium",
+      "transformations": [
+        {
+          "name": "Parallelization",
+          "description": "Distribute iterations of outer parallel loops across CPU cores using multi-threaded execution, partitioning the iteration space into independent work units.",
+          "rationale": "The conv2d loop nest has 4 parallel dimensions (batch, output channels, spatial height/width) that can be distributed across 28 cores with no synchronization. Coarse-grained parallelism over outer loops minimizes thread management overhead and maximizes per-core cache utilization.",
+          "action_template": "Parallelization(num_threads) — specifies the number of threads for parallel execution. OR Parallelization(loop_id, num_threads) — parallelizes a specific loop with given thread count."
+        },
+        {
+          "name": "Im2col Lowering",
+          "description": "Transform a convolution operation into a matrix multiplication (contraction) by reorganizing the input data, converting irregular sliding-window access patterns into regular contraction loops.",
+          "rationale": "Im2col converts convolution into matmul, which has simpler loop structure, more regular access patterns, and well-understood optimal schedules. This enables reuse of highly tuned matmul optimization sequences. The trade-off is additional memory for the reorganized buffer, but the compute regularity gains typically outweigh this cost.",
+          "action_template": "Im2colLowering(enable) — enable is a binary flag (0 or 1) controlling whether the lowering is applied."
+        },
+        {
+          "name": "Peeling",
+          "description": "Separate boundary/remainder iterations from the main loop body, allowing the main body to be optimized with full-size tiles and aligned vector operations while the peeled remainder handles edge cases.",
+          "rationale": "When loop trip counts are not exact multiples of tile sizes or vector widths, the main loop must include conditional logic or masking that inhibits optimization. Peeling isolates the remainder into a separate loop, enabling aggressive optimization of the main body (full tiles, no bounds checks, aligned SIMD).",
+          "action_template": "Peeling(tile_sizes) — tile_sizes controls the peeling granularity per dimension; 0 means 'do not peel that dimension'. OR Peeling(loop_id, peel_count)."
+        }
+      ]
+    }
+  ]
+}

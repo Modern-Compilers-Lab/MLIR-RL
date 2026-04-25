@@ -35,4 +35,6 @@ claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_ex
 
 # Example usage:
 # sbatch llm_action/scripts/claude_exploration.sh --action-version v10 --benchmarks-name matmul
-# claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_exploration.py --action-version v10 --benchmarks-name matmul)"
+
+# CONV
+## python llm_action/src/prompts/schedule_exploration.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_exploration.py --action-version v17 --benchmarks-name conv_single)"

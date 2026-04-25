@@ -6,18 +6,18 @@ from llm_action.src.actions.v10.implementation.loop_interchange import LoopInter
 from llm_action.src.actions.v10.implementation.parallelization import Parallelization
 from llm_action.src.actions.v10.implementation.loop_unrolling import LoopUnrolling
 
-ACTION_CLASSES: list[type[ActionBase]] = [
-    Tiling,
-    Packing,
-    Vectorization,
-    LoopInterchange,
-    Parallelization,
-    LoopUnrolling
-]
-
 # ACTION_CLASSES: list[type[ActionBase]] = [
 #     Tiling,
+#     Packing,
 #     Vectorization,
 #     LoopInterchange,
-#     Parallelization
+#     Parallelization,
+#     LoopUnrolling
 # ]
+
+ACTION_CLASSES: list[type[ActionBase]] = [
+    Tiling,
+    Vectorization,
+    LoopInterchange,
+    Parallelization
+]

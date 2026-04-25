@@ -3,9 +3,9 @@ from llm_action.src.execution.mlir_execution import execute_mlir
 class LocalExecutor:
     """In-process MLIR execution (no SLURM, no Dask).
 
-    Runs execute_mlir directly in the main process. BindingsProcess subprocess
-    isolation is intentionally disabled: MLIR Python bindings are not fork-safe
-    once initialized, so forking after the first transform crashes the child.
+    Runs execute_mlir directly in the main process. BindingsProcess uses spawn
+    context (not fork) to isolate MLIR C++ bindings in a child process, avoiding
+    fork-safety issues while protecting the parent from segfaults.
     """
 
     def execute(self, code: str) -> tuple[float, bool]:

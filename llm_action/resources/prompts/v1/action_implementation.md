@@ -351,6 +351,25 @@ Each Action must define the following conceptual stages:
    because they cannot find `tag = "operation_0"` in the transformed code. This is the
    single most common cause of action composition failures.
 
+   **MULTI-OP LOWERING TRANSFORMS:**
+   Some transforms (e.g., `convert_conv2d_to_img2col`) produce multiple ops and their
+   returned handle may not point to the primary compute op. For example,
+   `convert_conv2d_to_img2col` returns a `%transformed` handle that points to
+   `tensor.expand_shape` (the output reshape), not the `linalg.generic` matmul contraction.
+
+   When the returned handle does not point to the compute op, use
+   `transform.get_producer_of_operand` to navigate from the reshape to the actual
+   compute op before tagging:
+   ```
+     // %transformed points to tensor.expand_shape (output reshape), not the matmul
+     %matmul = transform.get_producer_of_operand %transformed[0]
+       : (!transform.any_op) -> !transform.any_op
+     %tag = transform.param.constant "operation_0" -> !transform.any_param
+     transform.annotate %matmul "tag" = %tag : !transform.any_op, !transform.any_param
+   ```
+   Always verify which op a returned handle actually points to when dealing with
+   lowering transforms that produce multiple ops (reshapes, copies, contractions, etc.).
+
 5) **Postcondition**
    - A Python function that checks whether the transformation succeeded.
    - Returns a boolean.
@@ -602,6 +621,12 @@ specific transformation. Common patterns:
 - Vocabulary values should be powers of 2 where possible (composable, cache-friendly), but choose
   whatever values are most meaningful for the transformation (e.g., thread counts, unroll factors).
 - For safety constraints (e.g., vector product ≤ 1024), enforce them inside `decode_params` by clamping.
+- **NO boolean enable/disable parameters.** The RL policy's decision to select an action IS the
+  enable decision — adding a boolean `enable` toggle is redundant and wastes 50% of selections as
+  no-ops. If an action has no meaningful tunable parameters (e.g., a fixed lowering), use
+  `params_size() -> 0`, return `[]` from `classes_per_slot`, and return `{}` from `decode_params`.
+  - Anti-pattern: `ENABLE_VOCAB = [0, 1]`; `params_size() -> 1`; `decode_params -> {"enable": ...}`
+  - Correct: `params_size() -> 0`; `classes_per_slot() -> []`; `decode_params() -> {}`
 
 ## Runtime Helpers
 

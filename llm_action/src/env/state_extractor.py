@@ -20,11 +20,17 @@ assert len(OP_TYPE_LIST) == NUM_OP_TYPES, (
     f"OperationType enum has {len(OP_TYPE_LIST)} members but config.NUM_OP_TYPES={NUM_OP_TYPES}"
 )
 
-def observation_size(total_actions: int, max_steps: int) -> int:
-    return OP_FEATURES_SIZE + max_steps * total_actions + 1
+def observation_size(total_actions: int, max_steps: int, history_mode: str = "success-encoding") -> int:
+    if history_mode == "success-encoding":
+        per_step = total_actions + 1  # one-hot action + success flag
+    else:  # "include-all" or "ignore-failed"
+        per_step = total_actions
+    return OP_FEATURES_SIZE + max_steps * per_step + 1
 
-def extract_observation(code: str, action_indices: list[int], step: int, total_actions: int, max_steps: int) -> np.ndarray:
-    obs_size = observation_size(total_actions, max_steps)
+def extract_observation(code: str, action_indices: list[tuple[int, bool]], step: int,
+                        total_actions: int, max_steps: int,
+                        history_mode: str = "success-encoding") -> np.ndarray:
+    obs_size = observation_size(total_actions, max_steps, history_mode)
     obs = np.zeros(obs_size, dtype=np.float32)
 
     try:
@@ -33,17 +39,30 @@ def extract_observation(code: str, action_indices: list[int], step: int, total_a
         pass
 
     offset = OP_FEATURES_SIZE
-    for i, act_idx in enumerate(action_indices[:max_steps]):
-        obs[offset + i * total_actions + act_idx] = 1.0
+    if history_mode == "success-encoding":
+        stride = total_actions + 1
+        for i, (act_idx, success) in enumerate(action_indices[:max_steps]):
+            obs[offset + i * stride + act_idx] = 1.0
+            obs[offset + i * stride + total_actions] = 1.0 if success else 0.0
+    else:  # "include-all" or "ignore-failed"
+        slot = 0
+        for act_idx, success in action_indices[:max_steps]:
+            if history_mode == "ignore-failed" and not success:
+                continue
+            obs[offset + slot * total_actions + act_idx] = 1.0
+            slot += 1
 
     obs[-1] = step / max_steps
     return obs
 
 def _extract_op_features(code: str) -> np.ndarray:
-    raw = subprocess.run(
+    result = subprocess.run(
         f"{AST_DUMPER_BIN_PATH} -", shell=True,
         input=code.encode(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10,
-    ).stdout.decode()
+    )
+    if result.returncode != 0:
+        return np.zeros(OP_FEATURES_SIZE, dtype=np.float32)
+    raw = result.stdout.decode()
 
     info, _ = raw.split("########################################")
     operations_lines, _ = info.split("#BEGIN_GRAPH")
@@ -62,10 +81,13 @@ def _extract_op_features(code: str) -> np.ndarray:
 def count_loops(code: str) -> int:
     """Count the number of loop dimensions in the tagged operation. Fast fallback: 3."""
     try:
-        raw = subprocess.run(
+        result = subprocess.run(
             f"{AST_DUMPER_BIN_PATH} -", shell=True,
             input=code.encode(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10,
-        ).stdout.decode()
+        )
+        if result.returncode != 0:
+            return L
+        raw = result.stdout.decode()
         info, _ = raw.split("########################################")
         operations_lines, _ = info.split("#BEGIN_GRAPH")
         blocks = [b.strip() for b in operations_lines.split("#START_OPERATION") if b.strip()]

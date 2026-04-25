@@ -45,7 +45,7 @@ class MLIROptEnv(gym.Env):
             self.action_space = spaces.Discrete(reg.total_actions)
             self._slot_map = {}
 
-        obs_sz = observation_size(reg.total_actions, cfg.max_steps)
+        obs_sz = observation_size(reg.total_actions, cfg.max_steps, cfg.history_mode)
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(obs_sz,), dtype=np.float32
         )
@@ -73,7 +73,7 @@ class MLIROptEnv(gym.Env):
         self._benchmark: Benchmark | None = None
         self._current_code = ""
         self._action_history: list[tuple[str, dict]] = []
-        self._action_indices: list[int] = []
+        self._action_indices: list[tuple[int, bool]] = []
         self._used_action_indices: set[int] = set()
         self._step_count = 0
         self._episode_count = 0
@@ -98,12 +98,16 @@ class MLIROptEnv(gym.Env):
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         self._episode_count += 1
-        self._benchmark = self.benchmarks[self.np_random.integers(0, len(self.benchmarks))]
+        benchmark_idx = (options or {}).get("benchmark_idx")
+        if benchmark_idx is not None:
+            self._benchmark = self.benchmarks[benchmark_idx]
+        else:
+            self._benchmark = self.benchmarks[self.np_random.integers(0, len(self.benchmarks))]
         if self._benchmark.base_exec_time_ms < 0:
             self._measure_baseline(self._benchmark)
         self._current_code = self._benchmark.code
         self._action_history = []
-        self._action_indices = []
+        self._action_indices: list[tuple[int, bool]] = []
         self._used_action_indices: set[int] = set()
         self._step_count = 0
         self._last_exec_time_ms = -1.0
@@ -152,7 +156,7 @@ class MLIROptEnv(gym.Env):
 
         if action_idx == reg.done_idx:
             reward, opt_t = self._terminal_reward()
-            self._action_indices.append(action_idx)
+            self._action_indices.append((action_idx, True))
             self._log(f"  step {self._step_count}: DONE | reward={reward:.4f} | "
                        f"opt={opt_t:.2f}ms | history={[h[0] for h in self._action_history]}")
             self._log_episode_summary(reward, opt_t)
@@ -191,7 +195,7 @@ class MLIROptEnv(gym.Env):
 
         self._current_code = new_code
         self._action_history.append((action_name, params))
-        self._action_indices.append(action_idx)
+        self._action_indices.append((action_idx, True))
         self._used_action_indices.add(action_idx)
 
         # If the tag was consumed (e.g., Vectorization), auto-terminate
@@ -264,7 +268,7 @@ class MLIROptEnv(gym.Env):
     # Shared helpers
 
     def _fail_step(self, action_idx: int):
-        self._action_indices.append(action_idx)
+        self._action_indices.append((action_idx, False))
         truncated = self._step_count >= self.cfg.max_steps
         reward = self.cfg.failed_transform_penalty
         opt_t = -1.0
@@ -291,6 +295,15 @@ class MLIROptEnv(gym.Env):
             logger.warning(f"Baseline error for {b.name}: {e}")
             b.base_exec_time_ms = 1.0
 
+    def _get_reward_baseline(self) -> float:
+        """Return the baseline time to compute speedup ratios against."""
+        if self.cfg.reward_baseline == "torch":
+            torch_t = self._benchmark.torch_exec_time_ms
+            if torch_t > 0:
+                return torch_t
+            logger.warning(f"Torch baseline unavailable for {self._benchmark.name}, falling back to MLIR baseline")
+        return self._benchmark.base_exec_time_ms
+
     def _step_reward(self) -> float:
         """Compute per-step reward for intermediate/schedule modes."""
         try:
@@ -299,7 +312,7 @@ class MLIROptEnv(gym.Env):
             return self.cfg.failed_exec_penalty
         if not ok or t <= 0:
             return self.cfg.failed_exec_penalty
-        base = self._benchmark.base_exec_time_ms
+        base = self._get_reward_baseline()
         if base <= 0:
             return 0.0
 
@@ -324,7 +337,7 @@ class MLIROptEnv(gym.Env):
             return self.cfg.failed_exec_penalty, -1.0
         if not ok or t <= 0:
             return self.cfg.failed_exec_penalty, t
-        base = self._benchmark.base_exec_time_ms
+        base = self._get_reward_baseline()
         if base <= 0:
             return 0.0, t
 
@@ -348,7 +361,7 @@ class MLIROptEnv(gym.Env):
     def _obs(self) -> np.ndarray:
         return extract_observation(
             self._current_code, self._action_indices, self._step_count,
-            self.registry.total_actions, self.cfg.max_steps
+            self.registry.total_actions, self.cfg.max_steps, self.cfg.history_mode
         )
 
     def _info(self, reward: float, failed: bool = False, opt_time_ms: float = -1) -> dict:
@@ -356,8 +369,14 @@ class MLIROptEnv(gym.Env):
             "benchmark": self._benchmark.name,
             "step": self._step_count,
             "action_history": [h[0] for h in self._action_history],
+            "action_outcomes": [
+                (self.registry.action_classes[idx].__name__, ok)
+                for idx, ok in self._action_indices
+                if idx < len(self.registry.action_classes)
+            ],
             "reward": reward,
             "failed": failed,
             "base_time_ms": self._benchmark.base_exec_time_ms if self._benchmark else -1,
+            "torch_time_ms": self._benchmark.torch_exec_time_ms if self._benchmark else -1,
             "opt_time_ms": opt_time_ms,
         }

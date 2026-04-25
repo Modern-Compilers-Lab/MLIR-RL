@@ -1,0 +1,70 @@
+{
+  "intents": [
+    {
+      "name": "Memory Hierarchy Optimization",
+      "description": "Restructure loop nests to maximize data reuse within each level of the CPU cache hierarchy (L1/L2/L3) and minimize costly main-memory accesses.",
+      "rationale": "Loop-nest computations with large working sets suffer severe performance degradation from cache misses. Multi-level blocking and data reorganization are the single most impactful optimizations for CPU loop nests on this hardware.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Partition the iteration space into multi-dimensional blocks so that the working set of each tile fits within a target cache level.",
+          "rationale": "Tiling creates temporal locality by ensuring that data loaded into cache is reused across multiple iterations before eviction, dramatically reducing memory bandwidth pressure.",
+          "action_template": "Tiling(tile_sizes) — tile_sizes is a vector of integers with one entry per loop dimension; 0 means 'do not tile that dimension'. OR Tiling(loop_band, tile_sizes) — tile_sizes applies to the specified loop band."
+        },
+        {
+          "name": "Loop Interchange",
+          "description": "Reorder the loops in a loop nest to change the iteration order without altering the computation's semantics.",
+          "rationale": "Loop ordering determines memory access stride patterns; placing the dimension with stride-1 access innermost improves spatial locality and enables hardware prefetching.",
+          "action_template": "LoopInterchange(loop_band, permutation) — permutation is a reordering of loop indices within the band. OR LoopInterchangeSwap(loop_band, adjacent_pair) — swap two adjacent loops in the nest."
+        },
+        {
+          "name": "Promotion",
+          "description": "Copy a tile of data from its original location into a contiguous temporary buffer before computation and write results back afterward.",
+          "rationale": "Promotion eliminates non-unit-stride accesses and cache conflict misses by ensuring tiles are stored contiguously, improving effective cache utilization and enabling aligned vectorized loads from packed data.",
+          "action_template": "Promotion(operand_id) — promote the specified operand of the target operation to a local contiguous buffer. OR Promotion(operand_ids) — promote multiple operands simultaneously."
+        }
+      ]
+    },
+    {
+      "name": "SIMD and Instruction-Level Parallelism",
+      "description": "Exploit the processor's vector execution units (AVX2) and instruction pipeline to maximize floating-point throughput per core.",
+      "rationale": "Modern CPUs achieve peak throughput only when SIMD lanes are fully utilized and the FMA pipeline is kept busy; without vectorization and sufficient ILP, a core operates at a small fraction of its potential.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Vectorization",
+          "description": "Map loop iterations to SIMD vector lanes, enabling multiple data elements to be processed by a single instruction.",
+          "rationale": "AVX2 provides 4-wide FP64 (or 8-wide FP32) vector lanes; vectorizing the appropriate innermost loop dimension yields up to a 4x (or 8x) throughput improvement per core.",
+          "action_template": "Vectorization(vector_sizes) — vector_sizes is a vector of integers specifying the SIMD width for each loop dimension; 0 means 'do not vectorize that dimension'. OR Vectorization(target_loop, vector_width) — vectorize a specific loop at the given width."
+        },
+        {
+          "name": "Unrolling",
+          "description": "Replicate the loop body multiple times within a single iteration, reducing loop overhead and exposing more independent operations to the processor pipeline.",
+          "rationale": "Unrolling increases instruction-level parallelism by exposing multiple independent FMA operations, enabling the out-of-order engine to fill pipeline bubbles and better utilize functional units.",
+          "action_template": "Unrolling(target_loop, unroll_factor) — unroll the specified loop by the given factor. OR Unrolling(loop_band, unroll_factor) — unroll the innermost loop of the specified band."
+        }
+      ]
+    },
+    {
+      "name": "Coarse-Grain Parallelism and Loop Structure",
+      "description": "Distribute work across multiple CPU cores and restructure the iteration space to expose more regular, optimization-friendly loop patterns.",
+      "rationale": "With 28 physical cores available, utilizing thread-level parallelism is essential; additionally, restructuring irregular loop nests into canonical contraction forms enables more effective application of tiling, vectorization, and packing.",
+      "priority": "medium",
+      "transformations": [
+        {
+          "name": "Parallelization",
+          "description": "Distribute iterations of parallel (non-reduction) loops across multiple threads for concurrent execution on different cores.",
+          "rationale": "Outer parallel loops in dense loop nests are independent and can be distributed across the 28 available cores for near-linear speedup, provided tiles are large enough to amortize synchronization overhead.",
+          "action_template": "Parallelization(target_loop, num_threads) — parallelize the specified loop with the given thread count. OR Parallelization(loop_band, num_threads) — parallelize the outermost parallel loop in the band."
+        },
+        {
+          "name": "Kernel Lowering",
+          "description": "Lower a structured high-level operation (e.g., convolution) into a canonical contraction loop nest via data layout transformations such as im2col.",
+          "rationale": "Convolution loop nests have irregular sliding-window access patterns; lowering to a contraction form regularizes the iteration space and memory accesses, making subsequent tiling, vectorization, and packing significantly more effective.",
+          "action_template": "KernelLowering() — lower the target structured operation to a contraction form with associated reshape operations. No parameters; the RL policy's action selection itself is the decision to apply this transformation."
+        }
+      ]
+    }
+  ]
+}

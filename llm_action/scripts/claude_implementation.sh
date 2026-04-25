@@ -36,4 +36,6 @@ claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_im
 
 # Example usage:
 # sbatch llm_action/scripts/claude_implementation.sh
-# python llm_action/src/prompts/action_implementation.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_implementation.py)"
+
+# CONV
+## python llm_action/src/prompts/action_implementation.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_implementation.py --kernel-type conv2d --kernel-number 1)"

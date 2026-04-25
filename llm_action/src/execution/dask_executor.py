@@ -15,9 +15,15 @@ logger = logging.getLogger(__name__)
 def _execute_on_worker(code_path: str) -> tuple[float, bool]:
     """Run on a Dask worker: read MLIR code from shared filesystem, execute.
 
+    Dask workers already provide process isolation, so BindingsProcess
+    subprocess spawning is disabled here to avoid double-isolation overhead.
+
     Returns (execution_time_ms, success).
     """
     from pathlib import Path
+    import utils.bindings_process as bp
+    bp.ENABLED = False
+
     from llm_action.src.execution.mlir_execution import execute_mlir
 
     code = Path(code_path).read_text()

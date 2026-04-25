@@ -48,7 +48,7 @@ TASK: For each kernel listed above:
 4. Measure performance of each successful schedule using execute_mlir_code and measure_speedup.
 5. Write the structured exploration log following the format in the instructions.
 
-BUDGET: Up to 50 candidates per kernel. Prioritize breadth in Phases 1-2, depth in Phases 3-4.
+BUDGET: Up to "Unlimited (ensure full coverage)" candidates per kernel. Prioritize breadth in Phases 1-2, depth in Phases 3-4.
 
 CRITICAL: Use ONLY the action MCP tools (rl-action-{action_version}) for transformations. Do NOT write raw Transform dialect code. Do NOT modify action implementations. Your job is to explore what the existing actions can achieve when composed.
 """

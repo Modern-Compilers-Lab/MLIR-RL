@@ -12,7 +12,6 @@ def load_kernel_code(kernel_type: KernelType, kernel_number: int = 1, input_type
     dir = f"llm_action/data/{input_type.value}/{kernel_type.value}"
     match kernel_type:
         case KernelType.MATMUL:
-            name = "Matrix Multiplication"
             match kernel_number:
                 case 1:
                     code_path = f"{dir}/matmul_128_256_128.mlir"
@@ -22,16 +21,19 @@ def load_kernel_code(kernel_type: KernelType, kernel_number: int = 1, input_type
                     code_path = f"{dir}/matmul_512_512_512.mlir"
                 case 4:
                     code_path = f"{dir}/matmul_24576_768_384.mlir"
+                case 5:
+                    code_path = f"{dir}/matmul_256_256_512.mlir"
                 case _:
                     raise ValueError(f"Unsupported kernel number {kernel_number} for {kernel_type}")
         case KernelType.CONV2D:
-            name = "2D Convolution"
-            code_path = f"{dir}/conv_2d_nchw_fchw_128_32_7_7_256_1_1_7_7.mlir"
+            match kernel_number:
+                case 1:
+                    code_path = f"{dir}/conv_2d_nchw_fchw_128_32_7_7_256_1_1_7_7.mlir"
+                case _:
+                    raise ValueError(f"Unsupported kernel number {kernel_number} for {kernel_type}")
         case KernelType.ATTENTION:
-            name = "Attention"
             code_path = f"{dir}/attention.mlir"
         case KernelType.GENERIC:
-            name = "Generic"
             code_path = f"{dir}/generic_8_8_16_8_32.mlir"
     with open(code_path, "r") as f:
         code = f.read()

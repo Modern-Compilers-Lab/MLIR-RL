@@ -2,7 +2,7 @@ from llm_action.src.models import KernelType, OptimizationIntent, Transformation
 
 from llm_action.src.utils.persistence import load_kernel_code_template, load_kernel_code
 
-def get_training_code_templates_representation(include_instances: bool = True, kernel_type: KernelType = None) -> str:
+def get_training_code_templates_representation(include_instances: bool = True, kernel_type: KernelType = None, kernel_number: int = 1) -> str:
     if kernel_type is not None:
         representation = f"""RL Training Code Templates:
 {load_kernel_code_template(kernel_type)}
@@ -17,7 +17,7 @@ def get_training_code_templates_representation(include_instances: bool = True, k
     if include_instances:
         if kernel_type is not None:
             representation += f"""Concrete Instances:
-{load_kernel_code(kernel_type)}
+{load_kernel_code(kernel_type, kernel_number)}
 """
         else:
             representation += f"""Concrete Instances:

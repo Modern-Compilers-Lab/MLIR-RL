@@ -1,0 +1,120 @@
+{
+  "intents": [
+    {
+      "name": "Memory Hierarchy Exploitation",
+      "description": "Restructure loop nests and operand layouts so the bulk of memory accesses hit fast cache levels and registers, minimizing DRAM traffic for large dense working sets.",
+      "rationale": "Broadwell-class CPUs have modest per-core L1 (~32 KB) and L2 (~256 KB) caches relative to matmul/conv working sets, so without cache-blocking and layout restructuring the kernel becomes memory-bandwidth bound. Cache and register reuse is historically the single largest lever for structured loop-nest kernels on CPU.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Partition the iteration space of a loop band into smaller blocks so that each block's working set fits into a targeted cache level.",
+          "rationale": "Tiling is the foundational cache-blocking mechanism for loop nests; without it, the working sets of large contractions and convolutions spill out of L1/L2 and performance collapses to DRAM bandwidth.",
+          "action_template": "Tiling(target_op, tile_sizes) OR Tiling(target_op, loop_band, tile_sizes) OR Tiling(target_op, loop_id, tile_size). tile_sizes is a per-loop vector aligned with the loop band; a value of 0 means 'do not tile this loop'. Multi-level (hierarchical) tiling is handled by Layer 2 either as repeated applications or as nested tile_sizes."
+        },
+        {
+          "name": "LoopInterchange",
+          "description": "Permute the loops of a loop band to change the stride of innermost accesses and to select which operand is reused in the innermost position.",
+          "rationale": "Interchange chooses stride-1 innermost accesses for hardware prefetchers and SIMD loads, and controls which operand sub-tile remains resident in registers/L1 across the inner loop.",
+          "action_template": "LoopInterchange(target_op, permutation) OR LoopInterchange(target_op, loop_band, permutation). permutation is a reordering of the loops in the target band."
+        },
+        {
+          "name": "Packing",
+          "description": "Copy and re-layout an operand sub-region into a contiguous, optionally blocked buffer so subsequent inner-loop accesses become stride-1 and cache-friendly.",
+          "rationale": "Packing removes gather-like access patterns, amortizes the copy across many reuse iterations, and mirrors the A/B panel strategy used by tuned BLAS GEMM and convolution-as-contraction kernels.",
+          "action_template": "Packing(target_op, operand_id, inner_tile_sizes) OR Packing(target_op, pack_dims, inner_tile_sizes) OR Packing(target_op, operand_id, pack_layout). operand_id selects which input/output operand is packed; pack_layout captures optional dimension reordering."
+        },
+        {
+          "name": "Promotion",
+          "description": "Materialize a sub-tile of an operand into a freshly allocated local buffer so that the inner loop operates on the fast, private copy.",
+          "rationale": "Promotion captures reused operands in a dedicated scratch buffer that the backend can keep in registers or L1, reducing repeated loads from larger, slower memory levels; it is complementary to Packing (no layout rewrite, just localization).",
+          "action_template": "Promotion(target_op, operand_ids) OR Promotion(target_op, operand_ids, memory_space). operand_ids selects which operands to promote; memory_space hints the desired storage level."
+        }
+      ]
+    },
+    {
+      "name": "SIMD Vectorization and Instruction Throughput",
+      "description": "Transform inner loops into vector-friendly forms and regularize trip counts so AVX2 vector lanes, FMA units, and the out-of-order pipeline are kept saturated.",
+      "rationale": "On this target (AVX2 + FMA, no AVX-512), SIMD provides roughly 4x FP64 / 8x FP32 peak throughput per core, but only for vectorizable innermost loops with regular, aligned, and divisible trip counts. Capturing that throughput requires dedicated actions for vectorization, ILP exposure, and trip-count cleanup.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Vectorization",
+          "description": "Rewrite the innermost loop (or a selected inner band) as operations on SIMD vector lanes of a chosen width.",
+          "rationale": "Vectorization is what actually maps scalar loop iterations to AVX2/FMA instructions; without it, most of the floating-point peak of the target CPU is unreachable.",
+          "action_template": "Vectorization(target_op) OR Vectorization(target_op, vector_sizes) OR Vectorization(target_op, target_loop, vector_width). vector_sizes is a per-loop vector width vector, vector_width is a scalar width applied to a specific inner loop."
+        },
+        {
+          "name": "LoopUnrolling",
+          "description": "Replicate the body of a target loop a fixed number of times to expose more independent work and reduce loop-control overhead.",
+          "rationale": "Unrolling exposes instruction-level parallelism, lets multiple independent accumulators hide FMA latency, and increases the reuse of registers across replicated iterations.",
+          "action_template": "LoopUnrolling(target_loop, unroll_factor) OR LoopUnrolling(loop_band, unroll_factors). unroll_factor is a scalar; unroll_factors is a per-loop vector when unrolling multiple loops in a band."
+        },
+        {
+          "name": "Peeling",
+          "description": "Split a loop into a regular main portion plus leading and/or trailing peeled iterations so the main loop has a clean, uniform trip count.",
+          "rationale": "Peeling isolates ragged boundary iterations from the vector-friendly body, allowing the main loop to be vectorized and unrolled without masks or scalar epilogues slowing down the hot path.",
+          "action_template": "Peeling(target_loop, peel_kind) OR Peeling(target_loop, peel_count). peel_kind selects which end to peel (front/back/both); peel_count specifies how many iterations when a fixed count is desired."
+        },
+        {
+          "name": "Padding",
+          "description": "Extend tensor dimensions or iteration bounds with neutral values so that sizes become exact multiples of tile sizes and vector widths.",
+          "rationale": "Padding removes the ragged edges up-front so that tiling and vectorization divide evenly; it is the complement of Peeling and avoids scalar remainder loops that otherwise destroy throughput on non-aligned sizes.",
+          "action_template": "Padding(target_op, pad_dims, pad_sizes) OR Padding(target_op, align_to) OR Padding(target_op, padding_values, pad_dims). pad_dims selects which operand dimensions to pad; align_to specifies the alignment multiple (e.g., vector width or tile size)."
+        }
+      ]
+    },
+    {
+      "name": "Coarse-Grain Parallelism and Work Distribution",
+      "description": "Expose, partition, and assign independent chunks of work to CPU threads so that all physical cores contribute while preserving per-task cache locality and avoiding contention.",
+      "rationale": "With 28 physical cores across 2 NUMA nodes and no SMT, thread-level parallelism is a first-order speedup lever. Good partitioning plus fused or distributed loop shapes controls the task granularity presented to threads and the amount of memory traffic between stages.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Parallelization",
+          "description": "Mark one or more outer parallel loops as multi-threaded so iterations execute concurrently across cores.",
+          "rationale": "Parallelization is the direct mechanism for using all available cores; outer-loop parallelism is preferred because it keeps per-thread working sets cache-friendly and avoids oversubscribing 28 cores with fine-grained tasks.",
+          "action_template": "Parallelization(target_op) OR Parallelization(target_op, loop_band) OR Parallelization(target_op, loop_band, num_threads). num_threads optionally caps the degree of parallelism."
+        },
+        {
+          "name": "Fusion",
+          "description": "Merge a producer loop nest into a consumer loop nest so their shared iterations execute together, eliminating intermediate materialization and memory round-trips.",
+          "rationale": "Fusion increases arithmetic intensity per byte of memory traffic, keeps intermediates in fast storage, and gives each parallel task a larger, more locality-friendly unit of work per thread.",
+          "action_template": "Fusion(producer_op, consumer_op) OR Fusion(target_op, fuse_depth) OR Fusion(consumer_op, producer_ops). fuse_depth controls how many loop levels are fused; producer_ops allows fusing multiple producers into one consumer."
+        },
+        {
+          "name": "LoopDistribution",
+          "description": "Split a single loop nest into two or more separate nests over the same iteration range to isolate independent computations.",
+          "rationale": "Distribution isolates parallel parts from reductions, separates vectorizable portions from non-vectorizable ones, and lets each resulting nest be parallelized, vectorized, or tiled independently.",
+          "action_template": "LoopDistribution(target_loop, split_points) OR LoopDistribution(target_op, partition). split_points marks where to cut the loop body; partition is an alternative grouping spec."
+        }
+      ]
+    },
+    {
+      "name": "Iteration Space Normalization and Structured Lowering",
+      "description": "Rewrite payload operations into canonical, regular loop-nest forms that expose more optimization opportunities to the high-impact transformations in the other intents.",
+      "rationale": "Many high-impact optimizations only apply cleanly to simplified, regular IR; normalizing the iteration space and choosing the right structured form acts as an enabler that multiplies the effectiveness of locality, vectorization, and parallelism transformations.",
+      "priority": "medium",
+      "transformations": [
+        {
+          "name": "Canonicalization",
+          "description": "Apply algebraic simplification, dead-code elimination, and folding to remove redundant operations and normalize IR shape.",
+          "rationale": "Canonicalization removes structural noise that would otherwise block pattern matches used by later transformations (tiling, fusion, vectorization) and eliminates trivially unnecessary work between optimization steps.",
+          "action_template": "Canonicalization() OR Canonicalization(scope) OR Canonicalization(passes). scope optionally restricts where canonicalization runs; passes optionally selects a subset of simplification patterns."
+        },
+        {
+          "name": "Im2colLowering",
+          "description": "Lower a convolution-shaped operation into an explicit contraction/matmul-shaped loop nest by materializing an unfolded input view.",
+          "rationale": "Rewriting a convolution into a contraction iteration space lets the kernel reuse the entire mature tiling / packing / vectorization / parallelization recipe already designed for matmul-like loop nests, which is often the faster form on a CPU target.",
+          "action_template": "Im2colLowering(target_op) OR Im2colLowering(target_op, flavor). flavor optionally selects among reusable lowering variants (e.g., explicit buffer vs. view-based)."
+        },
+        {
+          "name": "BufferizationStrategy",
+          "description": "Choose how tensor-semantic operations are converted into buffer-semantic operations, controlling in-place updates and intermediate temporaries.",
+          "rationale": "The bufferization strategy determines whether large temporaries are materialized, whether reads/writes can happen in place, and therefore has large downstream effects on memory bandwidth, layout stability, and the legality of later fusion/promotion steps.",
+          "action_template": "BufferizationStrategy(strategy) OR BufferizationStrategy(target_op, strategy). strategy selects among reusable strategies such as 'one-shot', 'in-place', or 'copy-before-write'."
+        }
+      ]
+    }
+  ]
+}

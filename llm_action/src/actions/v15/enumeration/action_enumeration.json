@@ -1,0 +1,120 @@
+{
+  "intents": [
+    {
+      "name": "Cache Locality and Data Reuse",
+      "description": "Partition the iteration space and reorganize data access patterns to maximize temporal and spatial reuse within the L1/L2 cache hierarchy, minimizing off-chip memory traffic for the multi-operand, deeply nested loop structure.",
+      "rationale": "A 7-deep loop nest over three tensor operands produces working sets far exceeding per-core cache sizes. Without cache-aware blocking, the convolution loop nest suffers repeated capacity misses and TLB thrashing, leaving the FMA units starved for data.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Partition the iteration space into multi-dimensional blocks (tiles) so that the working set of each tile fits within a target cache level, improving temporal data reuse across all operands.",
+          "rationale": "Tiling is the single most impactful transformation for deeply nested loops with large data footprints. It converts capacity misses into hits by ensuring repeated accesses to the same data occur while it remains in cache.",
+          "action_template": "Tiling(tile_sizes) — tile_sizes is a vector with one entry per loop dimension; a value of 0 means 'do not tile that loop'. OR Tiling(loop_band, tile_sizes) — tile_sizes applies to the specified loop band."
+        },
+        {
+          "name": "Loop Interchange",
+          "description": "Permute the order of loops in a loop nest to improve spatial locality by placing stride-1 accesses in the innermost position and maximizing reuse in outer loops.",
+          "rationale": "The default loop ordering of a convolution may not align stride-1 memory access with the innermost loop. Interchange fixes this, reducing cache-line waste and enabling hardware prefetchers to work effectively.",
+          "action_template": "LoopInterchange(permutation) — permutation is a reordering of range(n_loops) specifying the new loop order. OR LoopInterchange(loop_band, permutation) — applies to a specific loop band."
+        },
+        {
+          "name": "Packing",
+          "description": "Copy operand tiles into contiguous, cache-line-aligned temporary buffers with a blocked data layout, eliminating non-unit strides and TLB pressure within tiled inner loops.",
+          "rationale": "Multi-dimensional tensor layouts (e.g., NCHW) create large strides along certain dimensions. Packing rearranges data into a tile-friendly contiguous layout, converting strided accesses into sequential reads and dramatically improving cache utilization.",
+          "action_template": "Packing(packed_sizes) — packed_sizes is a vector with one entry per dimension; a value of 0 means 'do not pack that dimension'."
+        },
+        {
+          "name": "Promotion",
+          "description": "Materialize frequently accessed operand slices or accumulation buffers into explicitly allocated local memory, reducing redundant loads and store-to-load forwarding stalls.",
+          "rationale": "For reduction loops, the output accumulator is read and written every iteration. Promoting it to a small local buffer keeps it in L1 and avoids interference with input data streams, improving effective memory bandwidth.",
+          "action_template": "Promotion(tile_sizes) — tile_sizes determines the sub-tile shape whose destination operand is promoted to a local allocation; a value of 0 means 'do not tile that loop'."
+        }
+      ]
+    },
+    {
+      "name": "SIMD Vectorization and Instruction-Level Parallelism",
+      "description": "Map inner loop iterations to SIMD vector instructions (AVX2, 256-bit) and expose instruction-level parallelism to saturate the FMA execution units.",
+      "rationale": "AVX2 FMA can execute 4 FP64 multiply-accumulate operations per cycle per core. Without vectorization, scalar execution uses only 1/4 of peak throughput. Complementary transformations (unrolling, padding, peeling) ensure the vectorized loop body is clean and efficient.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Vectorization",
+          "description": "Replace scalar loop iterations with SIMD vector operations by mapping a loop dimension to vector lanes, enabling multiple data elements to be processed in a single instruction.",
+          "rationale": "Vectorization provides up to 4x throughput improvement for FP64 on AVX2. It is the primary mechanism for utilizing the wide SIMD execution units and is essential for approaching peak FLOP rates on the target hardware.",
+          "action_template": "Vectorization(vector_sizes) — vector_sizes is a vector with one entry per loop dimension specifying the SIMD width; a value of 1 means 'do not vectorize that loop'. The product of all vector_sizes is bounded by a hardware-dependent limit."
+        },
+        {
+          "name": "Loop Unrolling",
+          "description": "Replicate the body of an inner loop by a fixed factor, reducing loop overhead and exposing multiple independent operations for out-of-order execution and software pipelining.",
+          "rationale": "Unrolling exposes independent instructions that can fill FMA pipeline stages and hide memory latency. For short reduction loops (e.g., small kernel dimensions), unrolling can eliminate the loop entirely.",
+          "action_template": "LoopUnrolling(tile_sizes, unroll_factor) — tile_sizes selects the loop to unroll by tiling first, then the innermost resulting loop is unrolled by unroll_factor."
+        },
+        {
+          "name": "Padding",
+          "description": "Extend iteration space dimensions to multiples of a hardware-friendly constant (e.g., vector width), ensuring vectorized loops have clean trip counts without remainder handling.",
+          "rationale": "Non-multiple trip counts force scalar remainder loops or predicated execution, both of which reduce throughput. Padding eliminates remainders at the cost of minimal extra computation on padded elements.",
+          "action_template": "Padding(pad_to_multiple_of) — pad_to_multiple_of is a vector with one entry per dimension; a value of 1 means 'no padding on that dimension'."
+        },
+        {
+          "name": "Peeling",
+          "description": "Split a loop into a main body with a trip count guaranteed to be a multiple of the tile or vector size, and a smaller remainder loop handling leftover iterations.",
+          "rationale": "Peeling enables the main loop to be vectorized and unrolled without guards or predication, while the remainder loop handles edge cases. This is the standard way to handle non-divisible trip counts cleanly.",
+          "action_template": "Peeling(tile_sizes) — tile_sizes determines the split point for each loop dimension; the deepest non-trivial inner loop is peeled into a main loop and a remainder."
+        }
+      ]
+    },
+    {
+      "name": "Coarse-Grain Parallelism and Work Distribution",
+      "description": "Distribute independent iterations of parallel loops across hardware threads and cores, and restructure producer-consumer relationships to minimize synchronization and intermediate memory traffic.",
+      "rationale": "The target machine has 28 physical cores across 2 NUMA nodes. Convolution loop nests have naturally parallel outer dimensions that can be distributed for near-linear scaling, provided work is balanced and memory traffic between stages is minimized.",
+      "priority": "medium",
+      "transformations": [
+        {
+          "name": "Parallelization",
+          "description": "Distribute iterations of parallel (non-reduction) loops across hardware threads using concurrent loop constructs, enabling multi-core execution of independent work tiles.",
+          "rationale": "With 28 available cores, parallelizing outer loops can provide up to 28x speedup for embarrassingly parallel dimensions. Careful tile-size selection avoids oversubscription and ensures NUMA-friendly data placement.",
+          "action_template": "Parallelization(tile_sizes) — tile_sizes determines the chunk size per parallel dimension distributed via scf.forall; a value of 0 means 'do not parallelize that loop'."
+        },
+        {
+          "name": "Fusion",
+          "description": "Merge a producer operation into the tiled loop nest of a consumer, computing producer results on-the-fly within consumer tiles rather than materializing full intermediate tensors.",
+          "rationale": "Fusion eliminates intermediate tensor materialization and associated memory traffic. For convolution preceded by data layout or normalization operations, fusion keeps intermediate data in registers or L1 cache.",
+          "action_template": "Fusion(tile_sizes) — tile_sizes determines the tile loop nest into which producer operations are fused; a value of 0 means 'do not tile/fuse that loop'."
+        },
+        {
+          "name": "Loop Distribution",
+          "description": "Split a single loop into two independent loops along a chosen dimension at a specified split point, enabling separate optimization or scheduling of each half.",
+          "rationale": "Distribution can isolate reduction phases from parallel phases, separate operations with different optimal tile sizes, or enable independent scheduling of loop halves for better load balance.",
+          "action_template": "LoopDistribution(dimension, chunk_size) — splits the loop along the specified dimension at the given chunk_size boundary, producing two independent loop halves."
+        }
+      ]
+    },
+    {
+      "name": "Iteration Space Transformation and IR Normalization",
+      "description": "Restructure the high-level operation into a more optimization-friendly form and normalize the intermediate representation to enable cleaner downstream transformations.",
+      "rationale": "Convolution has a specialized iteration structure that may benefit from lowering to a more regular contraction form. IR normalization between transformation steps removes redundancies and ensures pattern matchers in subsequent passes work reliably.",
+      "priority": "medium",
+      "transformations": [
+        {
+          "name": "Im2col Lowering",
+          "description": "Transform a convolution operation into an explicit image-to-column data rearrangement followed by a matrix-multiplication-like contraction, converting the irregular sliding-window access pattern into a regular dense operation.",
+          "rationale": "Im2col converts a convolution's complex 7-dimensional loop structure into a standard matrix contraction that benefits from highly optimized matmul tiling, packing, and vectorization strategies. The resulting contraction is the primary compute target; subsequent optimizations apply to it, not the surrounding reshapes.",
+          "action_template": "Im2colLowering(enable) — enable is a boolean (0 or 1) that controls whether the conv-to-im2col conversion is applied."
+        },
+        {
+          "name": "Canonicalization",
+          "description": "Apply pattern-based algebraic simplifications and optionally common subexpression elimination (CSE) to normalize the IR, removing redundant operations and simplifying control flow.",
+          "rationale": "Transformations often introduce redundant operations, dead code, or non-canonical patterns. Canonicalization cleans up the IR so that subsequent transformation passes can match patterns reliably and produce cleaner output.",
+          "action_template": "Canonicalization(apply_cse) — apply_cse is a boolean (0 or 1) controlling whether common subexpression elimination is interleaved with canonicalization."
+        },
+        {
+          "name": "Bufferization Strategy",
+          "description": "Select the strategy for converting tensor-semantic operations into buffer-semantic (memref) operations, controlling how temporary storage is allocated and reused.",
+          "rationale": "The choice between eliminating empty tensors versus explicitly allocating destination buffers affects memory allocation overhead, buffer reuse opportunities, and compatibility with subsequent buffer-level optimizations.",
+          "action_template": "BufferizationStrategy(strategy) — strategy selects between elimination-based (0) and explicit-allocation-based (1) tensor-to-buffer conversion."
+        }
+      ]
+    }
+  ]
+}

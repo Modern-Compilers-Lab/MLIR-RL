@@ -8,7 +8,6 @@ from mlir.execution_engine import ExecutionEngine
 from mlir.dialects.func import FuncOp
 from mlir.runtime import get_ranked_memref_descriptor, make_nd_memref_descriptor, as_ctype, ranked_memref_to_numpy
 
-from mlir.ir import Context, Module
 from mlir.dialects.transform import interpreter
 from utils.bindings_process import BindingsProcess
 
@@ -114,6 +113,19 @@ def create_params(module: Module):
 
     return inputs, outputs_structure
 
+def _transform_bind_call(code: str, transform_code: str) -> str:
+    """Top-level function for subprocess isolation (must be picklable)."""
+    try:
+        from mlir.ir import Context, Module
+        from mlir.dialects.transform import interpreter
+        with Context():
+            module = Module.parse(code)
+            t_module = Module.parse(transform_code)
+        interpreter.apply_named_sequence(module, t_module.body.operations[0], t_module)
+        return str(module)
+    except Exception as e:
+        raise RuntimeError(str(e)) from None
+
 def run_transform_code(code: str, transform_code: str, timeout: int = CODE_TRANSFORM_TIMEOUT) -> str:
     """Applies an MLIR transform sequence to the given code.
 
@@ -125,16 +137,7 @@ def run_transform_code(code: str, transform_code: str, timeout: int = CODE_TRANS
     Returns:
         str: The transformed MLIR code as a string.
     """
-
-    def transform_bind_call():
-        with Context():
-            module = Module.parse(code)
-            t_module = Module.parse(transform_code)
-        interpreter.apply_named_sequence(module, t_module.body.operations[0], t_module)
-
-        return str(module)
-
-    return BindingsProcess.call(transform_bind_call, timeout=timeout)
+    return BindingsProcess.call(_transform_bind_call, code, transform_code, timeout=timeout)
 
 BUFFERIZATION_AND_LOWER_V_TRANSFORM_CODE = """
 module attributes {transform.with_named_sequence} {
@@ -219,26 +222,22 @@ PASS_PIPELINE = [
     "cse"
 ]
 
-def execute_bufferized_code(code: str, pass_pipeline: Optional[list[str]] = None, timeout: int = CODE_EXECUTION_TIMEOUT) -> tuple[int, bool]:
-    """Lowers and runs the given MLIR code using Python bindings, then returns the execution time and assertion
-    result (if the executed code returns the correct result).
+def _execute_bind_call(code: str, pass_pipeline_list: Optional[list[str]]) -> tuple[int, bool]:
+    """Top-level function for subprocess isolation (must be picklable)."""
+    try:
+        import ctypes.util
+        import numpy as np
+        from mlir.ir import Context, Module
+        from mlir.passmanager import PassManager
+        from mlir.execution_engine import ExecutionEngine
+        from llm_action.src.keys import MLIR_SHARED_LIBS
 
-    Args:
-        code (str): The MLIR code to run.
-        timeout (int): The maximum time to allow for code execution in seconds.
-
-    Returns:
-        int: the execution time in nanoseconds.
-        bool: the assertion result.
-    """
-
-    def execute_bind_call(execution_pass_pipeline: Optional[list[str]] = pass_pipeline):
-        if not execution_pass_pipeline:
+        if not pass_pipeline_list:
             execution_pass_pipeline = f"""builtin.module(
                 {', '.join(PASS_PIPELINE)}
             )"""
         else:
-            execution_pass_pipeline = "builtin.module(" + ", ".join(execution_pass_pipeline) + ")"
+            execution_pass_pipeline = "builtin.module(" + ", ".join(pass_pipeline_list) + ")"
 
         with Context():
             module = Module.parse(code)
@@ -256,11 +255,24 @@ def execute_bufferized_code(code: str, pass_pipeline: Optional[list[str]] = None
         try:
             for _ in range(2):
                 execution_engine.invoke("main", *args)
-                # If output tensors are needed call `get_results` before `free_outputs`
                 outs_struct.free_outputs()
         finally:
             outs_struct.free_outputs()
 
         return outs_struct.delta, True
+    except Exception as e:
+        raise RuntimeError(str(e)) from None
 
-    return BindingsProcess.call(execute_bind_call, timeout=timeout)
+def execute_bufferized_code(code: str, pass_pipeline: Optional[list[str]] = None, timeout: int = CODE_EXECUTION_TIMEOUT) -> tuple[int, bool]:
+    """Lowers and runs the given MLIR code using Python bindings, then returns the execution time and assertion
+    result (if the executed code returns the correct result).
+
+    Args:
+        code (str): The MLIR code to run.
+        timeout (int): The maximum time to allow for code execution in seconds.
+
+    Returns:
+        int: the execution time in nanoseconds.
+        bool: the assertion result.
+    """
+    return BindingsProcess.call(_execute_bind_call, code, pass_pipeline, timeout=timeout)

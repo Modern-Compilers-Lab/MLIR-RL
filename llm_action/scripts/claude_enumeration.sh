@@ -5,7 +5,6 @@
 #SBATCH -J claude_optim
 #SBATCH -p compute
 #SBATCH --reservation=c2
-#SBATCH --qos=c2
 #SBATCH --exclusive
 #SBATCH -c 8
 #SBATCH --mem=100G
@@ -36,4 +35,6 @@ claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_en
 
 # Example usage:
 # sbatch llm_action/scripts/claude-enumeration.sh
-# python llm_action/src/prompts/action_enumeration.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_enumeration.py)"
+
+# CONV
+## python llm_action/src/prompts/action_enumeration.py --intents_num_min 2 --intents_num_max 3 --transformations_num_min 2 --transformations_num_max 3 & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_enumeration.py --kernel-type conv2d --kernel-number 1)"

@@ -86,16 +86,11 @@ For each ordered pair of **applicable** actions (A then B):
 - Try the **canonical HPC pattern**: parallelization -> tiling -> tiling -> vectorization.
 - Also try: interchange -> tiling -> vectorization, packing -> tiling -> vectorization, etc.
 - Explore different parameter combinations within each schedule template.
-- Target **20-30 candidates** in this phase.
 
 ## Phase 4 — Local Tuning
 - Take the **top 3-5 schedules** from Phase 3 by speedup.
 - Vary parameters within each schedule to search for local optima
   (e.g., different tile sizes, thread counts, vector widths).
-
-## Budget
-- Up to **50 total candidates** across all phases per kernel.
-- Prioritize breadth in Phases 1-2, depth in Phases 3-4.
 """
 
 def get_tool_usage_instructions() -> str:
@@ -124,7 +119,7 @@ To compose a schedule [A(p1), B(p2), C(p3)]:
 
 ## Measurement Tools (from `mlir-tools` MCP server)
 - `execute_mlir_code(code)` -> execution time in ms and success boolean
-- `measure_speedup(mlir_base_time, mlir_opt_time)` -> speedup ratios
+- `measure_speedup(mlir_base_time, mlir_opt_time, torch_time)` -> speedup ratios
 """
 
 def get_logging_instructions() -> str:
@@ -152,23 +147,23 @@ Use this exact markdown structure:
 - MLIR base time: <X> ms
 
 ## Phase 1: Single Actions
-| # | Action | Parameters | Pre | Post | Time (ms) | Speedup |
-|---|--------|-----------|-----|------|-----------|---------|
-| S1 | tiling | {tile_sizes: [4,4,4]} | T | T | 150.2 | 1.9x |
+| # | Action | Parameters | Pre | Post | Time (ms) | Speedup | Speedup to PyTorch |
+|---|--------|-----------|-----|------|-----------|---------| -------------------|
+| S1 | tiling | {tile_sizes: [4,4,4]} | T | T | 150.2 | 1.9x | 2.5x |
 | S2 | ... | ... | ... | ... | ... | ... |
 
 ## Phase 2: Pairwise Compositions
-| # | A -> B | Params A | Params B | Pre | Post | Time (ms) | Speedup |
-|---|--------|----------|----------|-----|------|-----------|---------|
+| # | A -> B | Params A | Params B | Pre | Post | Time (ms) | Speedup | Speedup to PyTorch |
+|---|--------|----------|----------|-----|------|-----------|---------| -------------------|
 
 ## Phase 3: Multi-Step Schedules
-| Candidate | Schedule | Time (ms) | Speedup |
-|-----------|----------|-----------|---------|
-| C1 | parallel(28) -> tile(4,16,64) -> tile(4,4,64) -> vec(4,4,64) | 0.94 | 312x |
+| Candidate | Schedule | Time (ms) | Speedup | Speedup to PyTorch |
+|-----------|----------|-----------|---------| -------------------|
+| C1 | parallel(28) -> tile(4,16,64) -> tile(4,4,64) -> vec(4,4,64) | 0.94 | 312x | 400x |
 
 ## Phase 4: Local Tuning
-| Candidate | Base | Variation | Time (ms) | Speedup |
-|-----------|------|-----------|-----------|---------|
+| Candidate | Base | Variation | Time (ms) | Speedup | Speedup to PyTorch |
+|-----------|------|-----------|-----------|---------| -------------------|
 
 ## Composability Matrix
 | After \\ Before | tiling | packing | vec | unroll | interchange | parallel |
@@ -187,7 +182,7 @@ Use this exact markdown structure:
 ### Best Schedule
 - Schedule: <action sequence with params>
 - Time: <X> ms
-- Speedup: <Y>x vs MLIR base
+- Speedup: <Y>x vs MLIR base, <Z>x vs PyTorch>
 
 ### Composability Issues Discovered
 - <description of any bugs, tag loss, unexpected failures>

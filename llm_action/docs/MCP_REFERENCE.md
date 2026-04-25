@@ -123,6 +123,25 @@ Args:
 Returns:
     float: the median execution time in milliseconds.
 
+## execute_torch_conv2d_by_shape(N: int, C: int, H: int, W: int, F: int, KH: int, KW: int, OH: int, OW: int) -> float
+Submits a SLURM job to execute a 2D convolution mirroring `linalg.conv_2d_nchw_fchw` (stride=1, dilation=1; padding derived from output shape) using PyTorch JIT on a compute node and returns the median execution time.
+
+Use this to obtain a PyTorch baseline execution time for a given conv2d shape, which can then be compared against MLIR execution times via the measure_speedup tool.
+
+Args:
+    N: Batch size.
+    C: Input channels.
+    H: Input height.
+    W: Input width.
+    F: Output channels (filters).
+    KH: Kernel height.
+    KW: Kernel width.
+    OH: Output height.
+    OW: Output width.
+
+Returns:
+    float: the median execution time in milliseconds.
+
 ## measure_speedup(mlir_base_execution_time: float, mlir_optimized_execution_time: float, torch_execution_time: Optional[float] = None) -> dict[str, float]
 Measures the speedup achieved by MLIR transformations.
 

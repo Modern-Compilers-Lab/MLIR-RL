@@ -330,6 +330,8 @@ Acceptable kernel-specific examples (when framed generically):
 - Image-to-column lowering as a **data layout and iteration-space transformation**
 - Convolution lowering to contraction or matmul-like loop nests
 
+Note: im2col lowering converts a convolution into a matmul-like contraction (the primary compute op) surrounded by reshape operations. Subsequent optimizations (tiling, vectorization, etc.) must target the contraction op, not the surrounding reshapes.
+
 ## Examples (non-exhaustive):
 - Tiling / blocking
 - Interchange (loop permutation)
@@ -362,6 +364,9 @@ For each Transformation, set `action_template` to describe one or more plausible
 - Use generic loop-nest terminology only (loop_id, loop_depth, loop_band, tile_sizes, permutation).
 - Provide at most 3 alternatives using "OR" when multiple parameterizations are reasonable.
 - Do not pick exact value ranges or legality rules; Layer 2 decides those.
+- If a transformation has no meaningful tunable parameters (e.g., a fixed lowering like im2col),
+  the action_template should reflect a zero-parameter action (e.g., `Im2colLowering()` with no args).
+  Do NOT invent artificial enable/disable toggles — the RL policy's action selection itself is the decision to apply the transformation.
 - The goal is to help Layer 2 implement the action in a way that is RL-friendly and unambiguous.
 
 ## Few-shot examples (Transformation + action_template):
@@ -396,8 +401,8 @@ class ActionEnumeration(BaseModel):
 
 # Output Constraints
 
-- Produce **1-3 optimization intents**.
-- Each intent must contain **1-2 transformations**.
+- Produce **2-3 optimization intents**.
+- Each intent must contain **2-3 transformations**.
 - Use consistent transformation names across intents (avoid duplicates with different names).
 - Keep descriptions concise (1-2 sentences).
 - Do **not** include parameter knobs, preconditions, ordering rules, or code.

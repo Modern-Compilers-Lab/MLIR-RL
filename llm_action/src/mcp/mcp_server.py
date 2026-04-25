@@ -168,7 +168,7 @@ def execute_torch_matmul_by_shape(M: int, K: int, N: int) -> float:
     """
     # Submit the job
     result = subprocess.run(
-        ["sbatch", str(TORCH_SCRIPT), str(M), str(K), str(N)],
+        ["sbatch", str(TORCH_SCRIPT), "matmul", str(M), str(K), str(N)],
         capture_output=True,
         text=True,
         cwd=str(PROJECT_ROOT),
@@ -196,6 +196,73 @@ def execute_torch_matmul_by_shape(M: int, K: int, N: int) -> float:
         raise TimeoutError(f"SLURM job {job_id} did not finish within {timeout}s")
 
     # Read the output
+    log_path = TORCH_SLURM_LOG_DIR / f"{job_id}.out"
+    if not log_path.exists():
+        raise FileNotFoundError(f"SLURM log not found: {log_path}")
+    output = log_path.read_text().strip()
+
+    try:
+        return float(output.splitlines()[-1])
+    except (ValueError, IndexError):
+        raise RuntimeError(f"Could not parse execution time from job {job_id} output:\n{output}")
+
+@mcp.tool()
+def execute_torch_conv2d_by_shape(
+    N: int, C: int, H: int, W: int,
+    F: int, KH: int, KW: int, OH: int, OW: int,
+) -> float:
+    """
+    Submits a SLURM job to execute a 2D convolution mirroring
+    `linalg.conv_2d_nchw_fchw` (stride=1, dilation=1; padding derived from
+    output shape) using PyTorch JIT and returns the median execution time.
+
+    Use this to obtain a PyTorch baseline execution time for a given conv2d
+    shape, which can then be compared against MLIR execution times via the
+    measure_speedup tool.
+
+    Args:
+        N: Batch size.
+        C: Input channels.
+        H: Input height.
+        W: Input width.
+        F: Output channels (filters).
+        KH: Kernel height.
+        KW: Kernel width.
+        OH: Output height.
+        OW: Output width.
+
+    Returns:
+        float: the median execution time in milliseconds.
+    """
+    result = subprocess.run(
+        ["sbatch", str(TORCH_SCRIPT), "conv2d",
+         str(N), str(C), str(H), str(W),
+         str(F), str(KH), str(KW), str(OH), str(OW)],
+        capture_output=True,
+        text=True,
+        cwd=str(PROJECT_ROOT),
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"sbatch failed: {result.stderr.strip()}")
+
+    match = re.search(r"Submitted batch job (\d+)", result.stdout)
+    if not match:
+        raise RuntimeError(f"Could not parse job ID: {result.stdout.strip()}")
+    job_id = match.group(1)
+
+    timeout = 300
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        sq = subprocess.run(
+            ["squeue", "-j", job_id, "-h", "-o", "%T"],
+            capture_output=True, text=True,
+        )
+        if not sq.stdout.strip():
+            break
+        time.sleep(2)
+    else:
+        raise TimeoutError(f"SLURM job {job_id} did not finish within {timeout}s")
+
     log_path = TORCH_SLURM_LOG_DIR / f"{job_id}.out"
     if not log_path.exists():
         raise FileNotFoundError(f"SLURM log not found: {log_path}")

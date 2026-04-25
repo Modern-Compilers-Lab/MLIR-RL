@@ -86,6 +86,9 @@ You have access to these tools via the MCP server.:
 - `execute_torch_matmul_by_shape(M: int, K: int, N: int) -> dict`
   Executes a PyTorch matmul of the given shape and returns the median execution time in milliseconds
 
+- `execute_torch_conv2d_by_shape(N: int, C: int, H: int, W: int, F: int, KH: int, KW: int, OH: int, OW: int) -> dict`
+  Executes a PyTorch conv2d (NCHW input, FCHW filter; stride=1, dilation=1; padding derived from output shape) and returns the median execution time in milliseconds
+
 - `measure_speedup(mlir_base_execution_time: float, mlir_optimized_execution_time: float, torch_execution_time: float) -> dict`
   Computes speedup and slowdown ratios between baseline and transformed execution time.
 
@@ -100,7 +103,9 @@ You must follow this loop when exploring candidates:
    - Call `execute_mlir_code(original_code)`.
    - Require `success_flag == True`.
    - Record `base_time`.
-   - Call `execute_torch_matmul_by_shape(M, K, N)` with the appropriate dimensions to get `torch_time` for speedup comparison.
+   - For matmul kernels: call `execute_torch_matmul_by_shape(M, K, N)` with the appropriate dimensions.
+   - For conv2d kernels: call `execute_torch_conv2d_by_shape(N, C, H, W, F, KH, KW, OH, OW)` with the appropriate dimensions.
+   - Use the returned value as `torch_time` for speedup comparison.
 
 3) **Generate a candidate transform**
    - Propose a transformation sequence (single step or multi-step schedule).

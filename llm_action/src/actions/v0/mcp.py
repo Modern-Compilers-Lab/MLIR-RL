@@ -11,7 +11,7 @@ def name_tool(code: str, parameters: dict) -> tuple[bool, str, bool]:
     
     Args:
         code (str): The MLIR code.
-        parameters (dict): Parameters for the action, <adjust based on the action parameters definition>.
+        parameters (dict): Parameters for the action, <adjust based on the action parameters definition>. Parameter values: <the possible values for the parameters as defined in the action>.
     
     Returns:
         tuple[bool, str, bool]: (precondition, transformed code, postcondition)

@@ -1,0 +1,88 @@
+{
+  "intents": [
+    {
+      "name": "Data Locality & Cache Reuse",
+      "description": "Restructure the iteration space and data layout to maximize temporal and spatial locality across the L1/L2/L3 cache hierarchy, minimizing off-chip memory traffic.",
+      "rationale": "Matrix multiplication and similar loop nests are memory-hierarchy bound at moderate-to-large sizes. On Broadwell with 32KB L1d and 256KB L2, naive execution overflows caches and suffers from strided access patterns. Tiling, interchange, and data packing are the primary levers for achieving near-peak FLOP utilization.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Partition the iteration space into fixed-size blocks so that the working set of each block fits within a target cache level, improving temporal reuse of loaded data.",
+          "rationale": "Tiling is the single most impactful transformation for dense loop nests. It converts O(N) reuse distances into O(tile_size) distances, enabling L1/L2 residency for the active working set. Multi-level tiling can target multiple cache levels.",
+          "action_template": "Tiling(tile_sizes) OR Tiling(loop_id, factor) OR Tiling(loop_band, tile_sizes) — tile_sizes is a vector where 0 means 'do not tile' for that loop dimension; factor is a single tile size for a specific loop."
+        },
+        {
+          "name": "Loop Interchange",
+          "description": "Reorder the loops in a loop nest to place the dimension with stride-1 memory access innermost, improving spatial locality and enabling vectorization.",
+          "rationale": "The default loop order may place a non-unit-stride access pattern innermost, wasting cache lines and preventing SIMD vectorization. Interchange ensures the innermost loop sweeps contiguously through memory.",
+          "action_template": "LoopInterchange(loop_band, permutation) OR LoopInterchangeSwap(loop_id_a, loop_id_b) — permutation is an ordering of loop indices; swap exchanges two specific loops in the nest."
+        },
+        {
+          "name": "Promotion",
+          "description": "Allocate a temporary buffer for a tile-sized slice of an operand and explicitly copy data into it, converting strided global accesses into contiguous local accesses.",
+          "rationale": "Even after tiling, accesses to the original tensor may suffer from large strides and TLB/cache-conflict misses. Promotion materializes a compact copy in a scratchpad buffer, guaranteeing spatial locality within the tile.",
+          "action_template": "Promotion(operand_id) OR Promotion(operand_id, memory_space) — operand_id selects which input/output operand to promote; memory_space optionally specifies the target allocation scope."
+        },
+        {
+          "name": "Packing",
+          "description": "Transform the data layout of an operand so that elements accessed within a tile are stored contiguously in memory, eliminating stride gaps after promotion.",
+          "rationale": "When the original tensor layout does not match the tile access pattern, even promoted copies may have internal strides. Packing reorganizes the data so the tile's iteration pattern maps to sequential addresses, maximizing cache-line utilization.",
+          "action_template": "Packing(operand_id, packed_sizes) OR Packing(operand_id, inner_permutation) — packed_sizes defines the packing block dimensions; inner_permutation reorders dimensions within packed blocks."
+        }
+      ]
+    },
+    {
+      "name": "SIMD & Instruction-Level Parallelism",
+      "description": "Exploit AVX2+FMA vector units and instruction pipelining to maximize compute throughput per core through vectorization, unrolling, and remainder handling.",
+      "rationale": "On Broadwell, each core can execute one 256-bit FMA per cycle, yielding 4 FP64 FMAs/cycle. Without vectorization, only 1/4 of peak throughput is utilized. Additionally, FMA has 5-cycle latency, so ~20 independent FP64 operations must be in flight to saturate the pipeline, requiring unrolling to expose sufficient ILP.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Vectorization",
+          "description": "Map the innermost loop computation to SIMD vector instructions, processing multiple data elements per cycle using AVX2 vector registers.",
+          "rationale": "Vectorization is essential for approaching peak FLOP/s on any modern CPU. For FP64 on AVX2, it provides a 4x throughput multiplier by operating on 4 elements simultaneously per 256-bit register.",
+          "action_template": "Vectorization(target_loop, vector_sizes) OR Vectorization(loop_band, vector_sizes) — vector_sizes specifies the SIMD width per loop dimension; target_loop identifies which loop to vectorize."
+        },
+        {
+          "name": "Loop Unrolling",
+          "description": "Replicate the loop body multiple times per iteration to reduce loop overhead, expose instruction-level parallelism, and improve register utilization.",
+          "rationale": "Unrolling creates multiple independent computation streams within a single iteration, hiding FMA latency through software pipelining. It also amortizes loop control overhead and enables the compiler backend to schedule instructions more efficiently.",
+          "action_template": "LoopUnrolling(loop_id, unroll_factor) OR LoopUnrolling(loop_band, unroll_factors) — unroll_factor is the replication count; unroll_factors is a vector for multi-loop unrolling."
+        },
+        {
+          "name": "Peeling",
+          "description": "Separate the remainder iterations of a loop (when the trip count is not a multiple of the tile/vector/unroll factor) into a distinct epilogue loop.",
+          "rationale": "Peeling enables the main loop body to assume a clean trip count divisible by the vector width or unroll factor, removing masking overhead and enabling full-width SIMD and maximal unrolling in the main loop.",
+          "action_template": "Peeling(loop_id) OR Peeling(loop_id, peel_count) — loop_id identifies the target loop; peel_count optionally specifies how many iterations to peel off."
+        }
+      ]
+    },
+    {
+      "name": "Thread-Level Parallelism",
+      "description": "Distribute computation across multiple cores to exploit the 28-core, 2-socket topology, partitioning work at a granularity that balances load and respects NUMA boundaries.",
+      "rationale": "Single-core optimizations alone cannot utilize the full machine. With 28 cores and 2 NUMA nodes, coarse-grained parallel distribution of outer loop iterations is necessary for large problems. Parallelization must be paired with fusion and distribution to manage synchronization and intermediate data.",
+      "priority": "medium",
+      "transformations": [
+        {
+          "name": "Parallelization",
+          "description": "Distribute iterations of outer parallel loop dimensions across hardware threads, enabling concurrent execution on multiple cores.",
+          "rationale": "The outer dimensions of dense loop nests (e.g., the non-reduction dimensions) are typically embarrassingly parallel and can be distributed with minimal synchronization, achieving near-linear speedup for sufficiently large problems.",
+          "action_template": "Parallelization(loop_id, num_threads) OR Parallelization(loop_band, mapping) — loop_id selects the loop to parallelize; mapping specifies thread/core distribution strategy."
+        },
+        {
+          "name": "Fusion",
+          "description": "Merge adjacent producer-consumer loop nests into a single loop nest, reducing intermediate data materialization and improving temporal locality across operations.",
+          "rationale": "When multiple operations form a dataflow chain, fusion eliminates the need to write and re-read intermediate results, reducing memory traffic and enabling cross-operation register reuse. Also enables tiling across fused operations.",
+          "action_template": "Fusion(producer_op, consumer_op) OR Fusion(op_group) — producer_op and consumer_op identify the operations to fuse; op_group specifies a set of operations to fuse together."
+        },
+        {
+          "name": "Loop Distribution",
+          "description": "Split a single loop nest into multiple independent loop nests, each containing a subset of the original loop body statements.",
+          "rationale": "Distribution isolates independent computation phases, enabling different optimization strategies per partition (e.g., parallelizing one and vectorizing another), and can separate parallel from reduction dimensions to simplify parallelization.",
+          "action_template": "LoopDistribution(loop_id) OR LoopDistribution(loop_id, partition_points) — loop_id identifies the loop to distribute; partition_points specify where to split the loop body."
+        }
+      ]
+    }
+  ]
+}

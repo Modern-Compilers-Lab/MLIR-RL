@@ -1,8 +1,43 @@
-from multiprocessing import Process, Queue
+import logging
+import multiprocessing
+import signal
+from concurrent.futures import ProcessPoolExecutor
 from typing import Callable, Optional, TypeVar
 
 T = TypeVar('T')
-ENABLED = False
+logger = logging.getLogger(__name__)
+
+# Use spawn context to avoid fork-safety issues with MLIR C++ bindings.
+_ctx = multiprocessing.get_context("spawn")
+
+ENABLED = True
+
+# Restart pool workers every N calls to prevent memory corruption buildup.
+_MAX_TASKS_PER_WORKER = 200
+
+_pool: Optional[ProcessPoolExecutor] = None
+_pool_call_count = 0
+
+
+def _get_pool() -> ProcessPoolExecutor:
+    """Lazily create (or recreate) a single-worker spawn-based process pool."""
+    global _pool, _pool_call_count
+    if _pool is None or _pool_call_count >= _MAX_TASKS_PER_WORKER:
+        if _pool is not None:
+            _pool.shutdown(wait=False)
+            logger.debug("Recycling BindingsProcess pool after %d calls", _pool_call_count)
+        _pool = ProcessPoolExecutor(max_workers=1, mp_context=_ctx)
+        _pool_call_count = 0
+    return _pool
+
+
+def _reset_pool():
+    """Force-restart the pool (e.g. after a worker crash)."""
+    global _pool, _pool_call_count
+    if _pool is not None:
+        _pool.shutdown(wait=False)
+    _pool = None
+    _pool_call_count = 0
 
 
 class BindingsProcess:
@@ -11,24 +46,22 @@ class BindingsProcess:
         if not ENABLED:
             return func(*args)
 
-        def func_wrapper(q: Queue):
-            try:
-                q.put(func(*args))
-            except Exception as e:
-                q.put(e)
+        global _pool_call_count
+        pool = _get_pool()
+        _pool_call_count += 1
 
-        q = Queue()
-        p = Process(target=func_wrapper, args=(q,), daemon=True)
-        p.start()
-        p.join(timeout)
-        if p.is_alive():
-            p.kill()
+        future = pool.submit(func, *args)
+        try:
+            return future.result(timeout=timeout)
+        except multiprocessing.context.TimeoutError:
+            _reset_pool()
             raise TimeoutError(f"Bindings call {func.__name__} timed out")
-
-        if ec := p.exitcode:
-            raise Exception(f"Bindings call {func.__name__} failed with exit code: {ec}")
-
-        res = q.get_nowait()
-        if isinstance(res, Exception):
-            raise res
-        return res
+        except Exception as e:
+            # Check if this was a worker crash (BrokenProcessPool)
+            err_msg = str(e)
+            if "Broken" in type(e).__name__ or "exit code" in err_msg.lower():
+                _reset_pool()
+                raise RuntimeError(
+                    f"Bindings call {func.__name__} crashed (worker died): {e}"
+                ) from e
+            raise
