@@ -17,17 +17,60 @@ import argparse
 import contextlib
 import ctypes
 import os
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 import numpy as np
 
-PARENT_DIR = Path(__file__).parent
-sys.path.insert(0, str(PARENT_DIR / "src" / "utils"))
+_USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
 
-from mlir.ir import (  # noqa: E402
+
+def _c(code: str, text: str) -> str:
+    return f"\033[{code}m{text}\033[0m" if _USE_COLOR else text
+
+
+GREEN = "32"
+RED = "31"
+YELLOW = "33"
+CYAN = "36"
+BOLD = "1"
+
+
+PARENT_DIR = Path(__file__).parent
+TESTS_DIR = PARENT_DIR / "tests" / "validation"
+PASSES_FILE = TESTS_DIR / "lowering_passes.txt"
+LEGALITY_PLUGIN = (
+    PARENT_DIR /
+    "src" / "tools" / "c" / "dependence" /
+    "build" / "lib" / "libPolyhedralLegalityCheck.so"
+)
+LEGALITY_PASS_PIPELINE = "builtin.module(convert-linalg-to-affine-loops,func.func(fold-memref-alias-ops,affine-raise-from-memref,check-polyhedral-legality))"
+
+def load_legality_plugin() -> bool:
+    """Dlopen the PolyhedralLegalityCheck plugin so its pass self-registers.
+
+    Returns True on success. If the .so is missing, prints a hint and returns
+    False so the plugin-detection column is reported as n/a.
+    """
+    path = Path(os.environ.get("LEGALITY_PLUGIN", LEGALITY_PLUGIN))
+    if not path.exists():
+        print(
+            f"[warn] legality plugin not found at {path}; "
+            f"build it with `make -C src/tools/c/dependence "
+            f"PREFIX=$(python -c 'import sys;print(sys.prefix)')` "
+            f"or set LEGALITY_PLUGIN=/path/to/libPolyhedralLegalityCheck.so",
+            file=sys.stderr,
+        )
+        return False
+    ctypes.CDLL(str(path), mode=ctypes.RTLD_GLOBAL)
+    return True
+
+
+PLUGIN_LOADED = load_legality_plugin()
+
+
+from mlir.ir import (
     Context,
     F32Type,
     F64Type,
@@ -36,17 +79,15 @@ from mlir.ir import (  # noqa: E402
     Module,
     UnitAttr,
 )
-from mlir.dialects.func import FuncOp  # noqa: E402
-from mlir.runtime import get_ranked_memref_descriptor  # noqa: E402
-from transformation import (  # noqa: E402
+from mlir.dialects.func import FuncOp
+from mlir.execution_engine import ExecutionEngine
+from mlir.runtime import get_ranked_memref_descriptor
+from src.utils.transformation import (
     apply_pipeline_to_module,
+    apply_pipeline_to_module_with_opt,
     bufferize_module,
-    transform_module,
+    transform_module_with_opt,
 )
-
-TESTS_DIR = PARENT_DIR / "tests" / "validation"
-PASSES_FILE = PARENT_DIR / "resources" / "base_passes.txt"
-TMP_DIR = PARENT_DIR / "tmp"
 
 
 @contextlib.contextmanager
@@ -91,14 +132,11 @@ def split_test(code: str) -> tuple[str, str | None]:
     return kernel_code, transform_str
 
 
-def kernel_func_info(code: str) -> tuple[str, list]:
+def kernel_func_info(module: Module) -> tuple[str, list]:
     """Return (func_name, list_of_memref_input_types) for the first func.func."""
-    with Context() as ctx:
-        ctx.load_all_available_dialects()
-        module = Module.parse(code)
-        for op in module.body.operations:
-            if isinstance(op, FuncOp):
-                return op.name.value, list(op.type.inputs)
+    for op in module.body.operations:
+        if isinstance(op, FuncOp):
+            return op.name.value, list(op.type.inputs)
     raise ValueError("No func.func found in kernel module")
 
 
@@ -138,142 +176,120 @@ def _mark_c_interface(module: Module):
             op.operation.attributes["llvm.emit_c_interface"] = UnitAttr.get(op.context)
 
 
-def lower_to_llvm_mlir(kernel_code: str, stderr_sink: list[str]) -> str:
-    with capture_stderr_fd() as cap:
-        with Context() as ctx:
-            ctx.load_all_available_dialects()
-            module = Module.parse(kernel_code)
-            _mark_c_interface(module)
-            bufferize_module(module)
-            passes = PASSES_FILE.read_text()
-            apply_pipeline_to_module(module, passes)
-            lowered = str(module)
-    stderr_sink.extend(cap)
-    return lowered
+def prepare_module_for_lowering(module: Module):
+    """Apply bufferization and other transformations to get ready for lowering."""
+    _mark_c_interface(module)
+    bufferize_module(module)
 
 
-def compile_shared_lib(llvm_mlir: str, stderr_sink: list[str]) -> tuple[str, str]:
-    """Compile the LLVM-dialect MLIR into a .so; return (so_path, obj_path)."""
+def lower_to_llvm_mlir(module: Module):
+    passes = PASSES_FILE.read_text()
+    apply_pipeline_to_module_with_opt(module, passes)
+
+
+def _runtime_shared_libs() -> list[str]:
+    """Locate the MLIR runner utility libraries the ExecutionEngine needs."""
     conda_lib = Path(os.environ["CONDA_PREFIX"]) / "lib"
-    TMP_DIR.mkdir(parents=True, exist_ok=True)
+    libs = []
+    for name in ("libmlir_runner_utils.so", "libmlir_c_runner_utils.so", "libomp.so"):
+        p = conda_lib / name
+        if p.exists():
+            libs.append(str(p))
+    return libs
 
-    obj = tempfile.NamedTemporaryFile(suffix=".o", delete=False, dir=TMP_DIR)
-    so = tempfile.NamedTemporaryFile(suffix=".so", delete=False, dir=TMP_DIR)
-    obj.close()
-    so.close()
 
-    def run(cmd, inp=None):
-        r = subprocess.run(cmd, input=inp, text=True, capture_output=True)
-        if r.stderr:
-            stderr_sink.append(r.stderr)
-        if r.returncode != 0:
-            raise RuntimeError(f"{cmd[0]} failed (rc={r.returncode}): {r.stderr}")
-        return r.stdout
-
-    llvm_ir = run(["mlir-translate", "--mlir-to-llvmir"], inp=llvm_mlir)
-    llvm_opt = run(["opt", "--mcpu=native", "--passes=default<O3>", "-S"], inp=llvm_ir)
-    run(
-        [
-            "llc",
-            "-relocation-model=pic",
-            "-mcpu=native",
-            "-O3",
-            "-filetype=obj",
-            "-o",
-            obj.name,
-        ],
-        inp=llvm_opt,
+def build_execution_engine(module: Module) -> ExecutionEngine:
+    """JIT-compile the LLVM-dialect module with MLIR's ExecutionEngine."""
+    return ExecutionEngine(
+        module,
+        opt_level=3,
+        shared_libs=_runtime_shared_libs(),
     )
-    run(
-        [
-            "gcc",
-            "-shared",
-            obj.name,
-            f"-L{conda_lib}",
-            "-lomp",
-            "-lmlir_runner_utils",
-            "-lmlir_c_runner_utils",
-            "-lm",
-            f"-Wl,-rpath,{conda_lib}",
-            "-o",
-            so.name,
-        ]
-    )
-    return so.name, obj.name
 
 
-def run_kernel(so_path: str, func_name: str, arrs, stderr_sink: list[str]):
-    lib = ctypes.CDLL(so_path)
-    fn = getattr(lib, f"_mlir_ciface_{func_name}")
-    fn.restype = None
-    args = [ctypes.pointer(get_ranked_memref_descriptor(a)) for a in arrs]
+def run_legality_plugin(module: Module) -> str:
+    """Apply the PolyhedralLegalityCheck pass to `code`.
+
+    Returns the captured stderr output from the plugin
+    """
+    if not PLUGIN_LOADED:
+        return ''
+    module_clone: Module = module.operation.clone()
     with capture_stderr_fd() as cap:
-        fn(*args)
-    stderr_sink.extend(cap)
+        try:
+            apply_pipeline_to_module(module_clone, LEGALITY_PASS_PIPELINE)
+        except Exception as exc:
+            cap.append(f"[plugin exception] {exc}")
+    return "\n".join(cap).strip()
 
 
-def run_test(path: Path, verbose: bool) -> tuple[bool, str, str]:
+def run_kernel(engine: ExecutionEngine, func_name: str, arrs):
+    """Invoke the JIT-compiled kernel via MLIR's ExecutionEngine."""
+    args = [
+        ctypes.pointer(ctypes.pointer(get_ranked_memref_descriptor(a)))
+        for a in arrs
+    ]
+    engine.invoke(func_name, *args)
+
+
+def run_test(path: Path) -> tuple[bool | None, bool, bool, str]:
+    """Returns (passed, mlir_detected, plugin_detected, message)."""
+
     code = path.read_text()
     kernel_code, transform_sched = split_test(code)
     if transform_sched is None:
-        return False, "no transform schedule found", ""
+        raise ValueError("no transform schedule found in test file")
 
-    func_name, input_types = kernel_func_info(kernel_code)
+    with Context() as ctx:
+        ctx.load_all_available_dialects()
+        base_module = Module.parse(kernel_code)
+    prepare_module_for_lowering(base_module)
+
+    # Build the transformed kernel (schedule applied).
+    with Context() as ctx:
+        ctx.load_all_available_dialects()
+        trans_module = Module.parse(kernel_code)
+    with capture_stderr_fd() as cap:
+        try:
+            transform_module_with_opt(trans_module, transform_sched)
+            transform_ran = True
+        except Exception as exc:
+            cap.append(f"[transformation exception] {exc}")
+            transform_ran = False
+
+    mlir_stderr = "\n".join(cap).strip()
+    if not transform_ran:
+        # If the transformation itself failed, we consider that a form of detection.
+        return None, bool(mlir_stderr), False, mlir_stderr
+
+    prepare_module_for_lowering(trans_module)
+
+    # Second, independent detection: run our PolyhedralLegalityCheck pass on
+    # the transformed module. This is orthogonal to MLIR's own stderr-based
+    # detection during lowering/compile.
+    plugin_stderr = run_legality_plugin(trans_module)
+
+    func_name, input_types = kernel_func_info(base_module)
     inputs_base = gen_inputs(input_types, seed=0xC0FFEE)
     inputs_trans = [a.copy() for a in inputs_base]
 
-    mlir_stderr: list[str] = []
+    # Baseline: kernel with no transform applied.
+    lower_to_llvm_mlir(base_module)
+    base_engine = build_execution_engine(base_module)
 
-    # Build the transformed kernel (schedule applied).
-    with capture_stderr_fd() as cap:
-        try:
-            with Context() as ctx:
-                ctx.load_all_available_dialects()
-                module = Module.parse(kernel_code)
-                transform_module(module, transform_sched)
-                transformed_code = str(module)
-            transform_error = None
-        except Exception as exc:
-            transformed_code = None
-            transform_error = str(exc)
-    mlir_stderr.extend(cap)
+    # Transformed: kernel with schedule applied.
+    lower_to_llvm_mlir(trans_module)
+    trans_engine = build_execution_engine(trans_module)
 
-    if transformed_code is None:
-        combined = "".join(mlir_stderr) + f"\n[transform exception] {transform_error}"
-        return True, "detected during transform", combined
+    run_kernel(base_engine, func_name, inputs_base)
+    run_kernel(trans_engine, func_name, inputs_trans)
 
-    base_so = trans_so = base_obj = trans_obj = None
-    try:
-        # Baseline: kernel with no transform applied.
-        base_llvm = lower_to_llvm_mlir(kernel_code, mlir_stderr)
-        base_so, base_obj = compile_shared_lib(base_llvm, mlir_stderr)
+    equal = all(
+        np.allclose(a, b, rtol=1e-5, atol=1e-6)
+        for a, b in zip(inputs_base, inputs_trans)
+    )
 
-        # Transformed: kernel with schedule applied.
-        try:
-            trans_llvm = lower_to_llvm_mlir(transformed_code, mlir_stderr)
-            trans_so, trans_obj = compile_shared_lib(trans_llvm, mlir_stderr)
-        except Exception as exc:
-            return True, "detected during lowering/compile", "".join(mlir_stderr) + f"\n[compile exception] {exc}"
-
-        run_kernel(base_so, func_name, inputs_base, mlir_stderr)
-        run_kernel(trans_so, func_name, inputs_trans, mlir_stderr)
-
-        equal = all(
-            np.allclose(a, b, rtol=1e-5, atol=1e-6)
-            for a, b in zip(inputs_base, inputs_trans)
-        )
-        mlir_complained = any(s.strip() for s in mlir_stderr)
-
-        combined = "".join(mlir_stderr)
-        if equal:
-            return True, "outputs match", combined
-        if mlir_complained:
-            return True, "outputs differ, MLIR reported an issue", combined
-        return False, "outputs differ, MLIR was silent", combined
-    finally:
-        for p in (base_so, base_obj, trans_so, trans_obj):
-            if p:
-                Path(p).unlink(missing_ok=True)
+    return equal, bool(mlir_stderr), bool(plugin_stderr), mlir_stderr + ("\n" if mlir_stderr and plugin_stderr else "") + plugin_stderr
 
 
 def main():
@@ -295,27 +311,46 @@ def main():
 
     passed = failed = 0
     for path in tests:
-        print(f"[RUN ] {path.name}", flush=True)
+        print(f"{_c(CYAN, '[RUN ]')} {path.name}", flush=True)
         try:
-            ok, reason, captured = run_test(path, verbose=args.verbose)
+            ok, mlir_detected, plugin_detected, message = run_test(path)
         except Exception as exc:
-            print(f"[FAIL] {path.name}: harness error: {exc}")
+            print(f"{_c(RED + ';' + BOLD, '[FAIL]')} {path.name}: harness error: {exc}")
             failed += 1
             continue
 
-        if ok:
-            print(f"[PASS] {path.name}: {reason}")
-            passed += 1
+        test_passed = (ok and not mlir_detected and not plugin_detected) or (
+            not ok and (mlir_detected or plugin_detected)
+        )
+        if ok is not None:
+            if test_passed:
+                passed += 1
+            else:
+                failed += 1
+        if ok is None:
+            tag = _c(YELLOW + ';' + BOLD, "[UNKW]")
+        elif test_passed:
+            tag = _c(GREEN + ';' + BOLD, "[PASS]")
         else:
-            print(f"[FAIL] {path.name}: {reason}")
-            failed += 1
+            tag = _c(RED + ';' + BOLD, "[FAIL]")
+        print(tag, path.name)
 
-        if args.verbose and captured.strip():
-            prefix = "    | "
-            print(prefix + captured.rstrip().replace("\n", "\n" + prefix))
+        outputs_str = _c(GREEN, "match") if ok else _c(RED, "differ")
+        mlir_str = _c(YELLOW, "detected") if mlir_detected else _c(GREEN, "silent")
+        plugin_str = _c(YELLOW, "detected") if plugin_detected else _c(GREEN, "silent")
+        print("    - Outputs:", outputs_str)
+        print("    - MLIR:", mlir_str)
+        print("    - Plugin:", plugin_str)
+        if args.verbose and message:
+            print("    - Message:")
+            prefix = "      | "
+            print(_c(YELLOW, prefix + message.replace("\n", "\n" + prefix)))
 
-    total = passed + failed
-    print(f"\n{passed}/{total} passed, {failed} failed")
+    if failed == 0:
+        summary = _c(GREEN + ';' + BOLD, f"{passed}/{passed + failed} passed, {failed} failed")
+    else:
+        summary = _c(RED + ';' + BOLD, f"{passed}/{passed + failed} passed, {failed} failed")
+    print(f"\n{summary}")
     sys.exit(0 if failed == 0 else 1)
 
 

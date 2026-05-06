@@ -1,6 +1,7 @@
 import contextlib
 import ctypes
 import os
+import sys
 from pathlib import Path
 import subprocess
 import tempfile
@@ -10,6 +11,19 @@ from mlir.passmanager import PassManager
 from mlir.dialects.transform import interpreter
 
 PARENT_DIR = Path(__file__).parents[2]
+
+
+def move_module(source: Module, destination: Module):
+    """Copy all operations from source module to destination module.
+
+    Args:
+        source: The source MLIR module.
+        destination: The destination MLIR module where operations will be copied.
+    """
+    for op in destination.body.operations:
+        op.erase()
+    for op in source.body.operations:
+        destination.body.append(op.clone())
 
 
 def transform_and_lower(id: str, transform_schedule: str, mlir_passes: str, llvm_passes, llvm_flags: str, llc_flags: str, bufferize_first: bool, session_dir: Path):
@@ -68,9 +82,56 @@ def apply_pipeline_to_module(module: Module, pass_pipeline: str):
     pm.run(module.operation)
 
 
+def apply_pipeline_to_module_with_opt(module: Module, pass_pipeline: str, timeout: int = 60, plugins: list[str] = []) -> Module:
+    pass_pipeline = pass_pipeline.replace('\n', '')
+    cmd = ["mlir-opt"]
+    for plugin in plugins:
+        cmd.append(f"--load-pass-plugin={plugin}")
+    cmd.append(f"-pass-pipeline={pass_pipeline}")
+    try:
+        result = subprocess.run(
+            cmd,
+            input=str(module), text=True,
+            stdout=subprocess.PIPE, stderr=sys.stderr, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"mlir-opt pass-pipeline timed out after {timeout} seconds.")
+
+    if result.returncode != 0:
+        raise RuntimeError(f"mlir-opt pass-pipeline failed with return code {result.returncode}.")
+
+    transformed = Module.parse(result.stdout, module.context)
+    move_module(transformed, module)
+
+
 def transform_module(module: Module, transform_schedule: str):
     t_module = Module.parse(transform_schedule, module.context)
     interpreter.apply_named_sequence(module, t_module.body.operations[0], t_module)
+
+
+def transform_module_with_opt(module: Module, transform_schedule: str, timeout: int = 60) -> Module:
+    parsed_transform = Module.parse(transform_schedule, module.context)
+    combined: Module = module.operation.clone()
+    combined.body.append(parsed_transform.operation)
+
+    try:
+        result = subprocess.run(
+            ["mlir-opt", "-transform-interpreter"],
+            input=str(combined), text=True,
+            stdout=subprocess.PIPE, stderr=sys.stderr, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"mlir-opt transform-interpreter timed out after {timeout} seconds.")
+
+    if result.returncode != 0:
+        raise RuntimeError(f"mlir-opt transform-interpreter failed with return code {result.returncode}.")
+
+    transformed = Module.parse(result.stdout, module.context)
+    for op in list(transformed.body.operations):
+        if 'transform.with_named_sequence' in op.attributes or op.operation.name.startswith('transform.'):
+            op.operation.erase()
+
+    move_module(transformed, module)
 
 
 @contextlib.contextmanager
