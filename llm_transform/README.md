@@ -1,130 +1,160 @@
 # LLM Transform
 
-Optimize MLIR code by writing MLIR transform schedules, tuning MLIR lowering passes, and configuring LLVM passes and flags. The goal is to minimize execution time relative to PyTorch's optimized implementation.
+Automated optimization of MLIR code using [Claude Code](https://www.anthropic.com/claude-code).
 
-## Metric
+This project lets a Claude Code agent iteratively rewrite **MLIR transform schedules**, **MLIR lowering passes**, and **LLVM/llc flags** to make a kernel run as fast as possible. Each candidate configuration is compiled end-to-end (linalg → LLVM → shared library), executed, and timed against a PyTorch reference. The metric optimized is
 
-The primary metric is **speedup compared to PyTorch**: `PyTorch_time / MLIR_time`. A value of 1.0 means parity with PyTorch. The target is 2x or higher (i.e. at least 2x faster than PyTorch).
-
-## Project Structure
-
+```txt
+speedup = PyTorch_time / MLIR_time
 ```
-data/
-  <name>/                    # Benchmark name (e.g. "matmul", "conv_2d")
-    1.mlir                   # Instance 1 of the benchmark
-    2.mlir                   # Instance 2, etc.
-    sizes.json               # Problem sizes for each instance
+
+with a target of ≥ 2× (i.e. at least twice as fast as PyTorch). Claude interacts with the pipeline through an MCP server (`src/mcp_server.py`) that exposes two tools, `run_schedule` (compile + execute + log) and `lower_schedule` (compile only, dump IR for inspection). See [CLAUDE.md](CLAUDE.md) for the full technical overview.
+
+---
+
+## 1. Installation
+
+Two conda environments are needed: `main` (MLIR + Claude pipeline) and `torch-cpu` (PyTorch reference). Both definitions live in [resources/conda/](resources/conda/).
+
+```bash
+conda env create -f resources/conda/main.yml
+conda env create -f resources/conda/torch-cpu.yml
+```
+
+Activate the main environment for everything except the PyTorch reference run:
+
+```bash
+conda activate main
+```
+
+You will also need [Claude Code](https://docs.claude.com/en/docs/claude-code) installed and authenticated (`claude login`).
+
+## 2. Building the legality check pass
+
+The polyhedral legality check is a custom MLIR pass built as a shared library plugin. Build it once after installing the conda environment:
+
+```bash
+conda activate main
+cd src/tools/c/dependence
+make
+```
+
+This produces `src/tools/c/dependence/build/lib/libPolyhedralLegalityCheck.so`, which is loaded by the validation harness and the MCP server. To rebuild from scratch use `make clean && make`.
+
+## 3. Inputs
+
+The system optimizes the MLIR files placed under [data/](data/). Each subdirectory is one benchmark, with one `.mlir` file per instance and a `sizes.json` describing problem sizes. Benchmarks currently included: `matmul`, `conv_2d`, `add`, `pooling`.
+
+To optimize a new kernel:
+
+1. Add `data/<name>/<instance>.mlir` with the target ops tagged `{tag = "<tag>"}` (see [CLAUDE.md](CLAUDE.md)) and an entry in `data/<name>/sizes.json`.
+2. If `<name>` is not one of the benchmarks already handled in [src/torch_exec.py](src/torch_exec.py), add a matching PyTorch reference there (an `<name>_op` / `<name>_inputs` pair plus a `case` in `main`) so the speedup metric can be computed against PyTorch.
+
+## 4. Running an optimization session
+
+The entry point is the Slurm script [scripts/claude.sh](scripts/claude.sh). Submit it from the project root:
+
+```bash
+sbatch scripts/claude.sh
+```
+
+Slurm stdout for the Claude session is written to `logs/claude/<JOBID>.log`.
+
+## 5. Reading the results
+
+Each optimization session gets its own directory under [logs/stats/](logs/stats/), keyed by `<EXPERIMENT_ID>`. All artifacts produced during the session are written there.
+
+```txt
+logs/stats/<EXPERIMENT_ID>/
+  claude_optimization.log     # Append-only log of every run_schedule call (id, speedup, summary, error)
+  performance.log             # Timestamped speedup samples (used by the plotting scripts)
+  performance.png             # Speedup-over-time plot (auto-generated at the end of the session)
+  tokens.log                  # Input/output token counts per Claude turn
+  best/
+    state.json                # Best speedup recorded so far per benchmark instance
+    <name>/<instance>/        # Best-seen configuration for this benchmark instance:
+      schedule.mlir           # Transform schedule
+      passes.txt              # MLIR lowering pipeline
+      llvm-llc-passes-flags.txt   # LLVM opt + llc passes/flags
+  gen/                        # Output from lower_schedule (per-session to keep parallel experiments isolated)
+```
+
+`claude_optimization.log` contains everything Claude has tried during the session — to follow progress live use:
+
+```bash
+tail -f logs/stats/<EXPERIMENT_ID>/claude_optimization.log
+```
+
+Outside the per-session folders, `logs/claude/` and `logs/jobs/` hold raw Slurm stdout/stderr for the Claude job and individual execution jobs.
+
+## 6. Plotting results
+
+Two helper scripts under [src/tools/](src/tools/) visualize the experiment logs.
+
+Plot speedup over time, one curve per benchmark, for a single experiment:
+
+```bash
+python src/tools/plot_performance.py <EXPERIMENT_ID>
+```
+
+Compare multiple experiments side by side (one subplot per benchmark):
+
+```bash
+python src/tools/plot_performance_compare.py <EXPERIMENT_ID_1> <EXPERIMENT_ID_2> ...
+```
+
+Both scripts read from `logs/stats/` by default and save PNGs into the corresponding stats directory.
+
+## 7. Running the validation tests
+
+The validation harness checks that the polyhedral legality pass correctly flags illegal transform schedules. Test cases live in [tests/validation/](tests/validation/) — each file contains a kernel paired with a transform schedule that is either dependence-preserving or dependence-violating.
+
+Run the full suite from the project root:
+
+```bash
+conda activate main
+python test_mlir_validation.py
+```
+
+Useful flags:
+
+- `-v` / `--verbose` — print captured stderr for each test.
+- `--filter <substr>` — run only tests whose filename matches the substring (e.g. `--filter tiling`).
+
+The harness requires the legality pass shared library from [step 2](#2-building-the-legality-check-pass).
+
+## 8. Manual single-run execution
+
+If you want to evaluate a single configuration outside of a Claude session, use [scripts/execute.sh](scripts/execute.sh). It runs the optimized configuration and the PyTorch reference, then prints the speedup:
+
+```bash
+sbatch scripts/execute.sh -i matmul_2 \
+    -t resources/base_schedule.mlir \
+    -p resources/base_passes.txt
+```
+
+Pass `--id <name>_<instance>` (or `-i`) plus any flags accepted by `src/utils/execution.py` (transform schedule path, MLIR passes file, LLVM passes/flags, etc.). The base no-op schedule lives at [resources/base_schedule.mlir](resources/base_schedule.mlir) and the default lowering pipeline at [resources/base_passes.txt](resources/base_passes.txt).
+
+## 9. Project layout
+
+A condensed view (full layout in [CLAUDE.md](CLAUDE.md)):
+
+```txt
+data/                     # Benchmarks: <name>/<instance>.mlir + sizes.json
 resources/
-  base_schedule.mlir         # Empty (no-op) transform schedule
-  base_passes.txt            # Default MLIR lowering pass pipeline
-  prompt.txt                 # Prompt used for Claude optimization (not for LLM use)
+  base_schedule.mlir      # No-op transform schedule (starting point)
+  base_passes.txt         # Default MLIR lowering pipeline
+  conda/                  # Conda environment definitions
 src/
-  mcp_server.py              # MCP server exposing the two tools below
-  torch_exec.py              # PyTorch reference execution for comparison
-  utils/
-    transformation.py        # Core: apply schedule, bufferize, lower, compile
-    execution.py             # CLI entry point: transform, run, and measure
+  mcp_server.py           # MCP tools: run_schedule, lower_schedule
+  torch_exec.py           # PyTorch reference execution
+  utils/                  # Compilation + execution pipeline
   tools/
-    plot_performance.py      # Plot speedup over time per CODE_ID for an experiment
-logs/
-  best/                      # Best configurations per benchmark (auto-saved by run_schedule)
-  claude/                    # Slurm logs for Claude optimization runs (not for LLM use)
-  jobs/                      # Slurm job output/error logs (not for LLM use)
-  gen/                       # Generated by `lower_schedule`
-    <id>/                    # Output directory per benchmark run (e.g. "matmul_2")
-      transformed.mlir       # MLIR after applying the transform schedule
-      llvm.ll                # LLVM IR after lowering
-      llvm_opt.ll            # LLVM IR after opt
-      asm.s                  # Generated assembly
-  stats/                     # Per-experiment statistics (not for LLM use)
-  claude_optimization.log    # Claude optimization progress log (written by run_schedule)
+    plot_performance*.py  # Plotting scripts
+    c/dependence/         # Polyhedral legality check pass (C++/MLIR)
 scripts/
-  claude.sh                  # Slurm job script: runs Claude sessions with logging
-  execute.sh                 # Slurm job script: runs base, optimized, and PyTorch
-tmp/                         # Temporary files (not for LLM use)
-```
-
-## MLIR Code Format
-
-Each `.mlir` file in `data/` contains a function with linalg operations tagged `{tag = "..."}`. This tag is how the transform schedule identifies the target operation. Example (`matmul/2.mlir`):
-
-```mlir
-func.func @main(%arg0: tensor<512x512xf64>, %arg1: tensor<512x512xf64>)
-    -> (tensor<512x512xf64>, i64) {
-    %c0 = arith.constant 0.0 : f64
-    %new = tensor.empty() : tensor<512x512xf64>
-    %arg2 = linalg.fill ins(%c0 : f64) outs(%new : tensor<512x512xf64>) -> tensor<512x512xf64>
-    %0 = call @nanoTime() : () -> i64
-    %1 = linalg.matmul {tag = "operation"}
-        ins(%arg0, %arg1 : tensor<512x512xf64>, tensor<512x512xf64>)
-        outs(%arg2 : tensor<512x512xf64>) -> tensor<512x512xf64>
-    %2 = call @nanoTime() : () -> i64
-    %3 = arith.subi %2, %0 : i64
-    return %1, %3 : tensor<512x512xf64>, i64
-}
-```
-
-The code is in **tensor** semantics. Bufferization (tensor to memref) is handled automatically by the pipeline.
-
-## Compilation Pipeline
-
-1. **(Optional) Bufferize** — convert tensor semantics to memref (buffer) semantics
-2. **Apply transform schedule** — MLIR transform dialect operations (tiling, vectorization, etc.)
-3. **Apply MLIR passes** — lowering from linalg/scf/affine to LLVM dialect (see `resources/base_passes.txt`)
-4. **Translate to LLVM IR** — `mlir-translate --mlir-to-llvmir`
-5. **Optimize LLVM IR** — `opt` with the specified pass pipeline and flags
-6. **Compile to object/assembly** — `llc` with the specified codegen flags
-7. **Link** — produce a shared library and execute
-
-## MCP Tools
-
-Two tools are available:
-
-### `run_schedule`
-
-Execute the full pipeline, log the result, and return the measured speedup vs PyTorch. This is the main evaluation tool. Results are automatically logged to `logs/claude_optimization.log`, and new-best configurations are saved to `logs/best/`.
-
-Parameters:
-- `id` (required) — benchmark identifier in the form `"{name}_{instance}"` (e.g. `"matmul_2"`)
-- `transform_schedule` (required) — MLIR transform schedule as a string
-- `mlir_passes` (required) — MLIR lowering pass pipeline as a string
-- `summary` (required) — brief description of what is being tried in this run
-- `llvm_passes` — LLVM opt pass pipeline (default: `"default<O3>"`)
-- `llvm_flags` — comma-separated LLVM CL flags (default: empty)
-- `llc_flags` — comma-separated llc codegen flags (default: empty)
-- `bufferize_first` — whether to bufferize before applying the schedule (default: `true`)
-
-### `lower_schedule`
-
-Apply the schedule and compile, writing intermediate representations to `logs/gen/<id>/` for analysis (no execution).
-
-Same parameters as `run_schedule` (except `summary`). Returns a dictionary with file paths to the generated outputs:
-- `mlir_transformed` — path to the transformed MLIR file (`logs/gen/<id>/transformed.mlir`)
-- `llvm` — path to the LLVM IR file (`logs/gen/<id>/llvm.ll`)
-- `llvm_opt` — path to the optimized LLVM IR file (`logs/gen/<id>/llvm_opt.ll`)
-- `asm` — path to the generated assembly file (`logs/gen/<id>/asm.s`)
-
-## Transform Schedule Format
-
-A transform schedule is an MLIR module using the [transform dialect](https://mlir.llvm.org/docs/Dialects/Transform/). It must contain a named sequence `@__transform_main`. The empty (no-op) schedule is:
-
-```mlir
-module attributes {transform.with_named_sequence} {
-    transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {
-        transform.yield
-    }
-}
-```
-
-To target the operation, match it by its tag:
-
-```mlir
-module attributes {transform.with_named_sequence} {
-    transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {
-        %op = transform.structured.match attributes {tag = "operation"} in %arg0
-            : (!transform.any_op) -> !transform.any_op
-        // Apply transformations to %op here (tile, vectorize, etc.)
-        transform.yield
-    }
-}
+  claude.sh               # Slurm: launch a Claude optimization session
+  execute.sh              # Slurm: evaluate one configuration
+tests/validation/         # MLIR test cases for the legality check
+logs/                     # Experiment outputs (see section 5)
 ```
