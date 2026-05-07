@@ -50,6 +50,22 @@ To optimize a new kernel:
 1. Add `data/<name>/<instance>.mlir` with the target ops tagged `{tag = "<tag>"}` (see [CLAUDE.md](CLAUDE.md)) and an entry in `data/<name>/sizes.json`.
 2. If `<name>` is not one of the benchmarks already handled in [src/torch_exec.py](src/torch_exec.py), add a matching PyTorch reference there (an `<name>_op` / `<name>_inputs` pair plus a `case` in `main`) so the speedup metric can be computed against PyTorch.
 
+To create a new instance of an existing benchmark, use [src/tools/create_instance.py](src/tools/create_instance.py). It generates the `.mlir` file and updates `sizes.json` automatically:
+
+```bash
+python src/tools/create_instance.py <benchmark> <sizes...>
+```
+
+Refer to `data/<benchmark>/sizes.json` for the size parameters expected by a given benchmark — pass them as `key=value` pairs (or as positional ints when the file stores a list). For example:
+
+```bash
+# key=value pairs (when sizes.json stores a dict, e.g. matmul):
+python src/tools/create_instance.py matmul M=1024 K=1024 N=1024
+
+# positional ints (when sizes.json stores a list, e.g. add):
+python src/tools/create_instance.py add 64 64 64 64
+```
+
 ## 4. Running an optimization session
 
 The entry point is the Slurm script [scripts/claude.sh](scripts/claude.sh). Submit it from the project root:
