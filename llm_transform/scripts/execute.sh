@@ -108,5 +108,5 @@ echo "Speedup compared to PyTorch: ${SPEEDUP}x"
 
 # Log performance metrics to the experiment directory if it exists
 if [ -n "$EXPERIMENT_DIR" ]; then
-    echo "$(date '+%Y-%m-%d %H:%M:%S') | id=$CODE_ID | speedup=${SPEEDUP}x" >> "$EXPERIMENT_DIR/performance.log"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') | id=$CODE_ID | speedup=${SPEEDUP}x | exec_time_ns=$TIME_OPT" >> "$EXPERIMENT_DIR/performance.log"
 fi

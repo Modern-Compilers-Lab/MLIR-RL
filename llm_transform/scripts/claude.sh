@@ -37,20 +37,25 @@ echo "Experiment ID: $EXPERIMENT_ID"
 # Log token usage from a claude JSON response
 log_tokens() {
     local output="$1"
+    local duration="$2"
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     local input_tokens=$(echo "$output" | jq -r '.usage.input_tokens // 0')
     local output_tokens=$(echo "$output" | jq -r '.usage.output_tokens // 0')
     local total_tokens=$(( input_tokens + output_tokens ))
-    echo "$timestamp | input=$input_tokens | output=$output_tokens | total=$total_tokens" >> "$EXPERIMENT_DIR/tokens.log"
+    echo "$timestamp | input=$input_tokens | output=$output_tokens | total=$total_tokens | duration=${duration}s" >> "$EXPERIMENT_DIR/tokens.log"
 }
 
 # Start claude code sessions
 rm -f logs/jobs/*
+START=$(date +%s)
 OUTPUT=$(claude --permission-mode dontAsk --print --output-format=json "$(cat resources/prompt.txt)")
-log_tokens "$OUTPUT"
+DURATION=$(( $(date +%s) - START ))
+log_tokens "$OUTPUT" "$DURATION"
 # for ((i = 0 ; i < 99 ; i++ )); do
+#     START=$(date +%s)
 #     OUTPUT=$(claude --continue --print --output-format=json "$(cat resources/prompt.txt)")
-#     log_tokens "$OUTPUT"
+#     DURATION=$(( $(date +%s) - START ))
+#     log_tokens "$OUTPUT" "$DURATION"
 # done
 
 # Create performance plots

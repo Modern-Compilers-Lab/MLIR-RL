@@ -11,7 +11,7 @@ PARENT_DIR = Path(__file__).parents[2]
 def parse_performance_log(log_path: Path):
     entries = defaultdict(list)
     pattern = re.compile(
-        r"(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) \| id=(?P<id>\S+) \| speedup=(?P<speedup>[\d.]+)x"
+        r"(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) \| id=(?P<id>\S+) \| speedup=(?P<speedup>[\d.]+)x \| exec_time_ns=(?P<exec_time_ns>\d+)"
     )
     with open(log_path) as f:
         for line in f:
