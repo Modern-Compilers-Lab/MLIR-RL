@@ -48,7 +48,7 @@ The system optimizes the MLIR files placed under [data/](data/). Each subdirecto
 To optimize a new kernel:
 
 1. Add `data/<name>/<instance>.mlir` with the target ops tagged `{tag = "<tag>"}` (see [CLAUDE.md](CLAUDE.md)) and an entry in `data/<name>/sizes.json`.
-2. If `<name>` is not one of the benchmarks already handled in [src/torch_exec.py](src/torch_exec.py), add a matching PyTorch reference there (an `<name>_op` / `<name>_inputs` pair plus a `case` in `main`) so the speedup metric can be computed against PyTorch.
+2. If `<name>` isn't an already existing benchmark, add a matching PyTorch reference in [src/torch_exec.py](src/torch_exec.py) (an `<name>_op` / `<name>_inputs` pair plus a `case` in `main`) and an expected-output `case` in `transform_and_run` in [src/utils/execution.py](src/utils/execution.py).
 
 To create a new instance of an existing benchmark, use [src/tools/create_instance.py](src/tools/create_instance.py). It generates the `.mlir` file and updates `sizes.json` automatically:
 

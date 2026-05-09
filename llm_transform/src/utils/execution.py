@@ -77,6 +77,8 @@ def transform_and_run(id: str, transform_schedule: str, mlir_passes: str, llvm_p
             expected = get_expected_pytorch(name, inputs)
         case "add":
             expected = inputs[0] + inputs[1]
+        case "relu":
+            expected = np.maximum(inputs[0], 0)
         case _:
             raise ValueError(f"Unsupported benchmark name: {name}")
     args_list = convert_to_args(inputs, outputs)

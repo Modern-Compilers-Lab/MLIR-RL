@@ -55,6 +55,16 @@ def add_inputs(size: list[int]) -> list[torch.Tensor]:
     ]
 
 
+def relu_op(a: torch.Tensor) -> torch.Tensor:
+    return torch.relu(a)
+
+
+def relu_inputs(size: list[int]) -> list[torch.Tensor]:
+    return [
+        torch.full(size, 2, dtype=torch.float64)
+    ]
+
+
 def main():
     parser = argparse.ArgumentParser(description='Run PyTorch matmul with specified id.')
     parser.add_argument('id', type=str, help='The unique identifier for the MLIR code to transform. It takes the form "{name}_{instance}", where "name" is the name of the benchmark (e.g. "matmul") and "instance" is the specific instance (e.g. "0", "1", etc.).')
@@ -78,6 +88,9 @@ def main():
         case "add":
             op = add_op
             inputs = add_inputs(size)
+        case "relu":
+            op = relu_op
+            inputs = relu_inputs(size)
         case _:
             raise ValueError(f"Unsupported benchmark name: {name}")
 
