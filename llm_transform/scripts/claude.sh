@@ -29,10 +29,28 @@ LAST_ID=$(ls -1 "$STATS_DIR" 2>/dev/null | sort -n | tail -1)
 EXPERIMENT_ID=$(( ${LAST_ID:-0} + 1 ))
 EXPERIMENT_DIR="$STATS_DIR/$EXPERIMENT_ID"
 mkdir -p "$EXPERIMENT_DIR"
+touch "$EXPERIMENT_DIR/claude_optimization.log"
 touch "$EXPERIMENT_DIR/performance.log"
 touch "$EXPERIMENT_DIR/tokens.log"
 export EXPERIMENT_DIR
 echo "Experiment ID: $EXPERIMENT_ID"
+
+TOTAL_INPUT_TOKENS=0
+TOTAL_OUTPUT_TOKENS=0
+
+# Format a duration in seconds into a human-readable string
+format_duration() {
+    local s="$1"
+    if (( s < 60 )); then
+        printf '%ds' "$s"
+    elif (( s < 3600 )); then
+        printf '%dm%02ds' $(( s / 60 )) $(( s % 60 ))
+    elif (( s < 86400 )); then
+        printf '%dh%02dm%02ds' $(( s / 3600 )) $(( (s % 3600) / 60 )) $(( s % 60 ))
+    else
+        printf '%dd%02dh%02dm%02ds' $(( s / 86400 )) $(( (s % 86400) / 3600 )) $(( (s % 3600) / 60 )) $(( s % 60 ))
+    fi
+}
 
 # Log token usage from a claude JSON response
 log_tokens() {
@@ -42,11 +60,14 @@ log_tokens() {
     local input_tokens=$(echo "$output" | jq -r '.usage.input_tokens // 0')
     local output_tokens=$(echo "$output" | jq -r '.usage.output_tokens // 0')
     local total_tokens=$(( input_tokens + output_tokens ))
-    echo "$timestamp | input=$input_tokens | output=$output_tokens | total=$total_tokens | duration=${duration}s" >> "$EXPERIMENT_DIR/tokens.log"
+    TOTAL_INPUT_TOKENS=$(( TOTAL_INPUT_TOKENS + input_tokens ))
+    TOTAL_OUTPUT_TOKENS=$(( TOTAL_OUTPUT_TOKENS + output_tokens ))
+    echo "$timestamp | input=$input_tokens | output=$output_tokens | total=$total_tokens | duration=$(format_duration "$duration")" >> "$EXPERIMENT_DIR/tokens.log"
 }
 
 # Start claude code sessions
 rm -f logs/jobs/*
+EXPERIMENT_START=$(date +%s)
 START=$(date +%s)
 OUTPUT=$(claude --permission-mode dontAsk --print --output-format=json "$(cat resources/prompt.txt)")
 DURATION=$(( $(date +%s) - START ))
@@ -57,6 +78,9 @@ log_tokens "$OUTPUT" "$DURATION"
 #     DURATION=$(( $(date +%s) - START ))
 #     log_tokens "$OUTPUT" "$DURATION"
 # done
+TOTAL_DURATION=$(( $(date +%s) - EXPERIMENT_START ))
+TOTAL_TOKENS=$(( TOTAL_INPUT_TOKENS + TOTAL_OUTPUT_TOKENS ))
+echo "TOTAL | input=$TOTAL_INPUT_TOKENS | output=$TOTAL_OUTPUT_TOKENS | total=$TOTAL_TOKENS | duration=$(format_duration "$TOTAL_DURATION")" >> "$EXPERIMENT_DIR/tokens.log"
 
 # Create performance plots
 python src/tools/plot_performance.py "$EXPERIMENT_ID"
