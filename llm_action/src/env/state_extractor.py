@@ -6,18 +6,29 @@ from enum import Enum
 import numpy as np
 
 from llm_action.src.keys import AST_DUMPER_BIN_PATH
-from llm_action.src.config import ARITH_OPS, L, LS, LSD, NUM_OP_TYPES, OP_FEATURES_SIZE
+from llm_action.src.config import ARITH_OPS, L, LS, LSD, NUM_OP_TYPES, OP_FEATURES_SIZE, AST_DUMPER_TIMEOUT
 
 class OperationType(Enum):
     Generic = "generic"
     Matmul = "matmul"
-    # Conv = "conv"
-    # Pooling = "pooling"
-    # Add = "add"
+    Conv = "conv"
+    Pooling = "pooling"
+    Add = "add"
+    Relu = "relu"
 
 OP_TYPE_LIST = list(OperationType)
 assert len(OP_TYPE_LIST) == NUM_OP_TYPES, (
     f"OperationType enum has {len(OP_TYPE_LIST)} members but config.NUM_OP_TYPES={NUM_OP_TYPES}"
+)
+
+_RELU_BODY_SIGNATURE = ("arith.cmpf ugt", "arith.select")
+
+# Match `linalg.<name>` whose attribute brace carries `tag = "operation_0"`.
+# Used to identify the family of the tagged op directly from the MLIR source,
+# uniformly across all op types (matmul, conv, pool, add, generic/relu).
+_TAGGED_OP_RE = re.compile(
+    r'linalg\.([\w_]+)[^{]*\{[^}]*tag\s*=\s*"operation_0"',
+    re.DOTALL,
 )
 
 def observation_size(total_actions: int, max_steps: int, history_mode: str = "success-encoding") -> int:
@@ -58,7 +69,7 @@ def extract_observation(code: str, action_indices: list[tuple[int, bool]], step:
 def _extract_op_features(code: str) -> np.ndarray:
     result = subprocess.run(
         f"{AST_DUMPER_BIN_PATH} -", shell=True,
-        input=code.encode(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10,
+        input=code.encode(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=AST_DUMPER_TIMEOUT,
     )
     if result.returncode != 0:
         return np.zeros(OP_FEATURES_SIZE, dtype=np.float32)
@@ -76,14 +87,14 @@ def _extract_op_features(code: str) -> np.ndarray:
             block = b
             break
 
-    return _encode_block(block)
+    return _encode_block(block, code=code)
 
 def count_loops(code: str) -> int:
     """Count the number of loop dimensions in the tagged operation. Fast fallback: 3."""
     try:
         result = subprocess.run(
             f"{AST_DUMPER_BIN_PATH} -", shell=True,
-            input=code.encode(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10,
+            input=code.encode(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=AST_DUMPER_TIMEOUT,
         )
         if result.returncode != 0:
             return L
@@ -105,13 +116,13 @@ def count_loops(code: str) -> int:
     except Exception:
         return L
 
-def _encode_block(block: str) -> np.ndarray:
+def _encode_block(block: str, code: str = "") -> np.ndarray:
     vec = np.zeros(OP_FEATURES_SIZE, dtype=np.float32)
     rest, _ = block.split("#START_TAG")
     op_name, rest = rest.split("#START_VECTORIZABLE")
 
     offset = 0
-    op_type = _get_op_type(op_name.strip())
+    op_type = _get_op_type(op_name.strip(), code=code)
     for i, ot in enumerate(OP_TYPE_LIST):
         if op_type == ot:
             vec[offset + i] = 1.0
@@ -163,8 +174,49 @@ def _encode_access(vec, offset, data_str, idx_map):
                     vec[offset + ri * LSD * L + m * L + idx_map[idx]] = factor
     return offset + LS * LSD * L
 
-def _get_op_type(name: str) -> OperationType:
+def _detect_op_type_from_code(code: str) -> OperationType | None:
+    """Identify the tagged op's family by parsing the `linalg.<name>` carrying the tag.
+
+    Returns None when the source has no tagged linalg op (e.g. when only the
+    AST-dumper output is available). The relu refinement of `generic` is the
+    op-type analogue of the legacy `conv → Generic` refinement for `op0/op1/i2c`
+    post-transform variants.
+    """
+    if not code:
+        return None
+    m = _TAGGED_OP_RE.search(code)
+    if not m:
+        return None
+    linalg_name = m.group(1)
+
+    if linalg_name == "matmul":
+        return OperationType.Matmul
+    if linalg_name.startswith("conv"):
+        return OperationType.Conv
+    if linalg_name.startswith("pooling"):
+        return OperationType.Pooling
+    if linalg_name == "add":
+        return OperationType.Add
+    if linalg_name == "generic":
+        if all(s in code for s in _RELU_BODY_SIGNATURE):
+            return OperationType.Relu
+        return OperationType.Generic
+    return OperationType.Generic
+
+
+def _get_op_type(name: str, code: str = "") -> OperationType:
+    """Identify the tagged op's family.
+
+    Prefers source-based detection (uniform across all op families). Falls back
+    to AST-dumper-name detection when the code is unavailable, preserving
+    legacy behavior including the `conv → Generic` post-transform refinement.
+    """
+    detected = _detect_op_type_from_code(code)
+    if detected is not None:
+        return detected
     for ot in OperationType:
+        if ot is OperationType.Relu:
+            continue  # body-required; cannot identify relu from a name alone
         if ot.value and ot.value in name:
             if ot.value == "conv" and any(s in name for s in ["op0", "op1", "i2c"]):
                 return OperationType.Generic

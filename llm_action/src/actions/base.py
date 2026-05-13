@@ -1,6 +1,8 @@
 from abc import ABC, abstractmethod
 
 class ActionBase(ABC):
+    unique_execution: bool = True
+
     @classmethod
     @abstractmethod
     def parameters(cls) -> dict:

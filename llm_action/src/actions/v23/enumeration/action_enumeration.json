@@ -1,0 +1,68 @@
+{
+  "intents": [
+    {
+      "name": "Cache Locality and Memory Hierarchy Optimization",
+      "description": "Restructure the loop nest iteration space and data layout to maximize data reuse within L1/L2/L3 cache levels and minimize off-chip memory traffic.",
+      "rationale": "Dense loop nests like matrix multiplication have high arithmetic intensity but suffer from capacity and conflict misses under naive loop orderings. On Broadwell with 32KB L1d and 256KB L2 per core, tiling the iteration space to fit working sets within cache is the single most impactful class of optimization. Complementary layout transformations (packing, promotion) eliminate strided access patterns within tiles, further reducing cache pressure and TLB misses.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Partition the iteration space into multi-dimensional blocks (tiles) so that the working set of each tile fits within a target cache level.",
+          "rationale": "Tiling converts O(N) reuse distance into O(tile_size), ensuring that operand sub-matrices remain cache-resident across the reduction dimension. For a 3-loop matmul nest, tiling all three dimensions creates a 6-loop blocked structure with dramatically improved temporal locality.",
+          "action_template": "Tiling(tile_sizes) — tile_sizes is a list of integers, one per loop dimension of the operation; 0 means do not tile that dimension. The RL agent selects tile sizes to control the trade-off between cache utilization and loop overhead."
+        },
+        {
+          "name": "Loop Interchange",
+          "description": "Reorder the loop dimensions of a loop nest to change the memory access pattern and improve spatial or temporal locality.",
+          "rationale": "The default loop ordering may cause non-unit-stride access on one or more operands. Interchanging loops places the dimension with the best stride pattern (unit stride) in the innermost position, maximizing spatial locality and enabling efficient cache-line utilization and vectorization.",
+          "action_template": "LoopInterchange(permutation) — permutation is a list of integers representing the new ordering of loop iterator indices (e.g., [1, 2, 0] moves the first loop to the innermost position). The RL agent selects permutations to optimize stride patterns."
+        },
+        {
+          "name": "Packing",
+          "description": "Rearrange operand data into a contiguous, tiling-friendly layout by copying sub-tensors into packed buffers with dimensions matching the tile structure.",
+          "rationale": "After tiling, sub-matrices may still reside in non-contiguous memory with large strides between tile rows. Packing reorganizes data so that each tile's elements are contiguous in memory, eliminating TLB misses, enabling hardware prefetching, and improving vectorized load efficiency.",
+          "action_template": "Packing(packed_sizes) — packed_sizes is a list of integers specifying inner block dimensions for data packing; 0 means do not pack along that dimension. The RL agent selects block sizes to match tile structure and vector widths."
+        },
+        {
+          "name": "Promotion",
+          "description": "Copy tiled operand slices into contiguous, locally-allocated buffers to eliminate aliasing and strided access before computation.",
+          "rationale": "Promotion materializes operand tiles into stack-allocated contiguous buffers, removing pointer aliasing that inhibits compiler optimizations and guaranteeing unit-stride access for inner kernels. The copy cost is amortized when promotion targets the outer tile level. Promotion operates at buffer (memref) level, requiring an internal bufferization preprocessing step followed by canonicalization to fold dynamic shapes into static types.",
+          "action_template": "Promotion(operands_to_promote) — operands_to_promote is a list of operand indices (e.g., [0], [1], [0,1,2]) specifying which operands to copy into contiguous local buffers. Promotion requires buffer (memref) form, so this action must include an internal bufferization preprocessing step."
+        }
+      ]
+    },
+    {
+      "name": "Compute Throughput and Resource Utilization",
+      "description": "Maximize arithmetic throughput by exploiting SIMD vector units, instruction-level parallelism, and multi-core parallelism to fully utilize available compute resources.",
+      "rationale": "On Broadwell with AVX2+FMA, peak FP64 throughput is 4 elements × 2 FMA ports × core_frequency per core, but achieving this requires vectorized inner loops, sufficient ILP to keep both FMA ports busy, clean loop trip counts for efficient vector codegen, and distribution of work across all 28 physical cores. Without these transformations, the processor's compute capability is severely underutilized even when data is cache-resident.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Vectorization",
+          "description": "Map loop iterations onto SIMD vector lanes, converting scalar arithmetic into vector operations that process multiple data elements per instruction.",
+          "rationale": "AVX2 provides 256-bit vectors supporting 4 FP64 FMA operations per instruction. Vectorizing the innermost loop of a tiled matmul kernel yields up to 4× throughput improvement. Effective vectorization requires contiguous memory access in the vectorized dimension and compatible loop trip counts.",
+          "action_template": "Vectorization(vector_sizes) — vector_sizes is a list of integers specifying the SIMD vector width per loop dimension. The RL agent selects vector widths compatible with the target ISA (e.g., 4 for FP64 on AVX2)."
+        },
+        {
+          "name": "Loop Unrolling",
+          "description": "Replicate the loop body multiple times within a single iteration to reduce loop overhead and expose instruction-level parallelism.",
+          "rationale": "Unrolling exposes independent operations that the out-of-order engine can schedule across both FMA ports simultaneously. For matmul micro-kernels, 2-4× unrolling of the innermost loops is critical to sustain peak FMA throughput. Excessive unrolling increases register pressure and may cause spills, degrading performance.",
+          "action_template": "LoopUnrolling(unroll_factor) — unroll_factor is an integer specifying the number of loop body copies per iteration. The RL agent selects the unroll factor to balance ILP exposure against register pressure."
+        },
+        {
+          "name": "Loop Peeling",
+          "description": "Separate the remainder iterations of a loop (when the trip count is not evenly divisible by the tile size or vector width) into a distinct epilogue loop.",
+          "rationale": "After tiling or vectorization, the main loop body assumes a fixed trip count multiple. Loop peeling isolates leftover iterations into a scalar or smaller-vector epilogue, allowing the main loop to be generated without runtime bounds checks or vector masking, which improves steady-state performance.",
+          "action_template": "LoopPeeling() — no tunable parameters; the transformation automatically identifies and separates remainder iterations from the main loop body."
+        },
+        {
+          "name": "Parallelization",
+          "description": "Distribute iterations of parallel (non-reduction) loops across multiple threads to exploit multi-core hardware.",
+          "rationale": "The target has 28 physical cores across 2 NUMA nodes. For matmul-like loop nests, outer parallel dimensions (non-reduction loops) can be distributed across threads for near-linear speedup on large problem sizes. Thread count should be chosen to avoid oversubscription and to respect NUMA topology for balanced memory access.",
+          "action_template": "Parallelization(num_threads) OR Parallelization(tile_sizes) — num_threads specifies the thread count for distributing parallel loop iterations; tile_sizes tiles the parallel dimensions first then maps tiles to threads. The tiling-based approach is generally more flexible. num_threads must divide the iteration count evenly to avoid transformation failures in subsequent MLIR passes."
+        }
+      ]
+    }
+  ]
+}

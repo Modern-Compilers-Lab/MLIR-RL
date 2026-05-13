@@ -1,0 +1,76 @@
+{
+  "intents": [
+    {
+      "name": "Data Locality and Cache Optimization",
+      "description": "Restructure the 7-deep convolution loop nest to fit working sets of input, filter, and output tiles into L1/L2/L3 cache, and regularize strided memory access patterns caused by the sliding-window computation.",
+      "rationale": "The conv_2d_nchw_fchw loop nest operates on three tensors with distinct reuse patterns across 7 loop dimensions. Without blocking, even moderate instance sizes exceed L1/L2 capacity by orders of magnitude. The sliding-window input access creates non-unit-stride patterns that waste cache lines. Tiling, reordering, and promoting to contiguous buffers are the highest-impact optimizations for this loop structure.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Partition the iteration space into multi-level blocks so that the working set of each tile fits within a target cache level.",
+          "rationale": "The 7-deep loop nest with 4 parallel and 3 reduction dimensions has extensive data reuse across all three operands. Tiling controls the working set size at each cache level and is a prerequisite for downstream optimizations including vectorization, promotion, and parallelization.",
+          "action_template": "Tiling(tile_sizes) — tile_sizes is a vector with one entry per loop dimension of the operation; a value of 0 means 'do not tile' that dimension. The RL agent selects tile sizes to control cache residency. OR Tiling(loop_band, tile_sizes) — tile_sizes applies to a specific loop band identified by loop_band."
+        },
+        {
+          "name": "Loop Interchange",
+          "description": "Permute the ordering of loops in a loop nest to improve memory access locality and enable more effective vectorization of the innermost loop.",
+          "rationale": "The 7-loop convolution nest has 4 parallel and 3 reduction dimensions whose relative ordering dramatically affects memory access strides. With NCHW layout, the innermost storage dimension is W, so placing loops that vary the W-index innermost yields unit-stride access. Interchange is especially impactful because the input tensor's access pattern couples spatial and kernel loop indices.",
+          "action_template": "LoopInterchange(permutation) — permutation is a reordering of loop indices within the current loop band, e.g., [1, 0, 2] swaps the first two loops. OR LoopInterchange(loop_band, permutation) — applies the permutation to a specific loop band."
+        },
+        {
+          "name": "Promotion",
+          "description": "Copy tiled operand slices into contiguous temporary buffers, eliminating irregular stride patterns and improving spatial locality for subsequent vectorization.",
+          "rationale": "After tiling, the input tensor slices accessed within a tile may have non-contiguous memory layout due to the NCHW storage order and the convolution's sliding-window pattern. Promoting these slices into compact temporary buffers removes stride irregularity, reduces TLB pressure, and enables clean unit-stride vectorization. Requires internal bufferization as a preprocessing step.",
+          "action_template": "Promotion(operands_to_promote) — operands_to_promote is a list of operand indices (e.g., [0], [1], [0,1,2]) specifying which operands to copy into contiguous local buffers. Promotion requires buffer (memref) form, so this action must include an internal bufferization preprocessing step."
+        },
+        {
+          "name": "Image2Col",
+          "description": "Convert the conv2d operation into a matmul-like contraction via img2col decomposition, replacing the 7-deep convolution loop nest (N, F, OH, OW, C, KH, KW) with a 4-loop generic contraction (batch, M=OH*OW, N=F, K=C*KH*KW).",
+          "rationale": "The conv2d operation's 7-dimensional iteration space with coupled spatial and kernel indices creates complex windowed access patterns that prevent effective vectorization and limit tiling choices. Converting to img2col produces a standard matrix contraction that downstream optimizations (tiling, interchange, vectorization) handle far more efficiently with fully contiguous memory access patterns.",
+          "action_template": "Image2Col() — parameterless action. Only applicable when the tagged operation is linalg.conv_2d_nchw_fchw. After conversion, subsequent actions see a 4-loop linalg.generic with iterator_types = [parallel, parallel, parallel, reduction]."
+        }
+      ]
+    },
+    {
+      "name": "Compute Throughput and Instruction Efficiency",
+      "description": "Maximize utilization of AVX2 FMA execution units by mapping innermost loop iterations to SIMD vector lanes and exposing instruction-level parallelism through loop body replication.",
+      "rationale": "Once tiling ensures cache residency, the performance bottleneck shifts to compute throughput. The multiply-accumulate operations in the convolution kernel map directly to FMA instructions. AVX2 provides 4 FP64 lanes per 256-bit vector, and the out-of-order engine can overlap multiple independent FMAs if enough are exposed within the inner loop body.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Vectorization",
+          "description": "Map iterations of an innermost loop to SIMD vector lanes, converting scalar multiply-accumulate operations into vector FMA instructions.",
+          "rationale": "Without vectorization, the processor uses only 1 of 4 available FP64 lanes per cycle, leaving 75% of peak throughput on the table. The choice of which loop dimension to vectorize determines whether memory accesses are unit-stride (contiguous). Vectorization is essential for any competitive performance on AVX2 hardware.",
+          "action_template": "Vectorization(vector_sizes) — vector_sizes is a vector with one entry per loop dimension; the product of all entries must not exceed the hardware vector capacity. The RL agent selects which dimensions to vectorize and at what width."
+        },
+        {
+          "name": "Unrolling",
+          "description": "Replicate the loop body multiple times, reducing loop overhead and exposing independent operations for instruction-level parallelism.",
+          "rationale": "After tiling creates small inner trip counts, unrolling eliminates branch overhead and exposes multiple independent FMA operations to the out-of-order execution engine. For convolution, unrolling the output spatial or reduction channel loops within a tile enables register-level accumulation across reduction iterations, reducing memory traffic to the output tensor.",
+          "action_template": "Unrolling(tile_sizes, unroll_factor) — tile_sizes selects the loop(s) to target (with tiling as a precursor), and unroll_factor specifies the replication count. The RL agent controls the trade-off between exposed ILP and register pressure."
+        }
+      ]
+    },
+    {
+      "name": "Multi-Core Work Distribution",
+      "description": "Distribute independent iterations of the convolution's parallel loop dimensions across the 28 available physical cores to exploit thread-level parallelism.",
+      "rationale": "The convolution has 4 embarrassingly parallel dimensions (batch, filters, output height, output width) whose combined iteration count typically far exceeds the core count. Distributing these iterations across cores provides a multiplicative speedup on top of single-core optimizations. Priority is medium because single-core locality and vectorization optimizations often dominate the total speedup, and parallelization of very small spatial tiles can introduce overhead.",
+      "priority": "medium",
+      "transformations": [
+        {
+          "name": "Parallelization (Tiling)",
+          "description": "Tile outer parallel loops into chunks and distribute the chunks across threads, with tile sizes controlling work granularity per thread.",
+          "rationale": "Tiling-based parallelization is more flexible than direct thread assignment because it naturally handles loop bounds that do not divide evenly by thread count. It also enables NUMA-aware distribution by controlling tile placement. This is the preferred parallelization approach for most instances.",
+          "action_template": "ParallelizationTiling(tile_sizes) — tile_sizes is a vector with one entry per loop dimension; a value of 0 means 'do not parallelize' that dimension. Non-zero values specify the tile granularity for parallel distribution."
+        },
+        {
+          "name": "Parallelization (Direct)",
+          "description": "Directly partition iterations of parallel loops across a fixed number of threads without an intermediate tiling step.",
+          "rationale": "Simpler than tiling-based parallelization and sufficient when loop bounds are known to divide evenly by the thread count. For the batch dimension (128, 256), clean divisibility by common thread counts (2, 4, 7, 14, 28) is typical. Direct parallelization avoids the overhead of tiling infrastructure when even distribution is guaranteed.",
+          "action_template": "ParallelizationDirect(num_threads) — num_threads is a vector with one entry per loop dimension; a value of 0 means 'do not parallelize' that dimension. Non-zero values specify the number of threads assigned to that dimension. Thread counts must divide the iteration count for correct lowering."
+        }
+      ]
+    }
+  ]
+}

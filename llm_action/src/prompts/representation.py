@@ -3,6 +3,12 @@ from llm_action.src.models import KernelType, OptimizationIntent, Transformation
 from llm_action.src.utils.persistence import load_kernel_code_template, load_kernel_code
 
 def get_training_code_templates_representation(include_instances: bool = True, kernel_type: KernelType = None, kernel_number: int = 1) -> str:
+    """Legacy representation used by the old programmatic agent path
+    (`llm_action/main.py` and `src/agents/action_*.py`).
+    New prompt builders (`claude_enumeration.py`, `claude_implementation.py`,
+    `claude_exploration.py`) use `llm_action.src.data.benchmarks.format_for_prompt`
+    against the standard benchmark set instead.
+    """
     if kernel_type is not None:
         representation = f"""RL Training Code Templates:
 {load_kernel_code_template(kernel_type)}

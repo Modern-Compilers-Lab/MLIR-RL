@@ -58,6 +58,145 @@ def execute_torch_matmul(
     median_ns = median(times)
     return median_ns / 1_000_000
 
+def execute_torch_add(
+    A: int,
+    B: int,
+    C: int,
+    D: int,
+    dtype: torch.dtype = torch.float64,
+    fill_value: float = 0.0,
+    warmup_iters: int = 5,
+    bench_iters: int = 5,
+) -> float:
+    """
+    Execute a 4D elementwise add mirroring `linalg.add` and return the median
+    execution time in milliseconds.
+    """
+    torch.set_grad_enabled(False)
+    nthreads = int(os.popen("nproc").read().strip())
+    torch.set_num_threads(nthreads)
+
+    inputs = (
+        torch.full((A, B, C, D), fill_value, dtype=dtype),
+        torch.full((A, B, C, D), fill_value, dtype=dtype),
+    )
+
+    def _op(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        return torch.add(x, y)
+
+    jit_op = torch.jit.trace(_op, example_inputs=inputs)
+
+    for _ in range(warmup_iters):
+        _ = jit_op(*inputs)
+
+    times: list[int] = []
+    for _ in range(bench_iters):
+        start_time = time.perf_counter_ns()
+        _ = jit_op(*inputs)
+        end_time = time.perf_counter_ns()
+        times.append(end_time - start_time)
+
+    return median(times) / 1_000_000
+
+def _derive_stride(in_dim: int, k: int, out_dim: int, axis: str) -> int:
+    """Solve for stride such that `out_dim == (in_dim - k) // stride + 1`
+    (dilation=1, padding=0). Mirrors the no-padding linalg conv/pool semantics.
+    """
+    if out_dim <= 0:
+        raise ValueError(f"Invalid output {axis} dim: {out_dim}")
+    if out_dim == 1:
+        stride = max(in_dim - k + 1, 1)
+    else:
+        stride = (in_dim - k) // (out_dim - 1)
+    if stride < 1 or (in_dim - k) // stride + 1 != out_dim:
+        raise ValueError(
+            f"Cannot derive stride for {axis}: in={in_dim}, k={k}, out={out_dim} "
+            f"(dilation=1)"
+        )
+    return stride
+
+def execute_torch_pooling_nchw_max(
+    N: int,
+    C: int,
+    H: int,
+    W: int,
+    KH: int,
+    KW: int,
+    OH: int,
+    OW: int,
+    dtype: torch.dtype = torch.float64,
+    fill_value: float = 0.0,
+    warmup_iters: int = 5,
+    bench_iters: int = 5,
+) -> float:
+    """
+    Execute a 2D max pool mirroring `linalg.pooling_nchw_max` with dilation=1
+    (matching the MLIR template). Stride is derived from the output shape:
+    OH = (H - KH) // stride + 1. Returns the median execution time in milliseconds.
+    """
+    torch.set_grad_enabled(False)
+    nthreads = int(os.popen("nproc").read().strip())
+    torch.set_num_threads(nthreads)
+
+    stride_h = _derive_stride(H, KH, OH, "H")
+    stride_w = _derive_stride(W, KW, OW, "W")
+
+    x = torch.full((N, C, H, W), fill_value, dtype=dtype)
+
+    def _op(t: torch.Tensor) -> torch.Tensor:
+        return torch.nn.functional.max_pool2d(
+            t, kernel_size=(KH, KW), stride=(stride_h, stride_w), dilation=1
+        )
+
+    jit_op = torch.jit.trace(_op, example_inputs=(x,))
+
+    for _ in range(warmup_iters):
+        _ = jit_op(x)
+
+    times: list[int] = []
+    for _ in range(bench_iters):
+        start_time = time.perf_counter_ns()
+        _ = jit_op(x)
+        end_time = time.perf_counter_ns()
+        times.append(end_time - start_time)
+
+    return median(times) / 1_000_000
+
+def execute_torch_relu(
+    shape: tuple[int, ...],
+    dtype: torch.dtype = torch.float64,
+    fill_value: float = 0.0,
+    warmup_iters: int = 5,
+    bench_iters: int = 5,
+) -> float:
+    """
+    Execute an elementwise ReLU on a tensor of the given shape (rank-agnostic,
+    mirroring the linalg.generic ReLU pattern in the glossary). Returns the
+    median execution time in milliseconds.
+    """
+    torch.set_grad_enabled(False)
+    nthreads = int(os.popen("nproc").read().strip())
+    torch.set_num_threads(nthreads)
+
+    x = torch.full(tuple(shape), fill_value, dtype=dtype)
+
+    def _op(t: torch.Tensor) -> torch.Tensor:
+        return torch.nn.functional.relu(t)
+
+    jit_op = torch.jit.trace(_op, example_inputs=(x,))
+
+    for _ in range(warmup_iters):
+        _ = jit_op(x)
+
+    times: list[int] = []
+    for _ in range(bench_iters):
+        start_time = time.perf_counter_ns()
+        _ = jit_op(x)
+        end_time = time.perf_counter_ns()
+        times.append(end_time - start_time)
+
+    return median(times) / 1_000_000
+
 def execute_torch_conv2d(
     N: int,
     C: int,
@@ -75,8 +214,9 @@ def execute_torch_conv2d(
 ) -> float:
     """
     Execute a 2D convolution mirroring `linalg.conv_2d_nchw_fchw` with
-    stride=1 and dilation=1 (matching the MLIR template). Returns the median
-    execution time in milliseconds.
+    dilation=1 and no padding (linalg conv has no padding attribute). Stride
+    is derived per axis from the output shape: OH = (H - KH) // stride + 1.
+    Returns the median execution time in milliseconds.
 
     Args:
         N: Batch size.
@@ -84,7 +224,7 @@ def execute_torch_conv2d(
         H, W: Input spatial dimensions.
         F: Output channels (filters).
         KH, KW: Kernel spatial dimensions.
-        OH, OW: Output spatial dimensions (used to derive padding).
+        OH, OW: Output spatial dimensions (used to derive stride).
         dtype: Data type for the tensors.
         fill_value: Value used to fill the tensors.
         warmup_iters: Number of warm-up iterations before benchmarking.
@@ -97,15 +237,8 @@ def execute_torch_conv2d(
     nthreads = int(os.popen("nproc").read().strip())
     torch.set_num_threads(nthreads)
 
-    # Derive symmetric padding from output shape (stride=1, dilation=1)
-    pad_h2 = OH - H + KH - 1
-    pad_w2 = OW - W + KW - 1
-    if pad_h2 < 0 or pad_w2 < 0 or pad_h2 % 2 != 0 or pad_w2 % 2 != 0:
-        raise ValueError(
-            f"Cannot derive symmetric padding from H={H}, KH={KH}, OH={OH}, "
-            f"W={W}, KW={KW}, OW={OW} (stride=1, dilation=1)"
-        )
-    pad_h, pad_w = pad_h2 // 2, pad_w2 // 2
+    stride_h = _derive_stride(H, KH, OH, "H")
+    stride_w = _derive_stride(W, KW, OW, "W")
 
     inputs = (
         torch.full((N, C, H, W), fill_value, dtype=dtype),
@@ -113,7 +246,9 @@ def execute_torch_conv2d(
     )
 
     def _op(x: torch.Tensor, w: torch.Tensor) -> torch.Tensor:
-        return torch.nn.functional.conv2d(x, w, stride=1, padding=(pad_h, pad_w), dilation=1)
+        return torch.nn.functional.conv2d(
+            x, w, stride=(stride_h, stride_w), padding=0, dilation=1
+        )
 
     jit_op = torch.jit.trace(_op, example_inputs=inputs)
 
@@ -161,7 +296,26 @@ def parse_args() -> argparse.Namespace:
     p_conv.add_argument("OH", type=int, help="Output height")
     p_conv.add_argument("OW", type=int, help="Output width")
 
-    for sp in (p_matmul, p_conv):
+    p_add = subparsers.add_parser("add", help="4D elementwise add")
+    p_add.add_argument("A", type=int)
+    p_add.add_argument("B", type=int)
+    p_add.add_argument("C", type=int)
+    p_add.add_argument("D", type=int)
+
+    p_pool = subparsers.add_parser("pooling_nchw_max", help="2D max pool (NCHW)")
+    p_pool.add_argument("N", type=int, help="Batch size")
+    p_pool.add_argument("C", type=int, help="Channels")
+    p_pool.add_argument("H", type=int, help="Input height")
+    p_pool.add_argument("W", type=int, help="Input width")
+    p_pool.add_argument("KH", type=int, help="Kernel height")
+    p_pool.add_argument("KW", type=int, help="Kernel width")
+    p_pool.add_argument("OH", type=int, help="Output height")
+    p_pool.add_argument("OW", type=int, help="Output width")
+
+    p_relu = subparsers.add_parser("relu", help="Elementwise ReLU on a tensor of arbitrary rank")
+    p_relu.add_argument("shape", type=int, nargs="+", help="Tensor shape (e.g. 128 1024 or 128 128 56 56)")
+
+    for sp in (p_matmul, p_conv, p_add, p_pool, p_relu):
         sp.add_argument(
             "--dtype",
             type=str,
@@ -211,4 +365,14 @@ if __name__ == "__main__":
             OH=args.OH, OW=args.OW,
             **common,
         )
+    elif args.op == "add":
+        result = execute_torch_add(A=args.A, B=args.B, C=args.C, D=args.D, **common)
+    elif args.op == "pooling_nchw_max":
+        result = execute_torch_pooling_nchw_max(
+            N=args.N, C=args.C, H=args.H, W=args.W,
+            KH=args.KH, KW=args.KW, OH=args.OH, OW=args.OW,
+            **common,
+        )
+    elif args.op == "relu":
+        result = execute_torch_relu(shape=tuple(args.shape), **common)
     print(result)

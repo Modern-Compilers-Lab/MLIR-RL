@@ -12,7 +12,7 @@ from llm_action.src.execution.local_executer import LocalExecutor
 from llm_action.src.execution.dask_executor import DaskExecutor, get_shared_client
 from llm_action.src.execution.slurm_executor import SlurmExecutor
 from llm_action.src.env.state_extractor import extract_observation, observation_size, count_loops
-from llm_action.src.env.action_space import build_action_space, build_action_masks
+from llm_action.src.env.action_space import build_action_space, build_action_masks, compute_blocked_indices
 from llm_action.src.config import L
 
 logger = logging.getLogger(__name__)
@@ -57,7 +57,9 @@ class MLIROptEnv(gym.Env):
         else:
             self.executor = SlurmExecutor(timeout=cfg.slurm_timeout)
         self.benchmarks = load_benchmarks(
-            name=cfg.benchmarks_name, executor=self.executor
+            name=cfg.benchmarks_name,
+            split=cfg.benchmarks_split,
+            executor=self.executor,
         )
         assert self.benchmarks, "No benchmarks loaded"
 
@@ -127,23 +129,33 @@ class MLIROptEnv(gym.Env):
         True  = action available.
         False = action masked out (policy assigns −∞ logit).
 
-        The done action is always unmasked so the episode can terminate.
-        When unique_actions=False, returns all-True (no masking).
+        Per-action `unique_execution` (ActionBase class attribute, default True)
+        decides whether a successfully-applied action is masked for the rest of
+        the episode. The done action is always unmasked so the episode can
+        terminate.
         """
+        blocked = (
+            compute_blocked_indices(self.registry, self._used_action_indices)
+            if self.cfg.enable_dependency_masking
+            else frozenset()
+        )
+
         if self.param_mode == "multidiscrete":
             return build_action_masks(
                 self.registry, self._slot_map,
                 n_loops=self._n_loops,
                 max_n_loops=self.cfg.max_num_loops,
                 used_action_indices=self._used_action_indices,
-                unique_actions=self.cfg.unique_actions,
+                blocked_by_dependency=blocked,
             )
 
         reg = self.registry
         action_mask = np.ones(reg.total_actions, dtype=bool)
-        if self.cfg.unique_actions:
-            for idx in self._used_action_indices:
+        for idx in self._used_action_indices:
+            if reg.action_classes[idx].unique_execution:
                 action_mask[idx] = False
+        for idx in blocked:
+            action_mask[idx] = False
         action_mask[reg.done_idx] = True
         return action_mask
 
@@ -162,7 +174,10 @@ class MLIROptEnv(gym.Env):
             self._log_episode_summary(reward, opt_t)
             return self._obs(), reward, True, False, self._info(reward, opt_time_ms=opt_t)
 
-        if self.cfg.unique_actions and action_idx in self._used_action_indices:
+        if (
+            action_idx in self._used_action_indices
+            and reg.action_classes[action_idx].unique_execution
+        ):
             # Unreachable during MaskablePPO training; safety net for unmasked inference.
             action_name = reg.action_classes[action_idx].__name__
             self._log(f"  step {self._step_count}: {action_name} | FAIL (already used) [mask bypass]")
@@ -197,6 +212,10 @@ class MLIROptEnv(gym.Env):
         self._action_history.append((action_name, params))
         self._action_indices.append((action_idx, True))
         self._used_action_indices.add(action_idx)
+
+        # Update loop count in case the action changed the op structure
+        # (e.g., Image2Col converts 7-loop conv2d to 4-loop generic)
+        self._n_loops = count_loops(self._current_code)
 
         # If the tag was consumed (e.g., Vectorization), auto-terminate
         tag_gone = 'tag = "operation_0"' not in self._current_code

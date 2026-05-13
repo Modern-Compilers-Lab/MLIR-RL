@@ -1,0 +1,82 @@
+{
+  "intents": [
+    {
+      "name": "Cache-Aware Data Movement",
+      "description": "Optimize data flow through the memory hierarchy by controlling how loop nest working sets map to L1/L2/L3 caches and local buffers.",
+      "rationale": "The target hardware has a deep cache hierarchy (L1 32KB, L2 256KB, L3 ~35MB per socket). For large tensor loop nests, naive iteration causes capacity misses at every cache level, making data locality the single most impactful optimization axis for dense compute kernels.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Partition the loop iteration space into multi-dimensional blocks whose working sets fit within target cache levels, converting capacity misses into hits through temporal data reuse.",
+          "rationale": "Without tiling, each operand element is loaded from memory once per use with no reuse across iterations. Tiling creates reuse windows that keep data in fast cache levels, often yielding order-of-magnitude speedups for large loop nests by reducing memory traffic to the dominant bottleneck level.",
+          "action_template": "Tiling(tile_sizes) — tile_sizes is a list of integers, one per loop dimension; 0 means do not tile that dimension. The RL agent selects tile sizes to fit working sets within L1, L2, or L3 cache capacity."
+        },
+        {
+          "name": "Promotion",
+          "description": "Copy tiled operand slices into contiguous local buffers, eliminating cache conflict misses and ensuring predictable unit-stride access patterns within tiles.",
+          "rationale": "Even after tiling, original tensor data may have large strides that cause conflict misses and poor prefetcher behavior. Promoting operand slices into dedicated contiguous buffers guarantees spatial locality and eliminates cross-operand cache interference within the tiled working set.",
+          "action_template": "Promotion(operands_to_promote) — operands_to_promote is a list of operand indices (e.g., [0], [1], [0,1,2]) specifying which operands to copy into contiguous local buffers. Promotion requires buffer (memref) form, so this action must include an internal bufferization preprocessing step."
+        },
+        {
+          "name": "Packing",
+          "description": "Reorganize tensor data layout by introducing inner block dimensions that match tiled traversal order, converting strided accesses into contiguous accesses.",
+          "rationale": "Standard row-major or column-major layouts create stride-N accesses when traversing tiled blocks. Packing transforms the data layout so that elements accessed consecutively within a tile are stored contiguously in memory, maximizing spatial locality and vector load efficiency.",
+          "action_template": "Packing(packed_sizes) — packed_sizes is a list of integers specifying inner block dimensions for packing along each loop dimension; 0 means do not pack along that dimension."
+        }
+      ]
+    },
+    {
+      "name": "Loop Nest Structure Optimization",
+      "description": "Restructure loop iteration order, body complexity, and boundary handling to improve memory access patterns, instruction-level parallelism, and vectorization readiness.",
+      "rationale": "The ordering and structure of loop nests directly determines memory stride patterns, register pressure, branch overhead, and vectorizability. Restructuring transformations adapt the loop nest to the target CPU execution pipeline without changing data layout.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Loop Interchange",
+          "description": "Reorder loop dimensions to place the loop with stride-1 memory access innermost, improving spatial locality and enabling contiguous vector loads and stores.",
+          "rationale": "For multi-dimensional tensor accesses, the innermost loop determines the dominant memory stride. Placing the contiguous-access dimension innermost reduces cache line waste, improves hardware prefetcher effectiveness, and creates natural vectorization opportunities along the stride-1 direction.",
+          "action_template": "LoopInterchange(permutation) — permutation is a list of loop iterator indices defining the new loop ordering (e.g., [1, 0, 2] swaps the two outermost loops). OR LoopInterchangeSwap(loop_id_a, loop_id_b) — swaps two specific loop levels."
+        },
+        {
+          "name": "Loop Unrolling",
+          "description": "Replicate the loop body multiple times within each iteration to expose instruction-level parallelism, reduce loop overhead, and improve execution pipeline utilization.",
+          "rationale": "Modern CPUs can issue multiple independent FP operations per cycle via superscalar execution and FMA units. Unrolling exposes independent operations that fill pipeline slots, amortizes branch and loop-counter overhead, and enables register-level data reuse across unrolled iterations.",
+          "action_template": "LoopUnrolling(unroll_factor) — unroll_factor is the number of loop body copies per iteration (e.g., 2, 4, 8)."
+        },
+        {
+          "name": "Loop Peeling",
+          "description": "Separate the last iterations of a loop that would otherwise require predication or conditional logic, enabling the main loop body to execute on clean multiples of tile or vector widths.",
+          "rationale": "When loop bounds are not exact multiples of tile sizes or vector widths, remainder iterations require predication or scalar fallback that inhibits the main loop. Peeling extracts these edge cases into a separate epilogue, allowing the main loop to execute without boundary checks and enabling clean vectorization.",
+          "action_template": "LoopPeeling() — no tunable parameters; peels the last partial iteration from the innermost tileable loop to produce clean main-loop bounds."
+        }
+      ]
+    },
+    {
+      "name": "Parallelism Exposure",
+      "description": "Expose and exploit parallelism at SIMD, thread, and IR levels to utilize the full computational bandwidth of the target hardware.",
+      "rationale": "The target CPU provides 4 FP64 SIMD lanes per core (AVX2+FMA) and 28 physical cores across 2 NUMA nodes. Without vectorization, single-core throughput is 4x lower than peak; without thread parallelism, 27 of 28 cores remain idle. Both levels of parallelism are essential for compute-bound kernels.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Vectorization",
+          "description": "Map loop body computations to SIMD vector operations, utilizing all available vector lanes for parallel floating-point arithmetic along contiguous memory dimensions.",
+          "rationale": "AVX2+FMA provides 4 FP64 lanes per 256-bit vector register with fused multiply-add capability. Vectorization directly multiplies single-core arithmetic throughput by the vector width, making it essential for any compute-bound kernel on this hardware.",
+          "action_template": "Vectorization(vector_sizes) — vector_sizes is a list of SIMD vector widths, one per loop dimension, specifying how many elements to process per vector operation along each dimension."
+        },
+        {
+          "name": "Parallelization",
+          "description": "Distribute independent parallel (non-reduction) loop iterations across multiple threads for concurrent execution on multiple CPU cores.",
+          "rationale": "With 28 physical cores across 2 NUMA nodes, thread-level parallelism provides near-linear speedup for sufficiently large problem sizes. Targeting outermost parallel loops maximizes per-thread work granularity and minimizes synchronization overhead.",
+          "action_template": "Parallelization(num_threads) — num_threads is the number of threads to distribute parallel loop iterations across; should divide the parallel iteration count evenly for clean distribution. OR Parallelization(tile_sizes) — tile_sizes partitions parallel loops into chunks for thread distribution, offering more control over work granularity."
+        },
+        {
+          "name": "Canonicalization",
+          "description": "Simplify and normalize IR by folding redundant operations, propagating constants, and cleaning up transformation artifacts to maintain IR quality for subsequent passes.",
+          "rationale": "After tiling, interchange, promotion, and other structural transformations, the IR accumulates redundant operations, dynamic shapes, and complex index computations. Canonicalization folds these into canonical forms, enabling downstream vectorization and parallelization to pattern-match cleanly and produce efficient lowered code.",
+          "action_template": "Canonicalization() — no tunable parameters; applies a fixed set of IR simplification and normalization rewrite rules."
+        }
+      ]
+    }
+  ]
+}

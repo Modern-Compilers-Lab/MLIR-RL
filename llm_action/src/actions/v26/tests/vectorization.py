@@ -1,0 +1,14 @@
+from llm_action.src.actions.v26.implementation.vectorization import Vectorization
+
+from llm_action.src.actions.test import test_action
+
+params_per_family = {
+    "matmul": {"vector_sizes": [4, 4, 4]},
+    "conv_2d_nchw_fchw": {"vector_sizes": [4, 4, 4]},
+    "pooling_nchw": {"vector_sizes": [4, 4, 4]},
+    "add": {"vector_sizes": [4, 4, 4]},
+    "relu": {"vector_sizes": [4, 4]},
+}
+
+if __name__ == "__main__":
+    test_action(Vectorization, params_per_family, benchmark="sample")

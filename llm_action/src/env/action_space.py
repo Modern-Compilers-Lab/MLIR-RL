@@ -44,17 +44,37 @@ def build_action_space(registry, max_n_loops: int = L):
     return spaces.MultiDiscrete(np.array(dims, dtype=np.int64)), slot_map
 
 
+def compute_blocked_indices(registry, used_action_indices: set[int]) -> frozenset[int]:
+    """Union of `registry.blocks` entries across the executed-action history.
+
+    For dependency masking: returns the set of action indices that are forbidden
+    given that every index in `used_action_indices` has been executed.
+    """
+    blocked: set[int] = set()
+    for idx in used_action_indices:
+        blocked |= registry.blocks.get(idx, frozenset())
+    return frozenset(blocked)
+
+
 def build_action_masks(registry, slot_map, n_loops: int, max_n_loops: int,
-                       used_action_indices: set, unique_actions: bool) -> np.ndarray:
+                       used_action_indices: set,
+                       blocked_by_dependency: frozenset[int] = frozenset()) -> np.ndarray:
     """Build per-dimension boolean masks for MaskablePPO.
 
     Returns a flat bool array: [action_mask | param_slot_masks...].
+    Each action class declares `unique_execution: bool` (default True via
+    ActionBase). Used actions whose class sets `unique_execution = True` are
+    masked; classes with `unique_execution = False` remain selectable.
+    `blocked_by_dependency` is applied on top of per-action uniqueness; the
+    done action is always kept available so the agent can terminate the episode.
     """
     # Action selector mask
     action_mask = np.ones(registry.total_actions, dtype=bool)
-    if unique_actions:
-        for idx in used_action_indices:
+    for idx in used_action_indices:
+        if registry.action_classes[idx].unique_execution:
             action_mask[idx] = False
+    for idx in blocked_by_dependency:
+        action_mask[idx] = False
     action_mask[registry.done_idx] = True
 
     # Parameter slot masks

@@ -1,5 +1,5 @@
 import importlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from llm_action.src.actions.base import ActionBase
 
@@ -10,15 +10,42 @@ class ActionRegistry:
     done_idx: int
     total_actions: int
     name_to_idx: dict[str, int]
+    blocks: dict[int, frozenset[int]] = field(default_factory=dict)
 
 def load_action_registry(version: str) -> ActionRegistry:
     mod = importlib.import_module(f"llm_action.src.actions.{version}.registry")
     classes = mod.ACTION_CLASSES
     n = len(classes)
+    name_to_idx = {cls.__name__: i for i, cls in enumerate(classes)}
+
+    raw_deps: dict[str, list[str]] = getattr(mod, "ACTION_DEPENDENCIES", {})
+    blocks: dict[int, frozenset[int]] = {}
+    for blocker_name, blocked_names in raw_deps.items():
+        if blocker_name not in name_to_idx:
+            raise ValueError(
+                f"ACTION_DEPENDENCIES in {version}: unknown blocker '{blocker_name}' "
+                f"(known actions: {sorted(name_to_idx)})"
+            )
+        blocker_idx = name_to_idx[blocker_name]
+        resolved: set[int] = set()
+        for blocked_name in blocked_names:
+            if blocked_name not in name_to_idx:
+                raise ValueError(
+                    f"ACTION_DEPENDENCIES in {version}: unknown blocked '{blocked_name}' "
+                    f"under blocker '{blocker_name}' (known actions: {sorted(name_to_idx)})"
+                )
+            blocked_idx = name_to_idx[blocked_name]
+            if blocked_idx == blocker_idx:
+                continue
+            resolved.add(blocked_idx)
+        if resolved:
+            blocks[blocker_idx] = frozenset(resolved)
+
     return ActionRegistry(
         action_classes=classes,
         num_actions=n,
         done_idx=n,
         total_actions=n + 1,
-        name_to_idx={cls.__name__: i for i, cls in enumerate(classes)},
+        name_to_idx=name_to_idx,
+        blocks=blocks,
     )

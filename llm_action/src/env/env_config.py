@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 from llm_action.src.config import (
-    MAX_STEPS, L, LS, LSD, SLURM_TIMEOUT,
+    MAX_STEPS, L, LS, LSD, SLURM_TIMEOUT, DASK_TIMEOUT
 )
 
 @dataclass
@@ -9,10 +9,11 @@ class EnvConfig:
     action_version: str = "v10"
     param_mode: str = "multidiscrete"  # "multidiscrete", "two_policy", "llm"
     max_steps: int = MAX_STEPS
-    benchmarks_name: str = "matmul"
+    benchmarks_name: str = "standard"
+    benchmarks_split: str = "train"  # "train", "eval", or "all" (only used for split sets)
     executor_type: str = "dask"  # "slurm", "dask", "local"
     slurm_timeout: int = SLURM_TIMEOUT
-    dask_timeout: int = 30
+    dask_timeout: int = DASK_TIMEOUT
     parametrizer_retries: int = 2
     max_num_loops: int = L
     max_num_stores_loads: int = LS
@@ -26,7 +27,7 @@ class EnvConfig:
     reward_baseline: str = "mlir"  # "mlir" or "torch"
     max_speedup_cap: float = 1000.0
     history_mode: str = "success-encoding"  # "include-all", "ignore-failed", "success-encoding"
-    unique_actions: bool = True
+    enable_dependency_masking: bool = True
     verbose: bool = True
 
     @classmethod

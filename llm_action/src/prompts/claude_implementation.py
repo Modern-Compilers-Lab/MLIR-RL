@@ -1,14 +1,15 @@
 import argparse
 
-from llm_action.src.models import KernelType
-from llm_action.src.prompts.representation import get_training_code_templates_representation
+from llm_action.src.data.benchmarks import format_for_prompt
 
-def get_claude_run_prompt(kernel_type: KernelType, kernel_number: int) -> str:
+def get_claude_run_prompt(benchmark: str) -> str:
     return f"""
 INSTRUCTIONS: Available in `/scratch/kb5213/workspace/MLIR-RL/llm_action/resources/prompts/v1/action_implementation.md`
 
 REFERENCES:
-- MCP Server Tools: Available in `/scratch/kb5213/workspace/MLIR-RL/llm_action/docs/MCP_REFERENCE.md`
+- MCP Server Tools: Available in `/scratch/kb5213/workspace/MLIR-RL/llm_action/docs/MCP.md`
+
+MEMORY: A persistent scratchpad lives at `/scratch/kb5213/workspace/MLIR-RL/llm_action/docs/memory/MEMORY.md`. Read it before you start so you can avoid re-discovering known pitfalls. As you work, append a short bullet whenever you hit a non-obvious bug, MLIR/transform-dialect quirk, pass-pipeline ordering issue, or test/CI gotcha — pair each bullet with the concrete fix. Keep entries one-line and scannable (`- bug: <symptom> -> fix: <hotfix>`); do not log routine progress, generic advice, or anything not bug-and-fix shaped. The goal is that future runs of this prompt suffer less from issues earlier runs already solved.
 
 OUTPUT: Your output should be included in `/scratch/kb5213/workspace/MLIR-RL/llm_action/src/actions/v<x>/`. Which means you:
 - Lookup the latest version in `/scratch/kb5213/workspace/MLIR-RL/llm_action/src/actions/v<x>/` and create a `implementation/` and `tests/` subdirectories.
@@ -21,20 +22,21 @@ OUTPUT: Your output should be included in `/scratch/kb5213/workspace/MLIR-RL/llm
 - Include all action tools in the `llm_action/src/actions/v<x>/mcp.py` following the format of the `name_tool` example.
 - Add the actions MCP to `.mcp.json` under the key name `rl-action-v<x>` and ensure the command points to `llm_action.src.actions.v<x>.mcp` using the `mlir` conda environment.
 
-CONTEXT BOUNDARIES: Every version must be independent of previous versions, the only reference you must consult is v0 only! Do not read any other files located in previous versions!
+FILE WRITING: The directory creation won't work because of the spack error. Create the files directly using `Write`, which will create the directory structure.
+
+CONTEXT BOUNDARIES: Every version must be independent of previous versions, the only reference you must consult is v0 only! Do not read any other files located in previous versions! Do not read other versions implementations!
 
 TESTING REQUIREMENTS: Your test implementation should follow the format of `v0/tests/name.py` strictly! 1) The action must run standalone, 2) Never leave a test without an execution (requiring extended preprocessing, that must be handled in the action definition). Just respect the test file code structure.
 
-INPUT: The RL System input will always be a single operation. Here are samples of the input operation (in MLIR format):
-Kernel parameters: --kernel-type={kernel_type} --kernel-number={kernel_number}
-{get_training_code_templates_representation(include_instances=True, kernel_type=kernel_type, kernel_number=kernel_number)}
+INPUT: The RL System input will always be a single operation. Below is the benchmark set you should reason about: per op family, the template, one concrete instance (full code), and the names/shapes of the other instances in the same family.
+{format_for_prompt(benchmark, split="train")}
 """
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--kernel-type", type=KernelType, choices=list(KernelType), default=KernelType.MATMUL)
-    parser.add_argument("--kernel-number", type=int, default=1)
+    parser = argparse.ArgumentParser(description="Generate Layer 2 action implementation prompt for Claude Code")
+    parser.add_argument("--benchmark", type=str, default="standard",
+                        help="Benchmark set under data/benchmarks/ (default: standard)")
     args = parser.parse_args()
 
-    prompt = get_claude_run_prompt(kernel_type=args.kernel_type, kernel_number=args.kernel_number)
+    prompt = get_claude_run_prompt(benchmark=args.benchmark)
     print(prompt)

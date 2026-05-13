@@ -1,0 +1,76 @@
+{
+  "intents": [
+    {
+      "name": "Data Locality & Cache Reuse",
+      "description": "Restructure loop nests and data placement to maximize temporal and spatial reuse within the cache hierarchy (L1/L2/L3).",
+      "rationale": "Dense loop nests over large tensors generate working sets that far exceed cache capacity. Without blocking, every iteration of the inner loop suffers cache misses to DRAM, reducing effective throughput by 10-100x. Tiling, loop reordering, and data promotion are the foundational transformations for cache-efficient execution on this hardware.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Partition the iteration space into fixed-size blocks so that the working set of each block fits within a target cache level.",
+          "rationale": "Tiling is the single most impactful loop-nest optimization for data reuse. By constraining the iteration range per block, it ensures that the accessed data for all operands remains resident in L1 or L2 cache across the innermost loop iterations, converting O(n) cache misses to O(n/B) misses where B is the tile size.",
+          "action_template": "Tiling(tile_sizes) — tile_sizes is a list of integers, one per loop dimension; a value of 0 means 'do not tile' that dimension. OR Tiling(loop_band, tile_sizes) — loop_band identifies the target loop band and tile_sizes specifies the blocking factors for that band."
+        },
+        {
+          "name": "Loop Interchange",
+          "description": "Permute the order of loops within a loop nest to improve memory access patterns and expose the most favorable reduction/accumulation structure.",
+          "rationale": "Loop order determines whether memory accesses are stride-1 (cache-friendly) or strided (cache-hostile). For loop nests with multiple operands having different layouts, interchange can place the dimension with contiguous access on the innermost loop, dramatically improving spatial locality and enabling efficient vectorization.",
+          "action_template": "LoopInterchange(loop_band, permutation) — permutation is a list of indices specifying the new loop order within the band. OR LoopInterchangeSwap(adjacent_pair) — swaps two adjacent loops in the nest."
+        },
+        {
+          "name": "Promotion",
+          "description": "Copy tiled operand sub-tensors into contiguous local buffers to eliminate irregular strides and ensure aligned, sequential memory access within each tile.",
+          "rationale": "After tiling, sub-tensor slices may still have non-unit strides in memory (e.g., a column slice of a row-major matrix). Promotion copies these slices into compact, contiguous temporary buffers, which eliminates TLB thrashing, enables hardware prefetching, and provides aligned data for vector loads. This action requires an internal bufferization preprocessing step since promotion operates at the buffer (memref) level.",
+          "action_template": "Promotion(operands_to_promote) — operands_to_promote is a list of operand indices (e.g., [0], [1], [0,1,2]) specifying which operands to copy into contiguous local buffers. Promotion requires buffer (memref) form, so this action must include an internal bufferization preprocessing step followed by canonicalization."
+        }
+      ]
+    },
+    {
+      "name": "Compute Throughput & SIMD Utilization",
+      "description": "Maximize arithmetic throughput by mapping loop computations onto SIMD vector lanes and increasing instruction-level parallelism.",
+      "rationale": "The target CPU supports AVX2+FMA, capable of 4 f64 fused multiply-add operations per cycle per core. Without explicit vectorization, the compiler may only use scalar instructions, leaving 75% or more of peak throughput on the table. Unrolling further increases ILP by exposing independent operations to the out-of-order execution engine, and packing ensures data is laid out for efficient vector loads.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Vectorization",
+          "description": "Map innermost loop iterations onto SIMD vector lanes, converting scalar arithmetic into packed vector operations.",
+          "rationale": "Vectorization is essential to utilize AVX2 hardware. For f64, each vector instruction processes 4 elements simultaneously, providing up to 4x throughput improvement. The innermost loop must iterate over a contiguous memory dimension with sufficient trip count for effective vectorization.",
+          "action_template": "Vectorization(target_loop, vector_width) — target_loop identifies the loop to vectorize and vector_width specifies the SIMD width. OR Vectorization(loop_band, vector_width) — vectorizes the innermost loop in the specified band."
+        },
+        {
+          "name": "Unrolling",
+          "description": "Replicate the loop body multiple times to reduce loop overhead and increase instruction-level parallelism.",
+          "rationale": "Unrolling reduces branch overhead and exposes independent operations that can be pipelined by the CPU's out-of-order engine. When applied to an outer loop (unroll-and-jam), it creates multiple independent accumulation chains in the inner loop, increasing register-level data reuse and FMA throughput. The unroll factor must balance ILP gains against register pressure on this architecture.",
+          "action_template": "Unrolling(loop_id, unroll_factor) — loop_id identifies the loop to unroll and unroll_factor specifies how many iterations to replicate. OR Unrolling(loop_band, unroll_factor) — unrolls the specified loop within the band."
+        },
+        {
+          "name": "Packing",
+          "description": "Rearrange data layout of tensor operands so that elements accessed by the vectorized loop dimension are stored contiguously and aligned in memory.",
+          "rationale": "Even after tiling, the original data layout may cause the vectorized dimension to access non-contiguous memory, forcing gather operations instead of efficient sequential vector loads. Packing transforms the data layout so that the innermost dimension is contiguous, converting gathers into aligned loads and maximizing vector unit utilization.",
+          "action_template": "Packing(operands_to_pack, inner_tile_sizes) — operands_to_pack identifies which operands to repack and inner_tile_sizes specifies the packing granularity per dimension. OR Packing(operands_to_pack) — repacks specified operands with default tile sizes derived from vector width."
+        }
+      ]
+    },
+    {
+      "name": "Work Partitioning & Parallelism",
+      "description": "Distribute loop iterations across multiple CPU threads and prepare loop bounds for clean partitioning.",
+      "rationale": "The target machine has 28 physical cores across 2 NUMA nodes. For sufficiently large iteration spaces, parallelizing the outermost loops provides near-linear speedup. However, parallel overhead (thread synchronization, cache coherence) means this is shape-dependent and most effective after cache and SIMD optimizations are in place.",
+      "priority": "medium",
+      "transformations": [
+        {
+          "name": "Parallelization",
+          "description": "Distribute iterations of outer parallel loops across CPU threads for concurrent execution.",
+          "rationale": "Outer loops in dense loop nests over independent output elements are embarrassingly parallel. Distributing these iterations across the available 28 cores can provide substantial speedup for large problems. The chosen parallel granularity must be coarse enough to amortize thread management overhead.",
+          "action_template": "Parallelization(tile_sizes) — tile_sizes specifies the work partition granularity per parallel dimension, creating tiles that are distributed across threads. OR Parallelization(num_threads) — num_threads specifies the thread count; iteration space is divided evenly. num_threads must divide the iteration count for correctness in subsequent lowering."
+        },
+        {
+          "name": "Peeling",
+          "description": "Separate partial or remainder iterations from the main loop body to allow the main loop to operate on full, uniform tiles.",
+          "rationale": "When tile sizes do not evenly divide the iteration count, the main loop must handle boundary cases with conditional logic, which inhibits vectorization and complicates parallelization. Peeling extracts these remainder iterations into a separate epilogue loop, allowing the main loop body to assume full tiles and execute without bounds checks or masking.",
+          "action_template": "Peeling(loop_id) — loop_id identifies the loop whose partial iterations should be peeled into a separate epilogue. OR Peeling(loop_band) — peels all loops in the specified band that have remainder iterations."
+        }
+      ]
+    }
+  ]
+}

@@ -261,7 +261,18 @@ def _execute_bind_call(code: str, pass_pipeline_list: Optional[list[str]]) -> tu
 
         return outs_struct.delta, True
     except Exception as e:
-        raise RuntimeError(str(e)) from None
+        # Capture the message string only and raise outside the except block.
+        # Inside the except, Python implicitly chains the in-flight exception
+        # to the new one via `__context__`; cloudpickle/pickle then traverses
+        # __context__ during serialization and trips on MLIRError objects
+        # (which carry unpicklable DiagnosticInfo). Detaching all chain
+        # references before raising keeps the exception fully picklable.
+        err_msg = str(e)
+    sanitized = RuntimeError(err_msg)
+    sanitized.__cause__ = None
+    sanitized.__context__ = None
+    sanitized.__suppress_context__ = True
+    raise sanitized
 
 def execute_bufferized_code(code: str, pass_pipeline: Optional[list[str]] = None, timeout: int = CODE_EXECUTION_TIMEOUT) -> tuple[int, bool]:
     """Lowers and runs the given MLIR code using Python bindings, then returns the execution time and assertion
@@ -276,3 +287,52 @@ def execute_bufferized_code(code: str, pass_pipeline: Optional[list[str]] = None
         bool: the assertion result.
     """
     return BindingsProcess.call(_execute_bind_call, code, pass_pipeline, timeout=timeout)
+
+
+def _execute_from_path_bind_call(
+    code_path: str,
+    bufferize_transform_code: Optional[str],
+    pass_pipeline_list: Optional[list[str]],
+) -> tuple[int, bool]:
+    """Spawn-child target for the Dask worker path.
+
+    Reads the MLIR source from `code_path` *inside* the spawn child (skipping
+    a multiprocessing-pipe pickle of the 10-100 KB code string), then runs the
+    full bufferize→execute pipeline back-to-back. The bufferized intermediate
+    stays in spawn-child memory — no second IPC round-trip. Errors are
+    sanitized to plain `RuntimeError` so cloudpickle can transport them back
+    through Dask without choking on `MLIRError`/`DiagnosticInfo`.
+    """
+    import re
+
+    try:
+        with open(code_path) as f:
+            code = f.read()
+
+        # Inline the _is_bufferized check from mlir_execution.py to avoid a
+        # circular import (mlir_execution already imports from this module).
+        params_match = re.search(r'func\.func @main\(([^)]+)\)', code)
+        already_bufferized = bool(
+            params_match
+            and 'memref<' in params_match.group(1)
+            and 'tensor<' not in params_match.group(1)
+        )
+
+        if already_bufferized:
+            bufferized = code
+        else:
+            transform_code = bufferize_transform_code or BUFFERIZATION_AND_LOWER_V_TRANSFORM_CODE
+            bufferized = _transform_bind_call(code, transform_code)
+
+        return _execute_bind_call(bufferized, pass_pipeline_list)
+    except Exception as e:
+        # Same sanitization shape as _execute_bind_call: detach all chained
+        # exception state so the resulting RuntimeError is fully picklable.
+        err_msg = str(e)
+    sanitized = RuntimeError(err_msg)
+    sanitized.__cause__ = None
+    sanitized.__context__ = None
+    sanitized.__suppress_context__ = True
+    raise sanitized
+
+

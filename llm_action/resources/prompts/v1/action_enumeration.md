@@ -332,6 +332,14 @@ Acceptable kernel-specific examples (when framed generically):
 
 Note: im2col lowering converts a convolution into a matmul-like contraction (the primary compute op) surrounded by reshape operations. Subsequent optimizations (tiling, vectorization, etc.) must target the contraction op, not the surrounding reshapes.
 
+Note: Promotion (copying tiled operand data into contiguous temporary buffers) operates at
+buffer (memref) level, not tensor level. As an RL action, promotion requires a preceding
+bufferization step within the action itself. The conceptual schedule is: tile → bufferize →
+promote → canonicalize → further transforms (inner tiling, vectorization). Canonicalization
+after promotion is critical to fold dynamic buffer shapes into static types for efficient
+downstream vectorization. Promotion should target the outer tile level so that copy cost is
+amortized over many inner iterations.
+
 ## Examples (non-exhaustive):
 - Tiling / blocking
 - Interchange (loop permutation)
@@ -377,6 +385,13 @@ For each Transformation, set `action_template` to describe one or more plausible
   action_template: "LoopInterchange(loop_band, permutation) OR LoopInterchangeMove(loop_id, shift) OR LoopInterchangeSwap(adjacent_pair)"
 - name: "Vectorization"
   action_template: "Vectorization(target_loop, vector_width) OR Vectorization(loop_band, vector_width)"
+- name: "Parallelization"
+    action_template: "Parallelization(tile_sizes) OR Parallelization(num_threads). In case of num_threads, the number of threads have to be a divisor of the iteration count, otherwise subsequent MLIR transformations may fail. In case you identify a significant difference between parallelizing with tiling vs. directly with num_threads, you can include both as separate transformations, but prefer the tiling-based approach as it is more flexible and generally applicable. Prioritize suggesting ro implement 2 parallelization actions (one tiling-based, one num_threads-based)."
+- name: "Promotion"
+  action_template: "Promotion(operands_to_promote) — operands_to_promote is a list of operand
+  indices (e.g. [0], [1], [0,1,2]) specifying which operands to copy into contiguous local
+  buffers. Promotion requires buffer (memref) form, so this action must include an internal
+  bufferization preprocessing step."
 
 
 # Output Format (Strict)

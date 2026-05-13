@@ -5,7 +5,9 @@ class Name(ActionBase):
     """
     ...
     """
-    
+
+    unique_execution: bool = True
+
     @classmethod
     def parameters(cls) -> dict:
         """

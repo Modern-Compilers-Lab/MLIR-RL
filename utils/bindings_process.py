@@ -1,3 +1,4 @@
+import concurrent.futures
 import logging
 import multiprocessing
 import signal
@@ -13,7 +14,7 @@ _ctx = multiprocessing.get_context("spawn")
 ENABLED = True
 
 # Restart pool workers every N calls to prevent memory corruption buildup.
-_MAX_TASKS_PER_WORKER = 200
+_MAX_TASKS_PER_WORKER = 500
 
 _pool: Optional[ProcessPoolExecutor] = None
 _pool_call_count = 0
@@ -53,9 +54,14 @@ class BindingsProcess:
         future = pool.submit(func, *args)
         try:
             return future.result(timeout=timeout)
-        except multiprocessing.context.TimeoutError:
+        except (concurrent.futures.TimeoutError, TimeoutError):
+            # `Future.result(timeout=...)` raises `concurrent.futures.TimeoutError`
+            # (which on Python ≥ 3.11 *is* the built-in `TimeoutError`). We catch
+            # both names defensively. The previous `multiprocessing.context.TimeoutError`
+            # catch did not match — letting empty-args TimeoutErrors silently fall
+            # through to the generic Exception branch and propagate as `str(e) == ""`.
+            timeout_msg = f"Bindings call {func.__name__} timed out after {timeout}s"
             _reset_pool()
-            raise TimeoutError(f"Bindings call {func.__name__} timed out")
         except Exception as e:
             # Check if this was a worker crash (BrokenProcessPool)
             err_msg = str(e)
@@ -65,3 +71,7 @@ class BindingsProcess:
                     f"Bindings call {func.__name__} crashed (worker died): {e}"
                 ) from e
             raise
+
+        # Raise the new TimeoutError outside the `except` block so Python doesn't
+        # implicitly chain the old empty-args TimeoutError via `__context__`.
+        raise TimeoutError(timeout_msg)

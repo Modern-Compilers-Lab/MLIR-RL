@@ -1,0 +1,89 @@
+from llm_action.src.actions.base import ActionBase
+from llm_action.src.config import MAX_PARAM_SLOTS, MAX_VOCAB_SIZE_PER_SLOT
+from llm_action.src.utils.transformation import run_transform_code
+
+
+class LoopUnrolling(ActionBase):
+    """
+    Replicate the loop body multiple times per iteration to reduce loop overhead,
+    increase register reuse, and expose instruction-level parallelism.
+
+    Includes tiling as a preprocessing step to create loop nests, then unrolls
+    the innermost loop. Repeated application with different unroll factors is meaningful.
+    """
+
+    unique_execution: bool = False  # can unroll different loops at different levels
+
+    UNROLL_FACTORS = [2, 4, 8]
+    # Fixed tile sizes for internal preprocessing
+    TILE_SIZES = [32, 32, 32]
+
+    @classmethod
+    def parameters(cls) -> dict:
+        return {
+            "unroll_factor": {
+                "description": "Number of loop body copies per iteration.",
+                "type": "int",
+                "values": cls.UNROLL_FACTORS,
+            }
+        }
+
+    @classmethod
+    def precondition(cls, code: str, params: dict) -> bool:
+        if 'tag = "operation_0"' not in code:
+            return False
+        factor = params.get("unroll_factor", 0)
+        if factor < 2:
+            return False
+        return True
+
+    @classmethod
+    def preprocess(cls, code: str, params: dict) -> str:
+        return code
+
+    @classmethod
+    def implement(cls, code: str, params: dict) -> str:
+        factor = params["unroll_factor"]
+        tile_sizes = cls.TILE_SIZES
+        n_loops = len(tile_sizes)
+        loop_handles = ", ".join(["!transform.any_op"] * n_loops)
+
+        transform_code = (
+            f'module attributes {{transform.with_named_sequence}} {{\n'
+            f'  transform.named_sequence @__transform_main(%arg1: !transform.any_op {{transform.readonly}}) {{\n'
+            f'    %op = transform.structured.match attributes{{tag = "operation_0"}} in %arg1 : (!transform.any_op) -> !transform.any_op\n'
+            f'    %tiled_op, %loops:{n_loops} = transform.structured.tile_using_for %op tile_sizes {tile_sizes} : (!transform.any_op) -> (!transform.any_op, {loop_handles})\n'
+            f'    %tag = transform.param.constant "operation_0" -> !transform.any_param\n'
+            f'    transform.annotate %loops#0 "tag" = %tag : !transform.any_op, !transform.any_param\n'
+            f'    %cast_loop = transform.cast %loops#{n_loops - 1} : !transform.any_op to !transform.op<"scf.for">\n'
+            f'    transform.loop.unroll %cast_loop {{factor = {factor}}} : !transform.op<"scf.for">\n'
+            f'    transform.yield\n'
+            f'  }}\n'
+            f'}}\n'
+        )
+
+        try:
+            return run_transform_code(code, transform_code)
+        except Exception:
+            return code
+
+    @classmethod
+    def postcondition(cls, before: str, after: str, params: dict) -> bool:
+        if after.strip() == before.strip():
+            return False
+        if "func.func" not in after:
+            return False
+        return True
+
+    @classmethod
+    def params_size(cls) -> int:
+        return 1
+
+    @classmethod
+    def classes_per_slot(cls, n_loops: int) -> list[int]:
+        return [len(cls.UNROLL_FACTORS)]
+
+    @classmethod
+    def decode_params(cls, raw_slots: list[int], n_loops: int) -> dict:
+        idx = raw_slots[0] % len(cls.UNROLL_FACTORS)
+        return {"unroll_factor": cls.UNROLL_FACTORS[idx]}

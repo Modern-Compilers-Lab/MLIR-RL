@@ -1,10 +1,11 @@
 #!/bin/bash
 
-# Define the resource requirements here using #SBATCH
+# Define the resource requirements here using #SBATCH / #SBATCH --qos=c2
 
 #SBATCH -J torch_exec
 #SBATCH -p compute
 #SBATCH --reservation=c2
+#SBATCH --qos=c2
 #SBATCH --exclusive
 #SBATCH -c 28
 #SBATCH --mem=64G
@@ -36,13 +37,17 @@ export OMP_WAIT_POLICY=passive
 export KMP_BLOCKTIME=0
 
 # Execute the code
-# Usage:
-#   sbatch llm_action/scripts/torch.sh matmul <M> <K> <N> [--dtype float64] [--fill-value 0.0] [--warmup-iters 5] [--bench-iters 5]
-#   sbatch llm_action/scripts/torch.sh conv2d <N> <C> <H> <W> <F> <KH> <KW> <OH> <OW> [--dtype float64] [--fill-value 0.0] [--warmup-iters 5] [--bench-iters 5]
+# Usage (all ops accept: [--dtype float64] [--fill-value 0.0] [--warmup-iters 5] [--bench-iters 5]):
+#   sbatch llm_action/scripts/torch.sh matmul <M> <K> <N>
+#   sbatch llm_action/scripts/torch.sh conv2d <N> <C> <H> <W> <F> <KH> <KW> <OH> <OW>
+#   sbatch llm_action/scripts/torch.sh add <A> <B> <C> <D>
+#   sbatch llm_action/scripts/torch.sh pooling_nchw_max <N> <C> <H> <W> <KH> <KW> <OH> <OW>
+#   sbatch llm_action/scripts/torch.sh relu <D1> [D2 D3 ...]
 #
 # Examples:
 #   sbatch llm_action/scripts/torch.sh matmul 256 256 512
-#   sbatch llm_action/scripts/torch.sh matmul 256 512 1024 --dtype float32 --bench-iters 10
 #   sbatch llm_action/scripts/torch.sh conv2d 128 32 7 7 256 1 1 7 7
-#   sbatch llm_action/scripts/torch.sh conv2d 64 64 56 56 128 3 3 56 56 --dtype float32
+#   sbatch llm_action/scripts/torch.sh add 112 112 120 150
+#   sbatch llm_action/scripts/torch.sh pooling_nchw_max 128 128 112 112 1 1 56 56
+#   sbatch llm_action/scripts/torch.sh relu 128 128 56 56
 python llm_action/src/execution/torch_execution.py "$@"

@@ -1,0 +1,70 @@
+{
+  "intents": [
+    {
+      "name": "Data Locality and Reuse",
+      "description": "Restructure the iteration space and data movement so that working sets of the 3-deep loop nest fit within L1/L2 cache, maximizing temporal and spatial reuse of operand tiles.",
+      "rationale": "At the matrix sizes in this benchmark set (128–3072 per dimension, f64), even a single operand can exceed L2 capacity. Without cache-aware blocking, the loop nest suffers severe capacity misses and near-zero temporal reuse on the reduction dimension. Tiling, interchange, and promotion together convert an O(N³)-miss pattern into an O(N³/tile)-reuse pattern.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Partition the iteration space into multi-dimensional blocks so that the working set of each tile (slices of all operands) fits within a target cache level.",
+          "rationale": "Tiling is the foundational transformation for cache locality in dense loop nests. For a 3-loop contraction, tiling all three dimensions creates a blocked schedule where each tile's data footprint can be sized to fit L1 or L2, converting capacity misses into hits and enabling O(N³/(b·c)) reuse on the reduction operand.",
+          "action_template": "Tiling(tile_sizes) — tile_sizes is a list of integers, one per loop dimension, where 0 means 'do not tile that dimension'. Tiles the loop nest using scf.for-based tile loops."
+        },
+        {
+          "name": "Loop Interchange",
+          "description": "Permute the order of loops in the nest to improve spatial locality or enable more effective downstream transformations.",
+          "rationale": "The default loop ordering may place the reduction loop innermost, causing non-stride-1 accesses on one operand. Interchanging loops so that the innermost dimension corresponds to contiguous memory access reduces cache line waste and improves prefetcher effectiveness. Interchange also controls which loop is available for vectorization or parallelization.",
+          "action_template": "LoopInterchange(permutation) — permutation is a list of integers representing a reordering of the loop indices (e.g., [0,1,2] is identity, [1,0,2] swaps the two outermost loops). Must be a valid non-identity permutation of the loop band."
+        },
+        {
+          "name": "Promotion",
+          "description": "Copy tiled operand slices into contiguous temporary buffers to eliminate large-stride memory accesses and TLB pressure within each tile.",
+          "rationale": "After tiling, operand slices retain the original matrix stride (which can be thousands of elements). Promoting these slices into compact temporary buffers ensures unit-stride access within the tile, reduces TLB misses, and enables more efficient vectorization. The copy overhead is amortized over the O(tile³) compute within each block.",
+          "action_template": "Promotion(tile_sizes) — tile_sizes is a list of integers, one per loop dimension, specifying the tile granularity at which operands are promoted. Internally performs tile, bufferize, promote, and canonicalize. The tile sizes determine the promoted buffer dimensions."
+        }
+      ]
+    },
+    {
+      "name": "SIMD and Instruction-Level Parallelism",
+      "description": "Restructure the innermost loop computation to exploit AVX2 vector units (4-wide FP64 FMA) and saturate the processor's execution pipeline through increased instruction-level parallelism.",
+      "rationale": "The target CPU's Broadwell microarchitecture has AVX2+FMA capable of 4 double-precision multiply-accumulates per cycle per core. Realizing this peak throughput requires (a) vectorizable innermost loops with stride-1 access on the vector dimension, and (b) enough independent operations in flight to hide the 5-cycle FMA latency. Without vectorization and unrolling, the loop nest operates at a small fraction of peak FLOP/s.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Vectorization",
+          "description": "Tile the loop nest to SIMD-friendly sizes and lower the innermost computation to vector operations targeting AVX2 width.",
+          "rationale": "Vectorization converts scalar multiply-accumulate operations into 4-wide FP64 SIMD instructions, providing up to a 4× throughput improvement on the innermost loop. It requires that the vectorized dimension has contiguous memory access and a trip count that is a multiple of the vector width.",
+          "action_template": "Vectorization(vector_sizes) — vector_sizes is a list of integers, one per loop dimension, specifying the SIMD tile sizes. The loop nest is tiled to these sizes and then vectorized. Typical values for FP64 with AVX2 are multiples of 4."
+        },
+        {
+          "name": "Unrolling",
+          "description": "Tile the loop nest and fully unroll the innermost generated loop to expose more independent operations for pipelining and reduce loop control overhead.",
+          "rationale": "FMA latency on Broadwell is 5 cycles, requiring multiple independent accumulations in flight to saturate throughput. Unrolling the innermost loop by factors of 2–8 provides the register-level parallelism needed to fill the FMA pipeline. It also eliminates branch overhead and enables the compiler backend to schedule instructions more aggressively.",
+          "action_template": "Unrolling(tile_sizes, unroll_factor) — tile_sizes is a list of integers specifying the tile granularity, and unroll_factor is the factor by which the innermost resulting loop is fully unrolled. The action tiles then unrolls."
+        }
+      ]
+    },
+    {
+      "name": "Thread-Level Parallelism",
+      "description": "Distribute the parallel loop dimensions of the loop nest across multiple CPU cores to exploit the 28-core dual-socket topology.",
+      "rationale": "The contraction loop nest has two fully parallel outer dimensions (the row and column dimensions of the output). With 28 physical cores across 2 NUMA nodes, coarse-grain parallelization of these dimensions yields near-linear speedup for compute-bound tiles. The primary concern is choosing granularity that balances load and avoids oversubscription or excessive synchronization.",
+      "priority": "medium",
+      "transformations": [
+        {
+          "name": "Parallelization via Tiling",
+          "description": "Partition parallel loop dimensions into tiles and distribute tiles across threads using a forall construct.",
+          "rationale": "Tiling-based parallelization decouples the thread granularity from the problem size and core count, allowing the RL agent to tune tile sizes for load balance and NUMA locality independently. It composes well with inner tiling for cache locality.",
+          "action_template": "ParallelizationTiling(tile_sizes) — tile_sizes is a list of integers, one per loop dimension, where 0 means 'do not parallelize that dimension'. Creates a parallel forall loop tiled at the specified granularity."
+        },
+        {
+          "name": "Parallelization via Thread Count",
+          "description": "Directly distribute parallel loop iterations across a fixed number of threads per dimension.",
+          "rationale": "Direct thread distribution is simpler and maps naturally to a fixed-size thread pool. It is effective when dimension sizes are evenly divisible by the thread count. The parameter space is smaller (thread counts rather than tile sizes), making it easier for the RL agent to explore but less flexible for irregular shapes.",
+          "action_template": "ParallelizationDirect(num_threads) — num_threads is a list of integers, one per loop dimension, where 0 means 'do not parallelize that dimension'. The iteration count on each parallelized dimension must be divisible by the corresponding thread count to avoid remainder issues in downstream lowering."
+        }
+      ]
+    }
+  ]
+}

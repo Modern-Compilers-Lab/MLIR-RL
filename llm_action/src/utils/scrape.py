@@ -7,11 +7,12 @@ from bs4 import BeautifulSoup, Tag
 from markdownify import markdownify as md
 
 from llm_action.src.models import DocTreeNode, Documentation
+from llm_action.src.config import HTTP_FETCH_TIMEOUT
 
 # parsing utilities
 
 def fetch_html(url: str) -> str:
-    r = requests.get(url, timeout=60)
+    r = requests.get(url, timeout=HTTP_FETCH_TIMEOUT)
     r.raise_for_status()
     return r.text
 

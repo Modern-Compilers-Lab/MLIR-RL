@@ -5,6 +5,7 @@
 #SBATCH -J train
 #SBATCH -p compute
 #SBATCH --reservation=c2
+#SBATCH --qos=c2
 #SBATCH -c 28
 #SBATCH --mem=100G
 #SBATCH -t 05-00
@@ -30,27 +31,15 @@ export OMP_WAIT_POLICY=passive
 export KMP_BLOCKTIME=0
 
 # Dask workers: set DASK_NODES to use persistent compute workers instead of per-step sbatch jobs. Requires --executor-type dask.
-export DASK_NODES=${DASK_NODES:-4}
+export DASK_NODES=${DASK_NODES:-2}
 
 python -m llm_action.src.rl.train_ppo "$@"
 
-# TO EXEC
-# sbatch llm_action/scripts/train.sh --max-steps 5 --action-version v10 --benchmarks-name matmuls_12
-# sbatch llm_action/scripts/train.sh --max-steps 5 --action-version v10 --param-mode two_policy
+# Usage
 
-# sbatch llm_action/scripts/train.sh --max-steps 8 --action-version v10 --benchmarks-name matmul --ent-coef 0.25 --history-mode include-all --dask-nodes 2
-# sbatch llm_action/scripts/train.sh --max-steps 8 --action-version v10 --benchmarks-name matmul --ent-coef 0.25 --history-mode success-encoding --dask-nodes 2
-# sbatch llm_action/scripts/train.sh --max-steps 8 --action-version v10 --benchmarks-name matmul --ent-coef 0.1 --history-mode success-encoding --dask-nodes 2
-# sbatch llm_action/scripts/train.sh --max-steps 5 --action-version v10 --benchmarks-name matmul --ent-coef 0.25 --history-mode ignore-failed --dask-nodes 2
+# Matmul Dataset
+## sbatch llm_action/scripts/train.sh --action-version v29 --benchmarks-name dataset_matmul --exp-name v29_dataset_matmul_ent_decay
 
-# sbatch llm_action/scripts/train.sh --max-steps 5 --action-version v10 --benchmarks-name matmul_paper --ent-coef 0.1 --history-mode include-all --dask-nodes 2
-# sbatch llm_action/scripts/train.sh --max-steps 5 --action-version v10 --benchmarks-name matmul_paper --history-mode success-encoding --dask-nodes 2 --reward-scale raw --reward-baseline torch
-
-# sbatch llm_action/scripts/train.sh --max-steps 8 --action-version v13 --benchmarks-name matmul_single_paper --ent-coef 0.1 --history-mode success-encoding --dask-nodes 2
-# sbatch llm_action/scripts/train.sh --max-steps 8 --action-version v13 --benchmarks-name matmul_single_paper --ent-coef 0.2 --history-mode success-encoding --dask-nodes 2
-
-# TODO!
-# sbatch llm_action/scripts/train.sh --max-steps 6 --action-version v13 --benchmarks-name matmul_single_paper --history-mode include-all --dask-nodes 2 --reward-mode intermediate
-
-# Resume from checkpoint:
-# sbatch llm_action/scripts/train.sh --resume <log_dir>/checkpoints/ppo_mlir_<N>_steps.zip --max-steps 8 --action-version v13 --benchmarks-name matmul_single_paper --dask-nodes 2
+# Conv2d Dataset
+## sbatch llm_action/scripts/train.sh --action-version v30 --benchmarks-name dataset_conv2d --exp-name v30_dataset_conv2d_ent.005 --ent-coef 0.005
+## sbatch llm_action/scripts/train.sh --action-version v30 --benchmarks-name dataset_conv2d --exp-name v30_dataset_conv2d_explore --ent-coef 0.02 --ent-coef-final 0.001

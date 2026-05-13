@@ -34,7 +34,9 @@ KERNEL_ARGS="$@"
 claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_enumeration.py $KERNEL_ARGS)"
 
 # Example usage:
-# sbatch llm_action/scripts/claude-enumeration.sh
 
-# CONV
-## python llm_action/src/prompts/action_enumeration.py --intents_num_min 2 --intents_num_max 3 --transformations_num_min 2 --transformations_num_max 3 & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_enumeration.py --kernel-type conv2d --kernel-number 1)"
+# Matmul
+## python llm_action/src/prompts/action_enumeration.py --intents_num_min 2 --intents_num_max 3 --transformations_num_min 2 --transformations_num_max 3 & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_enumeration.py --benchmark dataset_matmul)"
+
+# Conv
+## python llm_action/src/prompts/action_enumeration.py --intents_num_min 2 --intents_num_max 3 --transformations_num_min 2 --transformations_num_max 3 & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_enumeration.py --benchmark dataset_conv2d)"

@@ -5,6 +5,7 @@
 #SBATCH -J mlir_exec
 #SBATCH -p compute
 #SBATCH --reservation=c2
+#SBATCH --qos=c2
 #SBATCH --exclusive
 #SBATCH -c 28
 #SBATCH --mem=64G

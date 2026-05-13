@@ -5,7 +5,6 @@
 #SBATCH -J claude_explore
 #SBATCH -p compute
 #SBATCH --reservation=c2
-#SBATCH --qos=c2
 #SBATCH --exclusive
 #SBATCH -c 8
 #SBATCH --mem=100G
@@ -34,7 +33,8 @@ claude /mcp
 claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_exploration.py $KERNEL_ARGS)"
 
 # Example usage:
-# sbatch llm_action/scripts/claude_exploration.sh --action-version v10 --benchmarks-name matmul
 
-# CONV
-## python llm_action/src/prompts/schedule_exploration.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_exploration.py --action-version v17 --benchmarks-name conv_single)"
+# Matmul
+## python llm_action/src/prompts/schedule_exploration.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_exploration.py --action-version v29 --benchmark dataset_matmul)"
+# Conv
+## python llm_action/src/prompts/schedule_exploration.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_exploration.py --action-version v30 --benchmark dataset_conv2d)"

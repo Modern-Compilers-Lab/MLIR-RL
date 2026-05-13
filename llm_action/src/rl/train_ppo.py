@@ -4,6 +4,7 @@ warnings.filterwarnings("ignore", message="urllib3.*doesn't match a supported ve
 import argparse
 import json
 import logging
+import re
 import time
 from collections import defaultdict, deque
 from datetime import datetime
@@ -15,12 +16,12 @@ from sb3_contrib import MaskablePPO
 from sb3_contrib.common.wrappers import ActionMasker
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
 from stable_baselines3.common.env_util import make_vec_env
-from stable_baselines3.common.logger import configure as sb3_configure
+from stable_baselines3.common.logger import configure as sb3_configure, HumanOutputFormat
 
 from llm_action.src.env import MLIROptEnv
 from llm_action.src.env.action_registry import load_action_registry
 
-from llm_action.src.config import RL_RESULTS_DIR, MAX_STEPS
+from llm_action.src.config import RL_RESULTS_DIR, MAX_STEPS, SB3_STDOUT_KEY_MAX_LENGTH
 
 class FullEvalCallback(BaseCallback):
     """Run the policy on every benchmark with both greedy and sampling evaluation.
@@ -402,10 +403,50 @@ class MLIRMetricsCallback(BaseCallback):
 
         wandb.log({**metrics, **train_metrics})
 
+class EntCoefScheduleCallback(BaseCallback):
+    """Anneal `model.ent_coef` from `initial` to `final` over `total_episodes`.
+
+    Progress is measured in completed episodes (counted via the SB3 Monitor
+    `info["episode"]` signal, matching the pattern used by MLIRMetricsCallback),
+    so the schedule is consistent across runs with different per-episode step
+    counts. The value is committed to `model.ent_coef` at every rollout-start;
+    PPO reads the attribute fresh inside each minibatch update, so the new
+    value applies to the next gradient update without subclassing the algo.
+    Logs `train/ent_coef` (forwarded to W&B by the existing pipeline).
+    """
+    def __init__(self, initial: float, final: float, total_episodes: int,
+                 schedule: str = "linear", verbose: int = 0):
+        super().__init__(verbose)
+        assert schedule in ("linear", "exponential")
+        if schedule == "exponential" and (initial <= 0 or final <= 0):
+            raise ValueError("exponential schedule requires initial > 0 and final > 0")
+        self.initial = float(initial)
+        self.final = float(final)
+        self.total_episodes = max(1, int(total_episodes))
+        self.schedule = schedule
+        self._ep_count: int = 0
+
+    def _compute(self) -> float:
+        p = min(self._ep_count / self.total_episodes, 1.0)
+        if self.schedule == "linear":
+            return self.initial + (self.final - self.initial) * p
+        return self.initial * (self.final / self.initial) ** p
+
+    def _on_rollout_start(self) -> None:
+        new = self._compute()
+        self.model.ent_coef = new
+        self.logger.record("train/ent_coef", new)
+
+    def _on_step(self) -> bool:
+        for info in self.locals.get("infos", []):
+            if "episode" in info:
+                self._ep_count += 1
+        return True
+
 def parse_args():
     p = argparse.ArgumentParser(description="PPO for MLIR optimization")
-    p.add_argument("--benchmarks-name", type=str, default="matmul", help="Name of the benchmarks subdirectory under data/benchmarks/")
-    p.add_argument("--total-timesteps", type=int, default=500_000)
+    p.add_argument("--benchmarks-name", type=str, default="standard", help="Name of the benchmark set under data/benchmarks/ (default: standard)")
+    p.add_argument("--total-timesteps", type=int, default=250_000) # 500_000
     p.add_argument("--n-steps", type=int, default=128)
     p.add_argument("--batch-size", type=int, default=32)
     p.add_argument("--n-epochs", type=int, default=8)
@@ -413,34 +454,32 @@ def parse_args():
     p.add_argument("--gamma", type=float, default=0.99)
     p.add_argument("--gae-lambda", type=float, default=0.95)
     p.add_argument("--clip-range", type=float, default=0.2)
-    p.add_argument("--ent-coef", type=float, default=0.05)
+    p.add_argument("--ent-coef", type=float, default=1e-2)
+    p.add_argument("--ent-coef-final", type=float, default=1e-4)
+    p.add_argument("--ent-coef-schedule", type=str, default="linear", choices=["linear", "exponential"])
     p.add_argument("--vf-coef", type=float, default=0.005)
     p.add_argument("--max-grad-norm", type=float, default=0.5)
     p.add_argument("--net-arch", type=int, nargs="+", default=[512, 512, 512])
     p.add_argument("--n-envs", type=int, default=1)
     p.add_argument("--max-steps", type=int, default=MAX_STEPS)
     p.add_argument("--action-version", type=str, default="v10")
-    p.add_argument("--param-mode", type=str, default="multidiscrete",
-                    choices=["multidiscrete", "two_policy", "llm"])
-    p.add_argument("--executor-type", type=str, default="dask",
-                    choices=["slurm", "dask", "local"])
-    p.add_argument("--dask-nodes", type=int, default=4)
-    p.add_argument("--history-mode", type=str, default="success-encoding",
-                   choices=["include-all", "ignore-failed", "success-encoding"])
+    p.add_argument("--param-mode", type=str, default="multidiscrete", choices=["multidiscrete", "two_policy", "llm"])
+    p.add_argument("--executor-type", type=str, default="dask", choices=["slurm", "dask", "local"])
+    p.add_argument("--dask-nodes", type=int, default=2)
+    p.add_argument("--history-mode", type=str, default="success-encoding", choices=["include-all", "ignore-failed", "success-encoding"])
     p.add_argument("--reward-scale", type=str, default="log", choices=["log", "raw", "delta"])
     p.add_argument("--reward-mode", type=str, default="final", choices=["final", "intermediate", "schedule"])
-    p.add_argument("--reward-baseline", type=str, default="mlir", choices=["mlir", "torch"],
-                   help="Baseline for speedup ratio: 'mlir' (unoptimized MLIR) or 'torch' (PyTorch)")
+    p.add_argument("--reward-baseline", type=str, default="mlir", choices=["mlir", "torch"], help="Baseline for speedup ratio: 'mlir' (unoptimized MLIR) or 'torch' (PyTorch)")
     p.add_argument("--checkpoint-freq", type=int, default=5_000)
     p.add_argument("--eval-freq", type=int, default=1_000)
-    p.add_argument("--eval-sample-runs", type=int, default=5,
-                   help="Number of stochastic sampling runs per benchmark during evaluation")
+    p.add_argument("--eval-sample-runs", type=int, default=5, help="Number of stochastic sampling runs per benchmark during evaluation")
     p.add_argument("--log-dir", type=str, default=None)
+    p.add_argument("--exp-name", "-n", type=str, default=None, help="Free-form experiment label appended to the run name")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--wandb-project", type=str, default="mlir-rl")
     p.add_argument("--wandb-entity", type=str, default=None)
-    p.add_argument("--resume", type=str, default=None,
-                   help="Path to a checkpoint .zip to resume training from")
+    p.add_argument("--resume", type=str, default=None, help="Path to a checkpoint .zip to resume training from")
+    p.add_argument("--enable-dependency-masking", action=argparse.BooleanOptionalAction, default=True, help="Mask actions made provably illegal by registry.ACTION_DEPENDENCIES (default: enabled). Pass --no-enable-dependency-masking to disable.")
     p.add_argument("--verbose", action="store_true", default=True)
     return p.parse_args()
 
@@ -459,6 +498,10 @@ def main():
         logging.info(f"Resuming from checkpoint: {args.resume}")
     else:
         run_name = f"ppo_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        if args.exp_name:
+            label = re.sub(r"[^A-Za-z0-9._-]+", "_", args.exp_name.strip()).strip("_")
+            if label:
+                run_name = f"{run_name}_{label}"
         log_dir = Path(args.log_dir) if args.log_dir else RL_RESULTS_DIR / run_name
     log_dir.mkdir(parents=True, exist_ok=True)
     (log_dir / "config.json").write_text(json.dumps(vars(args), indent=2))
@@ -496,6 +539,7 @@ def main():
         "reward_scale": args.reward_scale,
         "reward_mode": args.reward_mode,
         "reward_baseline": args.reward_baseline,
+        "enable_dependency_masking": args.enable_dependency_masking,
         "verbose": args.verbose,
     }
 
@@ -505,9 +549,16 @@ def main():
             return ActionMasker(env, lambda e: e.action_masks())
         return _init
 
-    train_env = make_vec_env(_make_env(env_config), n_envs=args.n_envs, seed=args.seed)
+    train_env = make_vec_env(
+        _make_env({**env_config, "benchmarks_split": "train"}),
+        n_envs=args.n_envs, seed=args.seed,
+    )
 
     sb3_logger = sb3_configure(str(log_dir), ["stdout", "csv", "tensorboard"])
+    for fmt in sb3_logger.output_formats:
+        if isinstance(fmt, HumanOutputFormat):
+            fmt.max_length = SB3_STDOUT_KEY_MAX_LENGTH
+            break
 
     if args.resume:
         model = MaskablePPO.load(args.resume, env=train_env)
@@ -528,7 +579,7 @@ def main():
     action_names = [cls.__name__ for cls in registry.action_classes]
 
     def _make_eval_env():
-        env = MLIROptEnv(config=env_config)
+        env = MLIROptEnv(config={**env_config, "benchmarks_split": "eval"})
         return ActionMasker(env, lambda e: e.action_masks())
 
     callbacks = [
@@ -544,6 +595,14 @@ def main():
             verbose=1,
         ),
     ]
+    if args.ent_coef_final is not None:
+        total_episodes = max(1, args.total_timesteps // max(1, args.max_steps))
+        callbacks.append(EntCoefScheduleCallback(
+            initial=args.ent_coef,
+            final=args.ent_coef_final,
+            total_episodes=total_episodes,
+            schedule=args.ent_coef_schedule,
+        ))
 
     logging.info("Starting PPO training...")
     model.learn(total_timesteps=args.total_timesteps, callback=callbacks, progress_bar=True,

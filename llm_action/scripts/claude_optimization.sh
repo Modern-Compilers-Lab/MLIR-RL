@@ -5,7 +5,6 @@
 #SBATCH -J claude_optim
 #SBATCH -p compute
 #SBATCH --reservation=c2
-#SBATCH --qos=c2
 #SBATCH --exclusive
 #SBATCH -c 16
 #SBATCH --mem=100G

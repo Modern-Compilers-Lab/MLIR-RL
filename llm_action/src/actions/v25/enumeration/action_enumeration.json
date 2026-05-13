@@ -1,0 +1,100 @@
+{
+  "intents": [
+    {
+      "name": "Iteration Space Blocking and Data Locality",
+      "description": "Restructure loop iteration spaces and data layouts to maximize cache reuse across L1, L2, and L3 hierarchy levels.",
+      "rationale": "Compute-intensive loop nests (contractions, convolutions, pooling) have working sets that far exceed cache capacity at benchmark scales. Tiling to cache-friendly block sizes provides the largest single performance improvement by converting capacity misses into hits. Complementary transforms (interchange, promotion, packing, im2col) ensure that tiled data is accessed with stride-1 patterns and stored contiguously.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Partition loop nest iteration space into smaller blocks that fit within target cache hierarchy levels (L1 32KB, L2 256KB).",
+          "rationale": "For compute-bound loop nests, blocking the iteration space to fit cache dramatically improves temporal data reuse. Without tiling, operands of even moderate-sized matmuls and convolutions exceed L2 capacity, causing excessive cache misses and memory stalls.",
+          "action_template": "Tiling(tile_sizes) — tile_sizes is a vector with one entry per loop dimension of the target operation; 0 means do not tile that dimension. OR Tiling(loop_band, tile_sizes) — loop_band identifies which loop band to tile."
+        },
+        {
+          "name": "Loop Interchange",
+          "description": "Reorder loop dimensions in a loop nest to improve memory access stride patterns and enable downstream optimizations.",
+          "rationale": "Loop ordering determines memory access strides. Moving dimensions with stride-1 access to the innermost position reduces cache line waste and enables contiguous vector loads. For multi-dimensional operations like convolution and pooling, the default loop order is often suboptimal for the memory layout.",
+          "action_template": "LoopInterchange(permutation) — permutation is a reordering vector for the loop dimensions of the target operation. OR LoopInterchange(loop_band, permutation) — loop_band identifies the target loop nest to reorder."
+        },
+        {
+          "name": "Promotion",
+          "description": "Copy tiled operand sub-tensors into contiguous temporary buffers to ensure stride-1 access within tiles.",
+          "rationale": "After tiling, operand slices may have non-unit memory strides due to the original tensor layout. Promoting them into contiguous local buffers eliminates strided accesses, improves cache line utilization, and enables efficient vectorization of the tiled inner loops. Requires internal bufferization as a preprocessing step; canonicalization after promotion is critical to fold dynamic buffer shapes into static types.",
+          "action_template": "Promotion(operands_to_promote) — operands_to_promote is a list of operand indices (e.g., [0], [1], [0,1,2]) specifying which operands to copy into contiguous local buffers. Promotion requires buffer (memref) form, so this action must include an internal bufferization preprocessing step."
+        },
+        {
+          "name": "Packing",
+          "description": "Reorganize data layout by introducing inner blocking dimensions so that tile-sized blocks are stored contiguously in memory.",
+          "rationale": "Packing transforms operand memory layout so that blocks accessed by tiled inner loops are physically contiguous. This eliminates TLB pressure from scattered tile accesses in the original layout and enables hardware prefetchers to work effectively on large working sets.",
+          "action_template": "Packing(packed_sizes) — packed_sizes is a vector with one entry per dimension of the target operation; non-zero values specify the inner block size for that dimension, 0 means do not pack that dimension."
+        },
+        {
+          "name": "Im2col Lowering",
+          "description": "Convert sliding-window operations into contraction-like loop nests by reshaping input data into a column matrix.",
+          "rationale": "Sliding-window operations (convolution, pooling with reduction) have complex multi-dimensional access patterns that resist efficient tiling and vectorization. Im2col transforms these into a reshape followed by a contraction (matmul-like) operation, enabling all standard dense linear algebra optimizations on the resulting regular loop nest.",
+          "action_template": "Im2colLowering() — zero-parameter action that converts a sliding-window operation into a reshape + contraction pair. The RL policy's decision to select this action is itself the optimization choice; no further parameters are needed."
+        }
+      ]
+    },
+    {
+      "name": "SIMD Vectorization and Instruction Throughput",
+      "description": "Exploit data-level parallelism via AVX2 SIMD instructions and maximize instruction throughput through pipeline utilization.",
+      "rationale": "AVX2 FMA provides 4 FP64 lanes per 256-bit register, yielding up to 8 FLOP/cycle/core (2 FMA ops x 4 lanes). Without vectorization, scalar throughput is limited to 1-2 FLOP/cycle. Vectorization is essential for both compute-bound operations (matmul, conv) to approach peak FLOP/s, and for memory-bound operations (add, relu) to maximize memory bandwidth utilization through wide loads/stores.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Vectorization",
+          "description": "Map inner loop dimensions to SIMD vector operations, converting scalar arithmetic into packed AVX2 instructions.",
+          "rationale": "Directly multiplies arithmetic throughput by the vector width (4x for FP64 on AVX2). For element-wise operations (add, relu), vectorization converts memory-bound scalar loops into bandwidth-efficient wide load-compute-store patterns. For contractions (matmul, conv), it enables FMA utilization on packed data.",
+          "action_template": "Vectorization(vector_sizes) — vector_sizes is a vector specifying the SIMD width per loop dimension of the target operation. OR Vectorization(target_loop, vector_width) — target_loop identifies which loop dimension to vectorize with the given vector_width."
+        },
+        {
+          "name": "Loop Unrolling",
+          "description": "Replicate loop body multiple times to reduce loop overhead and expose instruction-level parallelism across iterations.",
+          "rationale": "Unrolling reduces branch overhead per useful computation and exposes multiple independent operations to the hardware instruction scheduler. For reduction loops in matmul and convolution, unrolling enables pipelining of FMA instructions across multiple accumulator registers, hiding latency and improving sustained throughput.",
+          "action_template": "LoopUnrolling(unroll_factor) — unroll_factor specifies the number of iterations to unroll (e.g., 2, 4, 8). Targets the reduction dimension of the operation to expose independent accumulations."
+        },
+        {
+          "name": "Loop Peeling",
+          "description": "Separate remainder iterations from the main loop body into a cleanup loop, enabling the main body to assume clean divisibility.",
+          "rationale": "When trip counts are not divisible by vector or tile sizes, the main loop must either use expensive masked operations or leave performance on the table. Peeling the remainder into a separate scalar/short-vector loop allows the main body to use full-width vector operations without masking overhead.",
+          "action_template": "LoopPeeling(tile_size) — tile_size for the reduction dimension; the main body processes complete multiples of tile_size while remainder iterations are peeled into a separate cleanup loop."
+        },
+        {
+          "name": "Canonicalization",
+          "description": "Simplify and normalize IR by folding constants, eliminating dead code, and resolving dynamic shapes into static types.",
+          "rationale": "After structural transformations (tiling, promotion, parallelization), the IR accumulates redundant operations, unresolved dynamic shapes, and suboptimal patterns. Canonicalization is especially critical before vectorization: it folds dynamic buffer shapes from promotion into static types, enabling the vectorizer to determine correct vector widths and generate efficient SIMD code.",
+          "action_template": "Canonicalization() — zero-parameter action that applies standard MLIR canonicalization patterns, constant folding, and dead code elimination to simplify and normalize the IR."
+        }
+      ]
+    },
+    {
+      "name": "Thread-Level Parallelism and Work Distribution",
+      "description": "Distribute independent loop iterations across multiple CPU cores to exploit coarse-grained parallelism.",
+      "rationale": "The target hardware has 28 physical cores across 2 NUMA nodes. All benchmark operations have outer parallel dimensions (batch, channel, spatial) that provide ample independent work for multi-threaded execution. Effective parallelization provides near-linear speedup for compute-bound operations and improved memory bandwidth utilization for memory-bound ones.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling-Based Parallelization",
+          "description": "Tile outer parallel loop dimensions and distribute the resulting tiles across worker threads via scf.forall.",
+          "rationale": "Tiling-based parallelization provides fine-grained control over work granularity: tile sizes determine the amount of work per thread, enabling tuning for cache-friendly chunk sizes and load balance. This approach naturally composes with subsequent inner tiling for cache locality.",
+          "action_template": "TilingBasedParallelization(tile_sizes) — tile_sizes specifies the tile sizes for parallel loop dimensions; resulting tiles are distributed to threads via scf.forall. The number of threads is implicitly determined by the iteration space divided by tile sizes."
+        },
+        {
+          "name": "Thread-Count Parallelization",
+          "description": "Directly partition loop iterations across a specified number of worker threads by dividing the iteration space evenly.",
+          "rationale": "Direct thread-count specification provides simple, predictable work distribution when the goal is to saturate all available cores. It is straightforward to configure (e.g., num_threads=28 for full utilization) but requires the iteration count to be divisible by the thread count for correct partitioning.",
+          "action_template": "ThreadCountParallelization(num_threads) — num_threads specifies the number of worker threads. The iteration space of parallel dimensions is evenly divided among threads. num_threads should be a divisor of the iteration count to avoid incorrect partitioning."
+        },
+        {
+          "name": "Split Reduction",
+          "description": "Split a reduction loop into multiple partial reductions that execute independently, followed by a final combination step.",
+          "rationale": "When outer parallel dimensions are too small for full core utilization (e.g., small spatial dimensions with large reduction dimensions in convolution), splitting the reduction enables parallel accumulation across threads. This trades a small amount of extra combination work for the ability to distribute reduction-heavy loops across multiple cores.",
+          "action_template": "SplitReduction(split_factor) — split_factor specifies the number of independent partial reductions to create from the original reduction dimension. Each partial reduction accumulates over a subset of the reduction range; results are combined in a final reduction step."
+        }
+      ]
+    }
+  ]
+}

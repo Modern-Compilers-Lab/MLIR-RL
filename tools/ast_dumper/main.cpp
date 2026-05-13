@@ -90,11 +90,11 @@ int main(int argc, char **argv) {
       return;
     }
 
-    std::string tagName = "operation_" + std::to_string(ops_list.size());
-    linalgOp->setAttr("tag", mlir::StringAttr::get(&context, tagName));
-    // std::string tagName = getLinalgOpTag(linalgOp);
-    // if (tagName.empty()) {
-    // }
+    std::string tagName = getLinalgOpTag(linalgOp);
+    if (tagName.empty()) {
+      tagName = "auto_op_" + std::to_string(ops_list.size());
+      linalgOp->setAttr("tag", mlir::StringAttr::get(&context, tagName));
+    }
 
     ops_list.push_back(linalgOp);
 

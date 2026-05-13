@@ -9,7 +9,7 @@ INSTRUCTIONS: Available in `/scratch/kb5213/workspace/MLIR-RL/llm_action/resourc
 
 REFERENCES:
 - MLIR Optimization: Available in `/scratch/kb5213/workspace/MLIR-RL/llm_action/docs/MLIR_OPTIMIZATION_REFERENCE.md`
-- MCP Server Tools: Available in `/scratch/kb5213/workspace/MLIR-RL/llm_action/docs/MCP_REFERENCE.md`
+- MCP Server Tools: Available in `/scratch/kb5213/workspace/MLIR-RL/llm_action/docs/MCP.md`
 
 MEMORY: Available in `/scratch/kb5213/workspace/MLIR-RL/llm_action/memory/MLIR_TECHNICAL_MEMORY.md`. You can append to it with any new information you learn during the optimization process (bugs, preprocessing steps, transformations, pass pipelines, etc). Keep it concise and organized for easy reference. Only use this memory file! Do not use any other sources of memory (DO NOT read from archive/).
 

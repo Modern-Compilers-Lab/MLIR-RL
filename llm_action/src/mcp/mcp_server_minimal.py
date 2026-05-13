@@ -1,15 +1,21 @@
-import json
-import re
-import subprocess
-import tempfile
-import time
-from pathlib import Path
-
 from fastmcp import FastMCP
-from llm_action.src.utils.transformation import BUFFERIZATION_AND_LOWER_V_TRANSFORM_CODE, PASS_PIPELINE
-from llm_action.src.config import PROJECT_ROOT, MLIR_SCRIPT, MLIR_TMP_DIR, MLIR_SLURM_LOG_DIR, TORCH_SCRIPT, TORCH_SLURM_LOG_DIR
+
+from llm_action.src.utils.transformation import (
+    BUFFERIZATION_AND_LOWER_V_TRANSFORM_CODE,
+    PASS_PIPELINE,
+)
+from llm_action.src.mcp.utils import (
+    run_mlir_sbatch,
+    torch_matmul_by_shape,
+    torch_conv2d_by_shape,
+    torch_add_by_shape,
+    torch_pooling_nchw_max_by_shape,
+    torch_relu_by_shape,
+    compute_speedup,
+)
 
 mcp = FastMCP("mlir-optimization-tools-minimal")
+
 
 @mcp.tool()
 def execute_mlir_code(code: str) -> tuple[float, bool]:
@@ -23,85 +29,12 @@ def execute_mlir_code(code: str) -> tuple[float, bool]:
     Returns:
         tuple[float, bool]: (median execution time in milliseconds, assertion result)
     """
-    MLIR_TMP_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Write the MLIR code to a temp file so the SLURM job can read it
-    code_file = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".mlir", dir=MLIR_TMP_DIR, delete=False
+    return run_mlir_sbatch(
+        code,
+        bufferization_lowering_v_transform_code=BUFFERIZATION_AND_LOWER_V_TRANSFORM_CODE,
+        pass_pipeline=PASS_PIPELINE,
     )
-    code_file.write(code)
-    code_file.close()
 
-    # Build the sbatch command
-    cmd: list[str] = ["sbatch", str(MLIR_SCRIPT), code_file.name]
-
-    transform_file = None
-    transform_file = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".mlir", dir=MLIR_TMP_DIR, delete=False
-    )
-    transform_file.write(BUFFERIZATION_AND_LOWER_V_TRANSFORM_CODE)
-    transform_file.close()
-    cmd.extend(["--transform-file", transform_file.name])
-
-    cmd.extend(["--pass-pipeline", *PASS_PIPELINE])
-
-    # Submit the job
-    result = subprocess.run(
-        cmd, capture_output=True, text=True, cwd=str(PROJECT_ROOT),
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"sbatch failed: {result.stderr.strip()}")
-
-    match = re.search(r"Submitted batch job (\d+)", result.stdout)
-    if not match:
-        raise RuntimeError(f"Could not parse job ID: {result.stdout.strip()}")
-    job_id = match.group(1)
-
-    # Wait for the job to finish
-    timeout = 300
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        sq = subprocess.run(
-            ["squeue", "-j", job_id, "-h", "-o", "%T"],
-            capture_output=True, text=True,
-        )
-        if not sq.stdout.strip():
-            break
-        time.sleep(2)
-    else:
-        raise TimeoutError(f"SLURM job {job_id} did not finish within {timeout}s")
-
-    # Clean up temp files
-    try:
-        Path(code_file.name).unlink(missing_ok=True)
-        if transform_file:
-            Path(transform_file.name).unlink(missing_ok=True)
-    except OSError:
-        pass
-
-    # Read the output
-    log_path = MLIR_SLURM_LOG_DIR / f"{job_id}.out"
-    if not log_path.exists():
-        raise FileNotFoundError(f"SLURM log not found: {log_path}")
-    output = log_path.read_text().strip()
-    
-    error_path = MLIR_SLURM_LOG_DIR / f"{job_id}.err"
-    if error_path.exists():
-        error_output = error_path.read_text().strip()
-
-    try:
-        result_data = json.loads(output.splitlines()[-1])
-    except (json.JSONDecodeError, IndexError):
-        raise RuntimeError(
-            f"Could not parse result from job {job_id} output:\n{output}, error:\n{error_output}"
-        )
-
-    if "error" in result_data:
-        raise RuntimeError(
-            f"MLIR execution failed (job {job_id}): output:\n{output}, error:\n{error_output}"
-        )
-
-    return result_data["execution_time_ms"], result_data["success"]
 
 @mcp.tool()
 def execute_torch_matmul_by_shape(M: int, K: int, N: int) -> float:
@@ -121,45 +54,8 @@ def execute_torch_matmul_by_shape(M: int, K: int, N: int) -> float:
     Returns:
         float: the median execution time in milliseconds.
     """
-    # Submit the job
-    result = subprocess.run(
-        ["sbatch", str(TORCH_SCRIPT), "matmul", str(M), str(K), str(N)],
-        capture_output=True,
-        text=True,
-        cwd=str(PROJECT_ROOT),
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"sbatch failed: {result.stderr.strip()}")
+    return torch_matmul_by_shape(M, K, N)
 
-    match = re.search(r"Submitted batch job (\d+)", result.stdout)
-    if not match:
-        raise RuntimeError(f"Could not parse job ID: {result.stdout.strip()}")
-    job_id = match.group(1)
-
-    # Wait for the job to finish
-    timeout = 300
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        sq = subprocess.run(
-            ["squeue", "-j", job_id, "-h", "-o", "%T"],
-            capture_output=True, text=True,
-        )
-        if not sq.stdout.strip():
-            break
-        time.sleep(2)
-    else:
-        raise TimeoutError(f"SLURM job {job_id} did not finish within {timeout}s")
-
-    # Read the output
-    log_path = TORCH_SLURM_LOG_DIR / f"{job_id}.out"
-    if not log_path.exists():
-        raise FileNotFoundError(f"SLURM log not found: {log_path}")
-    output = log_path.read_text().strip()
-
-    try:
-        return float(output.splitlines()[-1])
-    except (ValueError, IndexError):
-        raise RuntimeError(f"Could not parse execution time from job {job_id} output:\n{output}")
 
 @mcp.tool()
 def execute_torch_conv2d_by_shape(
@@ -168,8 +64,9 @@ def execute_torch_conv2d_by_shape(
 ) -> float:
     """
     Submits a SLURM job to execute a 2D convolution mirroring
-    `linalg.conv_2d_nchw_fchw` (stride=1, dilation=1; padding derived from
-    output shape) using PyTorch JIT and returns the median execution time.
+    `linalg.conv_2d_nchw_fchw` (dilation=1, no padding; stride derived per
+    axis from output shape via `OH = (H - KH) // stride + 1`) using PyTorch
+    JIT and returns the median execution time.
 
     Use this to obtain a PyTorch baseline execution time for a given conv2d
     shape, which can then be compared against MLIR execution times via the
@@ -189,75 +86,96 @@ def execute_torch_conv2d_by_shape(
     Returns:
         float: the median execution time in milliseconds.
     """
-    result = subprocess.run(
-        ["sbatch", str(TORCH_SCRIPT), "conv2d",
-         str(N), str(C), str(H), str(W),
-         str(F), str(KH), str(KW), str(OH), str(OW)],
-        capture_output=True,
-        text=True,
-        cwd=str(PROJECT_ROOT),
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"sbatch failed: {result.stderr.strip()}")
+    return torch_conv2d_by_shape(N, C, H, W, F, KH, KW, OH, OW)
 
-    match = re.search(r"Submitted batch job (\d+)", result.stdout)
-    if not match:
-        raise RuntimeError(f"Could not parse job ID: {result.stdout.strip()}")
-    job_id = match.group(1)
-
-    timeout = 300
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        sq = subprocess.run(
-            ["squeue", "-j", job_id, "-h", "-o", "%T"],
-            capture_output=True, text=True,
-        )
-        if not sq.stdout.strip():
-            break
-        time.sleep(2)
-    else:
-        raise TimeoutError(f"SLURM job {job_id} did not finish within {timeout}s")
-
-    log_path = TORCH_SLURM_LOG_DIR / f"{job_id}.out"
-    if not log_path.exists():
-        raise FileNotFoundError(f"SLURM log not found: {log_path}")
-    output = log_path.read_text().strip()
-
-    try:
-        return float(output.splitlines()[-1])
-    except (ValueError, IndexError):
-        raise RuntimeError(f"Could not parse execution time from job {job_id} output:\n{output}")
 
 @mcp.tool()
-def measure_speedup(mlir_base_execution_time: float, mlir_optimized_execution_time: float, torch_execution_time: float) -> dict[str, float]:
+def execute_torch_add_by_shape(A: int, B: int, C: int, D: int) -> float:
+    """
+    Submits a SLURM job to execute a 4D elementwise add (mirroring `linalg.add`)
+    using PyTorch JIT and returns the median execution time in milliseconds.
+
+    Args:
+        A, B, C, D: tensor dimensions (both inputs and output have this shape).
+
+    Returns:
+        float: the median execution time in milliseconds.
+    """
+    return torch_add_by_shape(A, B, C, D)
+
+
+@mcp.tool()
+def execute_torch_pooling_nchw_max_by_shape(
+    N: int, C: int, H: int, W: int,
+    KH: int, KW: int, OH: int, OW: int,
+) -> float:
+    """
+    Submits a SLURM job to execute a 2D max pool mirroring
+    `linalg.pooling_nchw_max` (dilation=1; stride derived from output shape via
+    `OH = (H - KH) // stride + 1`) using PyTorch JIT and returns the median
+    execution time in milliseconds.
+
+    Args:
+        N, C: batch and channel dimensions.
+        H, W: input spatial dimensions.
+        KH, KW: kernel spatial dimensions.
+        OH, OW: output spatial dimensions (used to derive stride).
+
+    Returns:
+        float: the median execution time in milliseconds.
+    """
+    return torch_pooling_nchw_max_by_shape(N, C, H, W, KH, KW, OH, OW)
+
+
+@mcp.tool()
+def execute_torch_relu_by_shape(shape: list[int]) -> float:
+    """
+    Submits a SLURM job to execute an elementwise ReLU (mirroring the
+    linalg.generic ReLU pattern) on a tensor of the given shape using PyTorch
+    JIT, and returns the median execution time in milliseconds.
+
+    Args:
+        shape: tensor shape, rank-agnostic (e.g. [128, 1024] or [128, 128, 56, 56]).
+
+    Returns:
+        float: the median execution time in milliseconds.
+    """
+    return torch_relu_by_shape(shape)
+
+
+@mcp.tool()
+def measure_speedup(
+    mlir_base_execution_time: float,
+    mlir_optimized_execution_time: float,
+    torch_execution_time: float,
+) -> dict[str, float]:
     """
     Measures the speedup achieved by MLIR transformations.
-    
+
     This tool compares the execution time of base code against transformed code
     to calculate the performance improvement factor. It compares against
     a PyTorch baseline to compute the speedup relative to PyTorch.
-    
+
     Use this when you need to:
     - Quantify optimization effectiveness
     - Compare performance before and after transformations
     - Calculate speedup ratios
     - Evaluate transformation impact relative to PyTorch
-    
+
     Args:
         mlir_base_execution_time: Execution time of original (unoptimized) MLIR code in milliseconds
         mlir_optimized_execution_time: Execution time of transformed (optimized) MLIR code in milliseconds
         torch_execution_time: execution time of PyTorch baseline in milliseconds
-    
+
     Returns:
         dict with:
             speedup: mlir_base_execution_time / mlir_optimized_execution_time
-            speedup_to_torch: torch_execution_time / mlir_optimized_execution_time  
+            speedup_to_torch: torch_execution_time / mlir_optimized_execution_time
     """
-    result = {
-        "speedup": mlir_base_execution_time / mlir_optimized_execution_time,
-        "speedup_to_torch": torch_execution_time / mlir_optimized_execution_time if torch_execution_time else -1
-    }
-    return result
+    return compute_speedup(
+        mlir_base_execution_time, mlir_optimized_execution_time, torch_execution_time
+    )
+
 
 if __name__ == "__main__":
     mcp.run()

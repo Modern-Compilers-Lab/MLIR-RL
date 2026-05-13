@@ -5,7 +5,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from llm_action.src.config import PROJECT_ROOT, MLIR_SCRIPT, MLIR_TMP_DIR, MLIR_SLURM_LOG_DIR, SLURM_TIMEOUT
+from llm_action.src.config import PROJECT_ROOT, MLIR_SCRIPT, MLIR_TMP_DIR, MLIR_SLURM_LOG_DIR, SLURM_TIMEOUT, SLURM_POLL_INTERVAL
 
 class SlurmExecutor:
     def __init__(self, timeout: int = SLURM_TIMEOUT):
@@ -42,7 +42,7 @@ class SlurmExecutor:
                 )
                 if not sq.stdout.strip():
                     break
-                time.sleep(2)
+                time.sleep(SLURM_POLL_INTERVAL)
             else:
                 raise TimeoutError(f"SLURM job {job_id} timed out after {self.timeout}s")
 
@@ -66,3 +66,7 @@ class SlurmExecutor:
 
         finally:
             Path(code_file.name).unlink(missing_ok=True)
+
+    def execute_torch(self, op_type: str, dims: tuple[int, ...]) -> float:
+        from llm_action.src.mcp.utils import run_torch_sbatch
+        return run_torch_sbatch([op_type, *map(str, dims)])

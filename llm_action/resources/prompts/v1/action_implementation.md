@@ -287,7 +287,9 @@ All RL code templates in the dataset are pre-tagged deterministically:
 - The single primary operation to optimize is tagged with:
   `tag = "operation_0"`
 
-This tag appears as an attribute on the target `linalg.*` op inside `func.func @main`.
+This tag appears as an attribute on the target operation inside `func.func @main`.
+Initially this is a `linalg.*` op, but after lowering transforms (e.g., vectorization)
+it may be on an `scf.for` loop — the tag follows the computation's entry point.
 
 Therefore, every Action MUST:
 - Match the target operation ONLY via the tag `operation_0`.
@@ -301,6 +303,19 @@ Therefore, every Action MUST:
 ## Action Contract (PoC)
 
 Each Action must define the following conceptual stages:
+
+0) **Execution Multiplicity**
+   - Decide whether the transformation is **single-shot** or **repeatable** within a single RL episode
+     and declare it via the class-level attribute `unique_execution: bool` (default `True`).
+   - Set `unique_execution = True` when applying the action a second time on the same target is
+     either ill-defined, a no-op, or destroys structure required by later actions
+     (e.g. lowering transforms like `Vectorization`, `Parallelization`, bufferization, `convert_*_to_*`).
+   - Set `unique_execution = False` when repeated application is a meaningful tuning knob —
+     for example multi-level `Tiling`, applying `LoopInterchange` at different nesting levels,
+     or `Unrolling` distinct loops. The action must still be **idempotent in failure semantics**:
+     if a repeated application has nothing to do, `precondition` or `postcondition` must reject it.
+   - The decision must follow from the transformation's structural effect on the IR, not from
+     parameter ranges. Justify it briefly in the class docstring or as a one-line comment next to the attribute.
 
 1) **Parameters**
    - A dictionary of tunable parameters.
@@ -329,46 +344,58 @@ Each Action must define the following conceptual stages:
    - Must construct and execute MLIR Transform dialect code using the runtime.
    - The transform must:
      - use a named sequence `@__transform_main`,
-     - match the target op via `attributes{tag = "operation_0"}`,
+     - match the target op via `attributes{tag = "operation_0"}` (matches any op type — linalg, scf.for, etc.),
      - apply exactly the requested transformation with the provided parameters,
      - RE-ANNOTATE the result operation with `tag = "operation_0"` after the transform.
    - Implementation must not silently succeed on failures; if transform execution fails,
      return the original code (postcondition will detect failure via no-op).
 
    **TAG PRESERVATION:**
-   Every action MUST re-annotate its primary result operation with the tag after transformation.
+   Every action MUST re-annotate the computation entry point with the tag after transformation.
    This is critical because actions are composed in sequences — the next action in the sequence
    must be able to find the target operation via the same tag.
 
-   Use these two lines at the end of the transform sequence (before `transform.yield`):
+   The tag is a **logical pointer** to "where the computation lives." It follows the computation
+   to its new structural home, regardless of op type.
+
+   There are two categories of transforms with different tagging strategies:
+
+   **Category A — Structure-Preserving** (output is still a `linalg.*` op):
+   Examples: tiling, interchange, packing, promotion.
+   Tag the result linalg op directly:
    ```
      %tag = transform.param.constant "operation_0" -> !transform.any_param
      transform.annotate %result_op "tag" = %tag : !transform.any_op, !transform.any_param
    ```
-   Where `%result_op` is the SSA value of the transformed operation (e.g., `%tiled_op`, `%generic`, `%vectorized`, etc.).
+
+   **Category B — Lowering** (linalg op consumed, replaced by loops + lower-level ops):
+   Examples: vectorization (produces scf.for loops + vector.transfer_read/write + arith ops).
+   After these transforms, the linalg op no longer exists. Tag the **outermost generated loop**:
+   ```
+     // Tiling produces the loop handles needed for tagging after vectorization
+     %tiled_op, %loops:3 = transform.structured.tile_using_for %op tile_sizes [M, N, K]
+       : (!transform.any_op) -> (!transform.any_op, !transform.any_op, !transform.any_op, !transform.any_op)
+     transform.structured.vectorize %tiled_op vector_sizes [M, N, K] : !transform.any_op
+     // %tiled_op is consumed — tag the outermost loop instead
+     %tag = transform.param.constant "operation_0" -> !transform.any_param
+     transform.annotate %loops#0 "tag" = %tag : !transform.any_op, !transform.any_param
+   ```
+   `transform.structured.match attributes{tag = "operation_0"}` matches ANY op type
+   (not just linalg), so subsequent actions will find the tagged `scf.for` without modification.
 
    **WARNING:** If you omit the re-annotation, subsequent actions in a schedule will fail
-   because they cannot find `tag = "operation_0"` in the transformed code. This is the
-   single most common cause of action composition failures.
+   because they cannot find `tag = "operation_0"` in the transformed code.
 
    **MULTI-OP LOWERING TRANSFORMS:**
    Some transforms (e.g., `convert_conv2d_to_img2col`) produce multiple ops and their
-   returned handle may not point to the primary compute op. For example,
-   `convert_conv2d_to_img2col` returns a `%transformed` handle that points to
-   `tensor.expand_shape` (the output reshape), not the `linalg.generic` matmul contraction.
-
-   When the returned handle does not point to the compute op, use
-   `transform.get_producer_of_operand` to navigate from the reshape to the actual
-   compute op before tagging:
+   returned handle may not point to the primary compute op. Use
+   `transform.get_producer_of_operand` to navigate to the actual compute op before tagging:
    ```
-     // %transformed points to tensor.expand_shape (output reshape), not the matmul
      %matmul = transform.get_producer_of_operand %transformed[0]
        : (!transform.any_op) -> !transform.any_op
      %tag = transform.param.constant "operation_0" -> !transform.any_param
      transform.annotate %matmul "tag" = %tag : !transform.any_op, !transform.any_param
    ```
-   Always verify which op a returned handle actually points to when dealing with
-   lowering transforms that produce multiple ops (reshapes, copies, contractions, etc.).
 
 5) **Postcondition**
    - A Python function that checks whether the transformation succeeded.
@@ -444,7 +471,7 @@ When a transformation introduces `vector<...>` types, you MUST ensure:
 
 1) **Bound total vector size**
    - Let `N = product(static vector dimensions: multiplication of the vector elements)`.
-   - Limits `N ≤ 1024`
+   - Limits `N ≤ 2048`
    - If any vector exceeds its bound → **reject the candidate immediately**.
 
 2) **Limit vector rank**
@@ -464,12 +491,115 @@ When a transformation introduces `vector<...>` types, you MUST ensure:
 - Prefer `vector.transfer` + small vectors over large `vector.contract`.
 - If vectorization increases vector rank or size significantly, back off.
 
+### Vector Sizes Must Divide Operation Dimensions (Critical)
+
+Each vector/tile size used in a vectorization action **MUST** evenly divide the corresponding
+iteration-space dimension of the target operation. Non-divisible sizes cause a fatal,
+unrecoverable lowering error (vector masks).
+
 ### Required Validation Step (Before execute_code)
 
 After applying `transform_code` and before calling `execute_code`, you MUST:
 - Inspect the transformed MLIR for `vector<...>` types.
 - Compute `N` for each static vector.
 - Reject the candidate if any vector violates the size or rank rules.
+
+## Promotion Technical Contract
+
+### Goal
+Promotion copies tiled operand data into contiguous temporary buffers (allocs) so that
+inner loops access stride-free memory. This eliminates non-unit strides from subviews
+produced by tiling and enables efficient downstream vectorization.
+
+### Critical Prerequisite: Bufferization
+`transform.structured.promote` operates on **memref subviews**, NOT tensor extract_slices.
+You MUST bufferize the module before calling promote.
+
+Key rules:
+- The module entry handle must use `transform.consumed` (not `transform.readonly`) because
+  `one_shot_bufferize` **modifies** the module in place.
+- After `one_shot_bufferize`, ALL prior SSA handles (including the matched op handle) are
+  **invalidated**. You must re-match the target operation via its tag after bufferization.
+
+### Canonicalize After Promote
+After promote, apply `transform.apply_registered_pass "canonicalize"` to the function.
+Without canonicalization, promoted buffers retain dynamic shapes (`memref<?x?xf64>`) which
+cause masked/dynamic vector operations downstream. Canonicalization folds these into static
+types (e.g. `memref<4x8xf64>`), enabling clean vectorization.
+
+### Handle Invalidation Protocol
+After `one_shot_bufferize`, you cannot use any previously matched handles. The protocol is:
+1. Match the target op by tag → tile it → tag the tiled op.
+2. Bufferize the entire module (consumes the module handle).
+3. Re-match the module, then re-match the tiled op by its tag.
+4. Promote the re-matched op.
+5. Canonicalize, then re-match again for downstream transforms.
+
+### Placement: Outer Tile Level
+Promote at the **outer** tile scope, not inner. When there are two tiling levels (e.g.,
+outer cache tiles + inner register tiles), promote after the outer tiling so that copy
+overhead is amortized over all inner iterations.
+
+### Operand Selection
+`operands_to_promote = [0, 1, 2]` (all operands) is typically best for matmul-like ops:
+- Operand 0 (A): benefits from static stride info after copy.
+- Operand 1 (B): benefits from stride compaction (column-major → contiguous).
+- Operand 2 (C): benefits from contiguous accumulation buffer.
+Subsets like `[0, 1]` or `[1]` are valid when only specific operands have stride issues.
+
+### Required Transform Dialect Pattern
+The correct promotion sequence in Transform dialect:
+
+```
+module attributes {transform.with_named_sequence} {
+  transform.named_sequence @__transform_main(
+      %module: !transform.any_op {transform.consumed}) {
+
+    // Step 1: Match and tile
+    %func0 = transform.structured.match ops{["func.func"]} in %module : (!transform.any_op) -> !transform.any_op
+    %op0 = transform.structured.match attributes{tag = "operation_0"} in %func0 : (!transform.any_op) -> !transform.any_op
+    %tiled_op, %loops:N = transform.structured.tile_using_for %op0 tile_sizes [T1, T2, ...] : (!transform.any_op) -> (!transform.any_op, !transform.any_op, ...)
+
+    // Tag the tiled op so we can find it after bufferization
+    %tag_val = transform.param.constant "tiled_target" -> !transform.any_param
+    transform.annotate %tiled_op "tag" = %tag_val : !transform.any_op, !transform.any_param
+
+    // Step 2: Bufferize (invalidates ALL handles)
+    %bufferize_op = transform.structured.match ops{["module"]} in %module : (!transform.any_op) -> !transform.any_op
+    transform.bufferization.one_shot_bufferize layout{IdentityLayoutMap} %bufferize_op {bufferize_function_boundaries = true} : !transform.any_op
+
+    // Step 3: Re-match after bufferization
+    %module1 = transform.structured.match ops{["module"]} in %module : (!transform.any_op) -> !transform.any_op
+    %func1 = transform.structured.match ops{["func.func"]} in %module1 : (!transform.any_op) -> !transform.any_op
+    %promoted_target = transform.structured.match attributes{tag = "tiled_target"} in %func1 : (!transform.any_op) -> !transform.any_op
+
+    // Step 4: Promote
+    %promoted_op = transform.structured.promote %promoted_target operands_to_promote = [0, 1, 2] : (!transform.any_op) -> !transform.any_op
+
+    // Step 5: Canonicalize (fold dynamic shapes to static)
+    %func2 = transform.structured.match ops{["func.func"]} in %module1 : (!transform.any_op) -> !transform.any_op
+    transform.apply_registered_pass "canonicalize" to %func2 : (!transform.any_op) -> !transform.any_op
+
+    // Step 6: Re-tag for downstream actions
+    %func3 = transform.structured.match ops{["func.func"]} in %module1 : (!transform.any_op) -> !transform.any_op
+    %final_op = transform.structured.match attributes{tag = "tiled_target"} in %func3 : (!transform.any_op) -> !transform.any_op
+    %final_tag = transform.param.constant "operation_0" -> !transform.any_param
+    transform.annotate %final_op "tag" = %final_tag : !transform.any_op, !transform.any_param
+
+    transform.yield
+  }
+}
+```
+
+### Anti-Patterns (DO NOT)
+- **DO NOT** use `transform.structured.pad` as a substitute for `promote`. Padding adds
+  zero-fill boundaries; promotion copies data into contiguous allocs. They are different transforms.
+- **DO NOT** apply `transform.structured.promote` to tensor-level IR. It will silently
+  fail or produce invalid IR. Always bufferize first.
+- **DO NOT** skip canonicalization after promote. Without it, promoted buffers have dynamic
+  shapes that prevent efficient vectorization.
+- **DO NOT** promote at the inner tile level. Inner promotion copies small tiles repeatedly
+  with no amortization benefit.
 
 Remember:
 Your output is a **single reusable RL action**. It will be used as an atomic decision in an RL environment,
@@ -480,10 +610,11 @@ and must operate robustly on general MLIR structured loop nests while always tar
 You must implement the action as a Python class inheriting the following pre-implemented abstract class:
 
 ```python
-MAX_PARAM_SLOTS = 3  # maximum number of parameter slots any action can use
+MAX_PARAM_SLOTS = 7  # maximum number of parameter slots any action can use
 MAX_VOCAB_SIZE_PER_SLOT = 5  # maximum vocabulary size (number of categories) per slot
 
 class ActionBase(ABC):
+    unique_execution: bool = True  # override to False if the action can be applied multiple times in one episode
 
     @classmethod
     @abstractmethod
@@ -535,7 +666,7 @@ and `decode_params` converts those integers into the parameter dict used by `pre
 Each action defines its own **vocabulary** (the set of values each slot can take) as a class-level
 constant. There is no global vocabulary — every action chooses what makes sense for its parameters.
 Two global constants bound the space:
-- `MAX_PARAM_SLOTS = 3` — upper bound on the number of slots any action may use.
+- `MAX_PARAM_SLOTS = 7` — upper bound on the number of slots any action may use.
 - `MAX_VOCAB_SIZE_PER_SLOT = 5` — upper bound on the vocabulary size (number of categories) per slot.
 
 ### Design Guidelines (Avoiding the Curse of Dimensionality)
@@ -594,7 +725,7 @@ specific transformation. Common patterns:
 **For scalar selection from a fixed set (e.g., number of threads):**
 - Define the set of valid values as a class-level constant (at most `MAX_VOCAB_SIZE_PER_SLOT` entries).
 - Use a single slot with `len(values)` classes.
-- Example:
+- Example (this is just an example, it should not affect the actual implementation of Parallelization (using tile sizes for instance)):
   ```python
   class Parallelization(ActionBase):
       THREAD_OPTIONS = [2, 4, 8, 16, 32]  # multiples of 2 to not produce dynamic shape (bugs in MLIR)
@@ -613,7 +744,7 @@ specific transformation. Common patterns:
   ```
 
 ### Key Rules
-- `params_size()` must return a value ≤ `MAX_PARAM_SLOTS` (3).
+- `params_size()` must return a value ≤ `MAX_PARAM_SLOTS` (7).
 - Each slot's vocabulary must have at most `MAX_VOCAB_SIZE_PER_SLOT` (5) categories.
 - `len(classes_per_slot(n))` must equal `params_size()` for all valid `n` (no padding with `[1]` entries).
 - `decode_params` must return the **exact dict format** expected by `precondition`/`implement`/`postcondition`.
@@ -627,6 +758,36 @@ specific transformation. Common patterns:
   `params_size() -> 0`, return `[]` from `classes_per_slot`, and return `{}` from `decode_params`.
   - Anti-pattern: `ENABLE_VOCAB = [0, 1]`; `params_size() -> 1`; `decode_params -> {"enable": ...}`
   - Correct: `params_size() -> 0`; `classes_per_slot() -> []`; `decode_params() -> {}`
+
+## Execution Multiplicity
+
+Every Action must declare a class-level `unique_execution: bool` attribute (default `True`,
+inherited from `ActionBase`). The RL environment consults this attribute when masking:
+
+- `unique_execution = True` → after one successful application in an episode, the action is
+  masked out for the rest of that episode.
+- `unique_execution = False` → the action stays selectable after success and may be applied
+  repeatedly in the same episode.
+
+Decide based on the transformation's **structural effect**:
+
+- **Set `True`** for one-shot lowering / structural-replacement transforms whose output is no
+  longer the same kind of IR the action consumes (Category B in the tagging discussion above).
+  Examples: `Vectorization` (consumes the linalg op, lowers to `vector.*` + `scf.for`),
+  `Parallelization` (introduces `scf.forall` and changes the loop kind), bufferization,
+  `convert_conv2d_to_img2col`. A second application has no valid target.
+
+- **Set `False`** for structure-preserving / reusable transforms (Category A) where repeated
+  application at different scopes is a legitimate tuning knob. Examples: multi-level `Tiling`
+  (outer cache tile then inner register tile), `LoopInterchange` (different permutations at
+  different nesting levels), `Unrolling` of distinct loops, `Promotion` of different operands.
+
+Repeatable actions must still be **safe under repetition**: their `precondition` /
+`postcondition` should reject no-ops, so a second application that has nothing to do fails
+cleanly rather than silently succeeding.
+
+Document the choice with a one-line comment next to the attribute (or in the class docstring),
+explaining *why* repeated application is or is not meaningful for this transformation.
 
 ## Runtime Helpers
 
@@ -702,6 +863,9 @@ Output rules:
 - Python code must contain the full Python source code defining `class <Action>(ActionBase)`,
   including ALL 8 classmethods: `parameters`, `precondition`, `preprocess`, `implement`,
   `postcondition`, `params_size`, `classes_per_slot`, and `decode_params`.
+- The class MUST declare a class-level `unique_execution: bool` attribute, with a one-line
+  comment justifying the choice (see "Execution Multiplicity" above). Do not rely on the
+  `ActionBase` default — make the decision explicit.
 - Do NOT include multiple actions.
 - Do NOT include scheduling logic or interaction reasoning.
 

@@ -292,11 +292,17 @@ For each action tool:
 - Note which actions are **applicable** to this kernel (precondition passes).
 - Note which actions **preserve the tag** (postcondition passes and tag still present in output).
 
-## Phase 2 — Pairwise Compositions
+## Phase 2 — Pairwise Compositions (Exhaustive)
 For each ordered pair of **applicable** actions (A then B):
 - Apply A with a representative parameter set, then feed the transformed code to B.
 - Record: did B's precondition pass after A? Did B's postcondition pass? Timing and speedup.
 - Build a **composability matrix**: which pairs work, which fail, and why.
+
+**NEVER skip a pair or mark it "N/A" based on theoretical reasoning.**
+You must test every cell by actually calling the tools. Theoretical reasoning about
+IR compatibility is frequently wrong — e.g., "Promotion is terminal because it converts
+to memref" was assumed without testing and turned out to be false (all actions compose
+after Promotion). Only actual tool invocation results count.
 
 ## Phase 3 — Multi-Step Schedules (3+ actions)
 - Build on successful pairs from Phase 2.
@@ -388,7 +394,7 @@ Use this exact markdown structure:
 | interchange    |        |         |     |        |             |          |
 | parallel       |        |         |     |        |             |          |
 
-(Fill cells with: OK, FAIL(pre), FAIL(post), N/A)
+(Fill ALL cells from actual tool calls: OK, FAIL(pre), FAIL(post), ERROR(<msg>). No cell may be left empty or N/A.)
 
 ## Key Findings
 
@@ -407,3 +413,62 @@ Use this exact markdown structure:
 ## CRITICAL: Incremental Writing
 Write to the log file **after completing each phase**. Do not wait until the end.
 This ensures progress is preserved if the session ends early due to context limits.
+
+# Dependency Graph Synthesis
+
+After Phases 1-3 complete, distill your Composability Matrix into a Python
+`ACTION_DEPENDENCIES` dict that the RL training loop will consume for action
+masking. The training agent uses this to skip actions that are provably
+illegal given what has already run, improving sample efficiency.
+
+## Empirical Grounding (Non-Negotiable)
+Every entry in this dict MUST be backed by actual test results from Phase 2.
+You are forbidden from adding block edges based on theoretical reasoning alone.
+Even if you "know" a transform eliminates an op, you must have tested it and
+observed the failure before encoding the edge.
+
+Encode only **block** edges:
+
+> If action X has executed in the episode, action Y becomes unavailable.
+
+## Schema
+```python
+ACTION_DEPENDENCIES: dict[str, list[str]] = {
+    "<BlockerActionName>": ["<BlockedActionName>", ...],
+}
+```
+- Keys and values must exactly match action class names (CamelCase, e.g. `Tiling`).
+- A missing key, or an empty list, means the action does not block anything.
+- Self-edges are redundant when an action sets `unique_execution = True` — omit them; if an action is intentionally `unique_execution = False`, do not encode self-blocks here either.
+- Do **not** encode prerequisite ordering ("Y requires X first") in this graph.
+  If you observed a prerequisite, document it in the markdown log under
+  "Ordering Constraints" but leave it out of the dict.
+
+## What qualifies as a block edge
+Include `X -> Y` only when:
+1. Every Phase 2 attempt of `Y` after `X` failed with `FAIL(pre)` or `FAIL(post)`
+   on the kernels you tested, AND
+2. The failure mode is **structural** — tag lost, op lowered away, IR no longer
+   in linalg form, payload op invalidated — not parameter-specific.
+
+Parameter-only failures (e.g., wrong tile size, vector length not dividing the
+operation dimension) are NOT dependency edges; they are tuning errors and the
+RL agent should still be allowed to try `Y` with different parameters.
+
+When in doubt, omit the edge. False negatives only cost some sample
+efficiency; false positives permanently block valid schedules.
+
+## Output
+At the end of your exploration log, append a fenced Python code block that
+contains only the dict, ready to paste into
+`llm_action/src/actions/v<x>/registry.py`:
+
+```python
+ACTION_DEPENDENCIES: dict[str, list[str]] = {
+    "ActionName1": ["ActionName2", ...],
+}
+```
+
+Above each entry, include a one-line markdown comment in the log (not in the
+dict) summarizing the structural reason for the block, so a reviewer can audit
+the graph without re-running exploration.

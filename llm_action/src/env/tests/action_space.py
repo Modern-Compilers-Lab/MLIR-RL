@@ -85,7 +85,7 @@ def main():
     print("--- Action masks ---")
     masks_full = build_action_masks(
         reg, slot_map, n_loops=L, max_n_loops=L,
-        used_action_indices=set(), unique_actions=False,
+        used_action_indices=set(),
     )
     print(f"  n_loops={L}: mask length={len(masks_full)}, True={masks_full.sum()}/{len(masks_full)}")
     assert len(masks_full) == sum(space.nvec)
@@ -93,7 +93,7 @@ def main():
     if L > 1:
         masks_1 = build_action_masks(
             reg, slot_map, n_loops=1, max_n_loops=L,
-            used_action_indices=set(), unique_actions=False,
+            used_action_indices=set(),
         )
         print(f"  n_loops=1: mask length={len(masks_1)}, True={masks_1.sum()}/{len(masks_1)}")
         assert masks_1.sum() <= masks_full.sum()
@@ -102,10 +102,9 @@ def main():
     masks_used = build_action_masks(
         reg, slot_map, n_loops=L, max_n_loops=L,
         used_action_indices=set(range(reg.num_actions)),
-        unique_actions=True,
     )
     assert masks_used[reg.done_idx], "FAIL: done should always be unmasked"
-    print(f"  All actions used + unique_actions=True: done still available #")
+    print(f"  All actions used: done still available (per-action unique_execution honored) #")
     print()
 
     print("=== ALL CHECKS PASSED ===")

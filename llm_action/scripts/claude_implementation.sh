@@ -5,7 +5,6 @@
 #SBATCH -J claude_optim
 #SBATCH -p compute
 #SBATCH --reservation=c2
-#SBATCH --qos=c2
 #SBATCH --exclusive
 #SBATCH -c 8
 #SBATCH --mem=100G
@@ -35,7 +34,9 @@ claude /mcp
 claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_implementation.py $KERNEL_ARGS)"
 
 # Example usage:
-# sbatch llm_action/scripts/claude_implementation.sh
 
-# CONV
-## python llm_action/src/prompts/action_implementation.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_implementation.py --kernel-type conv2d --kernel-number 1)"
+# Matmul
+## python llm_action/src/prompts/action_implementation.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_implementation.py --benchmark dataset_matmul)"
+
+# Conv
+## python llm_action/src/prompts/action_implementation.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_implementation.py --benchmark dataset_conv2d)"

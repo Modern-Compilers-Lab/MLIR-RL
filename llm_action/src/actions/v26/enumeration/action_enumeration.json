@@ -1,0 +1,108 @@
+{
+  "intents": [
+    {
+      "name": "Data Locality & Cache Optimization",
+      "description": "Restructure iteration spaces and data access patterns to maximize temporal and spatial reuse within the L1/L2/L3 cache hierarchy.",
+      "rationale": "The benchmark set includes compute-bound operations (matmul, conv2d) with working sets that far exceed per-core L1 (32KB) and L2 (256KB) caches. Without tiling and data layout optimization, performance is dominated by main-memory latency. Even memory-bound operations (add, relu) benefit from cache-line-aware blocking to improve bandwidth utilization.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Partition the iteration space of a loop nest into smaller blocks so that the data accessed within each tile fits in a target cache level.",
+          "rationale": "Tiling is the foundational transformation for cache optimization in dense loop nests. For matmul and conv2d, blocking the iteration space to L1/L2-sized tiles dramatically improves data reuse and reduces cache misses. For memory-bound operations, tiling improves spatial locality and cache-line utilization.",
+          "action_template": "Tiling(tile_sizes) — tile_sizes is a vector of integers, one per loop dimension, where 0 means 'do not tile' that dimension. The tiled operation is wrapped in scf.for loops of the specified block sizes."
+        },
+        {
+          "name": "Promotion",
+          "description": "Copy tiled operand data into contiguous temporary buffers, amortizing irregular strides and ensuring unit-stride access within tiles.",
+          "rationale": "After tiling, operand slices may have non-unit strides (e.g., a tile of a column-major matrix). Promotion copies these slices into compact, contiguous buffers, improving cache utilization and enabling efficient vectorization. Requires bufferization as a prerequisite since it operates at the memref level.",
+          "action_template": "Promotion(operands_to_promote) — operands_to_promote is a list of operand indices (e.g., [0], [1], [0,1,2]) specifying which operands to copy into contiguous local buffers. This action must include an internal bufferization preprocessing step."
+        },
+        {
+          "name": "Packing",
+          "description": "Introduce inner blocking dimensions into the operation's data layout, reorganizing iteration space and tensor layout for cache-line-aligned access patterns.",
+          "rationale": "Packing restructures both the iteration space and data layout by adding inner tile dimensions, enabling contiguous memory access within blocks. This is particularly effective for matmul and conv2d where it eliminates TLB misses and improves hardware prefetching across tile boundaries.",
+          "action_template": "Packing(packed_sizes) — packed_sizes is a vector of inner block sizes, one per loop dimension, where 0 means 'do not pack' that dimension. Introduces new inner dimensions that correspond to contiguous memory blocks."
+        }
+      ]
+    },
+    {
+      "name": "SIMD Vectorization & Instruction Efficiency",
+      "description": "Map innermost loop computations to AVX2 vector instructions and improve instruction-level parallelism within each core.",
+      "rationale": "The target CPU supports AVX2 with FMA, providing 4 f64 lanes per 256-bit vector register. Without vectorization, only 1/4 of peak arithmetic throughput is utilized. Loop interchange ensures the vectorized dimension has unit-stride access, and unrolling exposes sufficient ILP to keep FMA pipelines saturated.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Vectorization",
+          "description": "Map loop dimensions to SIMD vector operations, converting scalar loop iterations into parallel vector lane computations.",
+          "rationale": "Vectorization is critical for all operations in the benchmark set. For f64 on AVX2, each vector instruction processes 4 elements simultaneously. Elementwise operations (add, relu) see up to 4x speedup from vectorization alone; compute-bound operations (matmul, conv2d) require vectorization to approach peak FLOP throughput.",
+          "action_template": "Vectorization(vector_sizes) — vector_sizes is a vector of SIMD widths per loop dimension, specifying how many iterations to map to vector lanes. For f64 on AVX2, a natural vector width is 4."
+        },
+        {
+          "name": "Loop Interchange",
+          "description": "Reorder loop dimensions of a loop nest by applying a permutation to the iteration order, without changing the computation semantics.",
+          "rationale": "Loop interchange is essential for placing the dimension with unit-stride memory access in the innermost position, which is critical for efficient vectorization and cache-line utilization. For conv2d's 7-deep loop nest, interchange can dramatically change performance by reordering reduction vs. parallel loops relative to the memory layout.",
+          "action_template": "LoopInterchange(permutation) — permutation is a vector specifying the new loop order (e.g., [1, 0, 2] swaps the first two loops). Must be a valid permutation of the loop dimensions."
+        },
+        {
+          "name": "Loop Unrolling",
+          "description": "Replicate the body of the innermost loop by a constant factor, reducing loop overhead and exposing instruction-level parallelism.",
+          "rationale": "Unrolling reduces branch overhead and enables the CPU's out-of-order engine to overlap independent arithmetic operations. Combined with vectorization, unrolling by small factors helps saturate the FMA execution units on Broadwell, particularly for matmul and conv2d inner loops where multiple independent multiply-accumulate chains can execute concurrently.",
+          "action_template": "LoopUnrolling(unroll_factor) — unroll_factor specifies how many iterations of the innermost loop to replicate (typical values: 2, 4, 8, 16)."
+        }
+      ]
+    },
+    {
+      "name": "Coarse-Grain Parallelism & Work Distribution",
+      "description": "Distribute parallel loop iterations across multiple CPU cores to exploit the 28-core, 2-socket topology.",
+      "rationale": "The target machine has 28 physical cores across 2 NUMA nodes. Large batch sizes (N=128, 256) and spatial dimensions in the benchmark set provide ample parallelism. Without parallelization, only 1/28 of the machine's compute capacity is utilized. Split reduction enables parallelization of reduction loops that would otherwise be inherently sequential.",
+      "priority": "medium",
+      "transformations": [
+        {
+          "name": "Tiling-based Parallelization",
+          "description": "Tile parallel loop dimensions and distribute the resulting tiles across worker threads using scf.forall.",
+          "rationale": "Tiling-based parallelization provides flexible control over work granularity per thread. By choosing tile sizes that evenly divide the iteration space, each thread gets a contiguous block of work with good spatial locality. This is the preferred approach as it composes naturally with subsequent inner tiling for cache optimization.",
+          "action_template": "TilingBasedParallelization(tile_sizes) — tile_sizes is a vector of tile sizes for parallel loop dimensions. Each tile becomes a unit of work distributed across threads via scf.forall."
+        },
+        {
+          "name": "Thread-count Parallelization",
+          "description": "Directly partition loop iterations across a fixed number of worker threads using scf.forall.",
+          "rationale": "Thread-count parallelization is simpler and directly maps to the hardware thread count. It is effective when the iteration count is easily divisible by the thread count and when per-thread work is already well-balanced. The number of threads must divide the iteration count for correct downstream lowering.",
+          "action_template": "ThreadCountParallelization(num_threads) — num_threads specifies the number of worker threads to distribute work across. In case of num_threads, the number of threads must be a divisor of the iteration count, otherwise subsequent MLIR transformations may fail."
+        },
+        {
+          "name": "Split Reduction",
+          "description": "Decompose a reduction loop into independent partial reductions that can be computed in parallel, followed by a final combination step.",
+          "rationale": "Reduction loops (e.g., the K-loop in matmul, the C/KH/KW loops in conv2d) are inherently sequential. Split reduction breaks them into independent partial sums that can be parallelized or interleaved, improving throughput on multi-core and superscalar architectures.",
+          "action_template": "SplitReduction(split_factor) — split_factor specifies the number of independent partial reductions to create from the original reduction loop."
+        }
+      ]
+    },
+    {
+      "name": "Iteration Space Restructuring & IR Normalization",
+      "description": "Apply structural transformations that reshape iteration spaces for special patterns and normalize IR to enable effective downstream optimization passes.",
+      "rationale": "Some operations benefit from fundamental restructuring before standard loop optimizations apply. Conv2d can be lowered to matmul-like form via im2col, making it amenable to the same tiling and vectorization strategies as matmul. Loop peeling separates remainder iterations for clean vectorization boundaries. Canonicalization is essential between transformation steps to simplify IR and unblock subsequent passes.",
+      "priority": "medium",
+      "transformations": [
+        {
+          "name": "Im2col Lowering",
+          "description": "Convert a convolution operation into an image-to-column layout transformation followed by a matmul-like contraction, replacing the sliding-window iteration pattern with a regular contraction.",
+          "rationale": "Im2col lowering transforms the 7-dimensional conv2d loop nest into a matmul-like 3-dimensional contraction surrounded by reshape operations. This enables reuse of highly optimized matmul tiling and vectorization strategies for convolution, and is a standard technique in high-performance ML libraries. Subsequent optimizations target the resulting contraction, not the surrounding reshapes.",
+          "action_template": "Im2colLowering() — no parameters; applies the im2col transformation to convert conv2d into matmul-like contraction form. The RL policy's decision to select this action is itself the only knob."
+        },
+        {
+          "name": "Loop Peeling",
+          "description": "Separate remainder iterations from the main loop body into a cleanup loop, ensuring the main loop has a trip count that is a clean multiple of the tile or vector size.",
+          "rationale": "When loop bounds are not exact multiples of tile or vector sizes, the main loop must handle boundary conditions that prevent efficient vectorization. Peeling separates these remainder iterations into a scalar cleanup loop, allowing the main loop body to use full-width vector operations without masking or bounds checks.",
+          "action_template": "LoopPeeling(tile_size) — tile_size specifies the tile size for the reduction dimension; remainder iterations beyond the last full tile are peeled into a separate cleanup loop."
+        },
+        {
+          "name": "Canonicalization",
+          "description": "Apply algebraic simplifications, constant folding, and IR normalization passes to clean up intermediate representations after transformations.",
+          "rationale": "Transformations like tiling, promotion, and packing introduce intermediate IR patterns (redundant operations, dynamic shapes, identity maps) that can block subsequent optimizations. Canonicalization resolves these, folding dynamic buffer shapes into static types and simplifying control flow, enabling clean input for vectorization and further tiling.",
+          "action_template": "Canonicalization() — no parameters; applies standard MLIR canonicalization patterns to simplify and normalize the IR. The RL policy's decision to select this action is itself the only knob."
+        }
+      ]
+    }
+  ]
+}
