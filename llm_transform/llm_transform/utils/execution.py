@@ -10,7 +10,7 @@ from mlir.ir import Context, Module, MemRefType, IntegerType, F64Type, F32Type
 from mlir.runtime import get_ranked_memref_descriptor
 from mlir.dialects.func import FuncOp
 
-from transformation import compile_aot, transform_module, bufferize_module, apply_pipeline_to_module
+from llm_transform.utils.transformation import compile_aot, transform_module, bufferize_module, apply_pipeline_to_module
 
 PARENT_DIR = Path(__file__).parents[2]
 

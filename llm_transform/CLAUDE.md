@@ -17,9 +17,9 @@ data/
 resources/
   base_schedule.mlir         # Empty (no-op) transform schedule
   base_passes.txt            # Default MLIR lowering pass pipeline
-  prompt.txt                 # Prompt used for Claude optimization (not for LLM use)
+  prompt/                    # Prompt template + scope snippets for Claude optimization (not for LLM use)
   conda/                     # Conda environments needed for running the system
-src/
+llm_transform/               # Python package (installed via `pip install -e .`)
   mcp_server.py              # MCP server exposing the two tools below
   torch_exec.py              # PyTorch reference execution for comparison
   utils/
@@ -30,6 +30,7 @@ src/
     plot_performance_compare.py  # Compare speedup across experiments
     c/
       dependence/                # Polyhedral legality check tool (C++/MLIR)
+pyproject.toml               # Package metadata; install with `pip install -e .`
 logs/
   best/                      # Best configurations per benchmark (auto-saved by run_schedule)
   claude/                    # Slurm logs for Claude optimization runs (not for LLM use)

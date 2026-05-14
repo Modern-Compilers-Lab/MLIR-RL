@@ -8,7 +8,7 @@ This project lets a Claude Code agent iteratively rewrite **MLIR transform sched
 speedup = PyTorch_time / MLIR_time
 ```
 
-with a target of ≥ 2× (i.e. at least twice as fast as PyTorch). Claude interacts with the pipeline through an MCP server (`src/mcp_server.py`) that exposes two tools, `run_schedule` (compile + execute + log) and `lower_schedule` (compile only, dump IR for inspection). See [CLAUDE.md](CLAUDE.md) for the full technical overview.
+with a target of ≥ 2× (i.e. at least twice as fast as PyTorch). Claude interacts with the pipeline through an MCP server (`llm_transform/mcp_server.py`) that exposes two tools, `run_schedule` (compile + execute + log) and `lower_schedule` (compile only, dump IR for inspection). See [CLAUDE.md](CLAUDE.md) for the full technical overview.
 
 ---
 
@@ -27,6 +27,12 @@ Activate the main environment for everything except the PyTorch reference run:
 conda activate main
 ```
 
+Then install this project as an editable Python package so `llm_transform.*` imports resolve from anywhere:
+
+```bash
+pip install -e .
+```
+
 You will also need [Claude Code](https://docs.claude.com/en/docs/claude-code) installed and authenticated (`claude login`).
 
 ## 2. Building the legality check pass
@@ -35,11 +41,11 @@ The polyhedral legality check is a custom MLIR pass built as a shared library pl
 
 ```bash
 conda activate main
-cd src/tools/c/dependence
+cd llm_transform/tools/c/dependence
 make
 ```
 
-This produces `src/tools/c/dependence/build/lib/libPolyhedralLegalityCheck.so`, which is loaded by the validation harness and the MCP server. To rebuild from scratch use `make clean && make`.
+This produces `llm_transform/tools/c/dependence/build/lib/libPolyhedralLegalityCheck.so`, which is loaded by the validation harness and the MCP server. To rebuild from scratch use `make clean && make`.
 
 ## 3. Inputs
 
@@ -48,22 +54,22 @@ The system optimizes the MLIR files placed under [data/](data/). Each subdirecto
 To optimize a new kernel:
 
 1. Add `data/<name>/<instance>.mlir` with the target ops tagged `{tag = "<tag>"}` (see [CLAUDE.md](CLAUDE.md)) and an entry in `data/<name>/sizes.json`.
-2. If `<name>` isn't an already existing benchmark, add a matching PyTorch reference in [src/torch_exec.py](src/torch_exec.py) (an `<name>_op` / `<name>_inputs` pair plus a `case` in `main`) and an expected-output `case` in `transform_and_run` in [src/utils/execution.py](src/utils/execution.py).
+2. If `<name>` isn't an already existing benchmark, add a matching PyTorch reference in [llm_transform/torch_exec.py](llm_transform/torch_exec.py) (an `<name>_op` / `<name>_inputs` pair plus a `case` in `main`) and an expected-output `case` in `transform_and_run` in [llm_transform/utils/execution.py](llm_transform/utils/execution.py).
 
-To create a new instance of an existing benchmark, use [src/tools/create_instance.py](src/tools/create_instance.py). It generates the `.mlir` file and updates `sizes.json` automatically:
+To create a new instance of an existing benchmark, use [llm_transform/tools/create_instance.py](llm_transform/tools/create_instance.py). It generates the `.mlir` file and updates `sizes.json` automatically:
 
 ```bash
-python src/tools/create_instance.py <benchmark> <sizes...>
+python -m llm_transform.tools.create_instance <benchmark> <sizes...>
 ```
 
 Refer to `data/<benchmark>/sizes.json` for the size parameters expected by a given benchmark — pass them as `key=value` pairs (or as positional ints when the file stores a list). For example:
 
 ```bash
 # key=value pairs (when sizes.json stores a dict, e.g. matmul):
-python src/tools/create_instance.py matmul M=1024 K=1024 N=1024
+python -m llm_transform.tools.create_instance matmul M=1024 K=1024 N=1024
 
 # positional ints (when sizes.json stores a list, e.g. add):
-python src/tools/create_instance.py add 64 64 64 64
+python -m llm_transform.tools.create_instance add 64 64 64 64
 ```
 
 ## 4. Running an optimization session
@@ -72,6 +78,19 @@ The entry point is the Slurm script [scripts/claude.sh](scripts/claude.sh). Subm
 
 ```bash
 sbatch scripts/claude.sh
+```
+
+By default Claude optimizes every benchmark in `data/`. To restrict a session to a subset, pass benchmark names and/or full IDs (`{name}_{instance}`) as positional arguments:
+
+```bash
+# Just one instance:
+sbatch scripts/claude.sh matmul_2
+
+# Every instance of one benchmark:
+sbatch scripts/claude.sh matmul
+
+# A mix of names and full IDs:
+sbatch scripts/claude.sh matmul_2 conv_2d
 ```
 
 Slurm stdout for the Claude session is written to `logs/claude/<JOBID>.log`.
@@ -105,18 +124,18 @@ Outside the per-session folders, `logs/claude/` and `logs/jobs/` hold raw Slurm 
 
 ## 6. Plotting results
 
-Two helper scripts under [src/tools/](src/tools/) visualize the experiment logs.
+Two helper scripts under [llm_transform/tools/](llm_transform/tools/) visualize the experiment logs.
 
 Plot speedup over time, one curve per benchmark, for a single experiment:
 
 ```bash
-python src/tools/plot_performance.py <EXPERIMENT_ID>
+python -m llm_transform.tools.plot_performance <EXPERIMENT_ID>
 ```
 
 Compare multiple experiments side by side (one subplot per benchmark):
 
 ```bash
-python src/tools/plot_performance_compare.py <EXPERIMENT_ID_1> <EXPERIMENT_ID_2> ...
+python -m llm_transform.tools.plot_performance_compare <EXPERIMENT_ID_1> <EXPERIMENT_ID_2> ...
 ```
 
 Both scripts read from `logs/stats/` by default and save PNGs into the corresponding stats directory.
@@ -149,7 +168,7 @@ sbatch scripts/execute.sh -i matmul_2 \
     -p resources/base_passes.txt
 ```
 
-Pass `--id <name>_<instance>` (or `-i`) plus any flags accepted by `src/utils/execution.py` (transform schedule path, MLIR passes file, LLVM passes/flags, etc.). The base no-op schedule lives at [resources/base_schedule.mlir](resources/base_schedule.mlir) and the default lowering pipeline at [resources/base_passes.txt](resources/base_passes.txt).
+Pass `--id <name>_<instance>` (or `-i`) plus any flags accepted by `llm_transform/utils/execution.py` (transform schedule path, MLIR passes file, LLVM passes/flags, etc.). The base no-op schedule lives at [resources/base_schedule.mlir](resources/base_schedule.mlir) and the default lowering pipeline at [resources/base_passes.txt](resources/base_passes.txt).
 
 ## 9. Project layout
 
@@ -161,13 +180,14 @@ resources/
   base_schedule.mlir      # No-op transform schedule (starting point)
   base_passes.txt         # Default MLIR lowering pipeline
   conda/                  # Conda environment definitions
-src/
+llm_transform/            # Python package (installed via `pip install -e .`)
   mcp_server.py           # MCP tools: run_schedule, lower_schedule
   torch_exec.py           # PyTorch reference execution
   utils/                  # Compilation + execution pipeline
   tools/
     plot_performance*.py  # Plotting scripts
     c/dependence/         # Polyhedral legality check pass (C++/MLIR)
+pyproject.toml            # Package metadata
 scripts/
   claude.sh               # Slurm: launch a Claude optimization session
   execute.sh              # Slurm: evaluate one configuration

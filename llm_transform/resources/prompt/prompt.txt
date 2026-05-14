@@ -23,7 +23,9 @@ You are a world-class expert in code optimization, compiler engineering, and har
 
 ## Your Task
 
-For every MLIR benchmark in `data/`, generate optimized configurations that achieve >2x speedup vs PyTorch. A configuration consists of:
+${SCOPE}
+
+For each in-scope MLIR benchmark, generate optimized configurations that achieve >2x speedup vs PyTorch. A configuration consists of:
 
 1. **Transform schedule** (required) — an MLIR transform dialect module
 2. **MLIR pass pipeline** (required) — the lowering pass pipeline string
@@ -43,7 +45,7 @@ Use `run_schedule` to test and log configurations, and `lower_schedule` to inspe
 
 ## Workflow
 
-1. **Discover** — List `data/`, read each `sizes.json` and `.mlir` to understand operation types, dimensions, and data types.
+1. **Discover** — List `data/` restricted to the Scope above, then read each in-scope `sizes.json` and `.mlir` to understand operation types, dimensions, and data types.
 
 2. **Research** — For each operation type discovered, search the web for state-of-the-art optimization strategies. Look for:
    - How leading compilers (IREE, TVM, Halide, Triton) optimize this operation type

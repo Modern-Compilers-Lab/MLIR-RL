@@ -4,7 +4,7 @@
 
 #SBATCH -J claude
 #SBATCH -p compute
-##SBATCH -q c2
+#SBATCH -q c2
 #SBATCH -c 8
 #SBATCH --mem=32G
 #SBATCH -t 7-00
@@ -22,6 +22,12 @@ conda activate main
 # Execute the code
 FULL_SCRIPT_PATH=$(scontrol show job "$SLURM_JOB_ID" | awk -F= '/Command=/{print $2}' | cut -d' ' -f1)
 cd "$(dirname "$(dirname "$(realpath "$FULL_SCRIPT_PATH")")")"
+
+# Optional: subset of benchmarks/instances to optimize (names or full IDs).
+# Example: sbatch scripts/claude.sh matmul_2 conv_2d
+INSTANCE_FILTER="$*"
+export INSTANCE_FILTER
+echo "Instance filter: ${INSTANCE_FILTER:-ALL}"
 
 # Create a new experiment directory with a unique ID
 STATS_DIR="logs/stats"
@@ -65,16 +71,19 @@ log_tokens() {
     echo "$timestamp | input=$input_tokens | output=$output_tokens | total=$total_tokens | duration=$(format_duration "$duration")" >> "$EXPERIMENT_DIR/tokens.log"
 }
 
+# Render the prompt; scope is derived from $INSTANCE_FILTER.
+CLAUDE_PROMPT=$(python -m llm_transform.tools.build_prompt)
+
 # Start claude code sessions
 rm -f logs/jobs/*
 EXPERIMENT_START=$(date +%s)
 START=$(date +%s)
-OUTPUT=$(claude --permission-mode dontAsk --print --output-format=json "$(cat resources/prompt.txt)")
+OUTPUT=$(claude --permission-mode dontAsk --print --output-format=json "$CLAUDE_PROMPT")
 DURATION=$(( $(date +%s) - START ))
 log_tokens "$OUTPUT" "$DURATION"
 # for ((i = 0 ; i < 99 ; i++ )); do
 #     START=$(date +%s)
-#     OUTPUT=$(claude --continue --print --output-format=json "$(cat resources/prompt.txt)")
+#     OUTPUT=$(claude --continue --permission-mode dontAsk --print --output-format=json "$CLAUDE_PROMPT")
 #     DURATION=$(( $(date +%s) - START ))
 #     log_tokens "$OUTPUT" "$DURATION"
 # done
@@ -83,7 +92,7 @@ TOTAL_TOKENS=$(( TOTAL_INPUT_TOKENS + TOTAL_OUTPUT_TOKENS ))
 echo "TOTAL | input=$TOTAL_INPUT_TOKENS | output=$TOTAL_OUTPUT_TOKENS | total=$TOTAL_TOKENS | duration=$(format_duration "$TOTAL_DURATION")" >> "$EXPERIMENT_DIR/tokens.log"
 
 # Create performance plots
-python src/tools/plot_performance.py "$EXPERIMENT_ID"
+python -m llm_transform.tools.plot_performance "$EXPERIMENT_ID"
 
 # Cleanup
 rm -rf tmp/*

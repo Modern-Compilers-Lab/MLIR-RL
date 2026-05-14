@@ -9,7 +9,8 @@ import time
 
 from fastmcp import FastMCP
 
-from utils.transformation import transform_and_lower
+from llm_transform.utils.instance_filter import parse_instance_filter
+from llm_transform.utils.transformation import transform_and_lower
 
 PARENT_DIR = Path(__file__).parents[1]
 _SESSION_DIR = Path(os.environ["EXPERIMENT_DIR"]) if "EXPERIMENT_DIR" in os.environ else PARENT_DIR / "logs"
@@ -17,7 +18,22 @@ _LOG_FILE = _SESSION_DIR / "claude_optimization.log"
 _BEST_DIR = _SESSION_DIR / "best"
 _BEST_STATE_FILE = _BEST_DIR / "state.json"
 
-mcp = FastMCP("mlir-transform")
+mcp = FastMCP("llm-transform")
+
+
+_ALLOWED: set[str] | None = parse_instance_filter()
+
+
+def _check_id_in_scope(id: str) -> None:
+    if _ALLOWED is None:
+        return
+    name, _instance = id.rsplit("_", 1)
+    if id in _ALLOWED or name in _ALLOWED:
+        return
+    raise ValueError(
+        f"id '{id}' is outside the configured optimization scope "
+        f"({sorted(_ALLOWED)}). Pick an in-scope benchmark or instance."
+    )
 
 
 def _load_best_state() -> dict[str, float]:
@@ -131,6 +147,7 @@ def run_schedule(
         raise ValueError("MLIR passes cannot be empty")
     if not summary.strip():
         raise ValueError("Summary cannot be empty")
+    _check_id_in_scope(id)
 
     tmp_dir = PARENT_DIR / "tmp"
     with tempfile.NamedTemporaryFile(suffix=".mlir", mode="w", delete=False, dir=tmp_dir) as transform_schedule_tmp, \
@@ -239,6 +256,7 @@ def lower_schedule(
         raise ValueError("Transform schedule cannot be empty")
     if not mlir_passes.strip():
         raise ValueError("MLIR passes cannot be empty")
+    _check_id_in_scope(id)
 
     return transform_and_lower(id, transform_schedule, mlir_passes, llvm_passes, llvm_flags, llc_flags, bufferize_first, _SESSION_DIR)
 

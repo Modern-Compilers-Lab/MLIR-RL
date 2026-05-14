@@ -42,7 +42,7 @@ TESTS_DIR = PARENT_DIR / "tests" / "validation"
 PASSES_FILE = TESTS_DIR / "lowering_passes.txt"
 LEGALITY_PLUGIN = (
     PARENT_DIR /
-    "src" / "tools" / "c" / "dependence" /
+    "llm_transform" / "tools" / "c" / "dependence" /
     "build" / "lib" / "libPolyhedralLegalityCheck.so"
 )
 LEGALITY_PASS_PIPELINE = "builtin.module(convert-linalg-to-affine-loops,func.func(fold-memref-alias-ops,affine-raise-from-memref,check-polyhedral-legality))"
@@ -57,7 +57,7 @@ def load_legality_plugin() -> bool:
     if not path.exists():
         print(
             f"[warn] legality plugin not found at {path}; "
-            f"build it with `make -C src/tools/c/dependence "
+            f"build it with `make -C llm_transform/tools/c/dependence "
             f"PREFIX=$(python -c 'import sys;print(sys.prefix)')` "
             f"or set LEGALITY_PLUGIN=/path/to/libPolyhedralLegalityCheck.so",
             file=sys.stderr,
@@ -82,7 +82,7 @@ from mlir.ir import (
 from mlir.dialects.func import FuncOp
 from mlir.execution_engine import ExecutionEngine
 from mlir.runtime import get_ranked_memref_descriptor
-from src.utils.transformation import (
+from llm_transform.utils.transformation import (
     apply_pipeline_to_module,
     apply_pipeline_to_module_with_opt,
     bufferize_module,

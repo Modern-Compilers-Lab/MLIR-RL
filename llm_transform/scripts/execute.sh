@@ -53,7 +53,7 @@ set -- "${orig_args[@]}"
 echo "Evaluating code $CODE_ID:"
 
 # echo "Base:"
-# TIME_BASE=$(python src/utils/execution.py -i $CODE_ID -t resources/base_schedule.mlir -p resources/base_passes.txt)
+# TIME_BASE=$(python -m llm_transform.utils.execution -i $CODE_ID -t resources/base_schedule.mlir -p resources/base_passes.txt)
 # Return saved values since the base doesn't change
 # MATMUL_TYPE="${CODE_ID##*_}"
 # case $MATMUL_TYPE in
@@ -67,7 +67,7 @@ echo "Evaluating code $CODE_ID:"
 echo "Optimized:"
 ERR_FILE=$(mktemp)
 TIME_OPT=$(
-    python src/utils/execution.py $@
+    python -m llm_transform.utils.execution $@
 ) 2>"$ERR_FILE"
 EXIT_CODE=$?
 if [ $EXIT_CODE -ne 0 ]; then
@@ -88,7 +88,7 @@ echo "Execution time (ns): $TIME_OPT"
 
 echo "PyTorch:"
 conda activate torch-cpu
-TIME_TORCH=$(python src/torch_exec.py $CODE_ID) 2>"$ERR_FILE"
+TIME_TORCH=$(python -m llm_transform.torch_exec $CODE_ID) 2>"$ERR_FILE"
 EXIT_CODE=$?
 if [ $EXIT_CODE -ne 0 ]; then
   echo "Error: PyTorch execution failed (exit code $EXIT_CODE):" >&2
