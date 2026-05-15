@@ -1,0 +1,64 @@
+{
+  "intents": [
+    {
+      "name": "Multi-Core Parallelism",
+      "description": "Distribute the embarrassingly parallel outer loop iterations across the 28 available physical cores to maximize throughput on this memory-bound operation.",
+      "rationale": "The pooling loop nest has four fully independent outer loops (batch, channel, output spatial). With tensor sizes far exceeding cache capacity, parallelism is essential to aggregate memory bandwidth across cores and NUMA nodes. Without parallelization, only a single core's bandwidth is utilized, leaving ~96% of compute resources idle.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Parallelization (Tiling-Based)",
+          "description": "Tile one or more outer parallel loops and distribute the resulting tiles across threads.",
+          "rationale": "Tiling-based parallelization partitions the iteration space into coarse-grained chunks that map to threads. This approach composes naturally with cache tiling (the same or nested tile levels can serve both parallelism and locality) and avoids requiring the iteration count to be divisible by the thread count.",
+          "action_template": "ParallelizationTiling(tile_sizes) — tile_sizes is a vector of tile sizes for each loop dimension, with 0 meaning 'do not tile/parallelize that dimension'. The tiled loops are distributed across available threads."
+        },
+        {
+          "name": "Parallelization (Direct)",
+          "description": "Directly parallelize an outer loop by distributing its iterations across a specified number of threads.",
+          "rationale": "Direct parallelization is simpler and incurs no tiling overhead. For large, evenly divisible dimensions (e.g., batch=128 or 256), it provides an efficient work distribution with minimal scheduling cost. However, the number of threads must divide the iteration count to avoid correctness issues in subsequent MLIR lowering.",
+          "action_template": "ParallelizationDirect(num_threads) — num_threads specifies the number of parallel threads. Must be a divisor of the target loop's iteration count."
+        }
+      ]
+    },
+    {
+      "name": "Cache Locality",
+      "description": "Restructure the loop nest so that the working set of each inner computation fits within L1 or L2 cache, reducing main memory traffic.",
+      "rationale": "The operation is memory-bandwidth-bound with strided input access patterns. Tiling the spatial output dimensions ensures that the input region needed for a tile of outputs (including the reduction window overlap) fits in cache. Loop interchange aligns the innermost iteration with the contiguous memory dimension, improving hardware prefetcher effectiveness and reducing TLB misses.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Partition the iteration space into multi-dimensional blocks so that the data touched by each block fits in a target cache level.",
+          "rationale": "For pooling, each output tile requires a corresponding input region of size (tile_OH * stride + KH - stride) x (tile_OW * stride + KW - stride). Choosing tile sizes so this input footprint fits in L2 (~256KB) or L1 (~32KB) per core reduces repeated main-memory fetches and exploits spatial locality within the tile.",
+          "action_template": "Tiling(tile_sizes) — tile_sizes is a vector with one entry per loop dimension; 0 means 'do not tile that dimension'. OR Tiling(loop_band, tile_sizes) — loop_band identifies the target loop band."
+        },
+        {
+          "name": "Loop Interchange",
+          "description": "Permute the order of loops in a loop band to improve memory access locality.",
+          "rationale": "In NCHW layout, the W (width) dimension is the innermost and contiguous in memory. Ensuring the innermost loop iterates over the contiguous dimension (OW or the corresponding input W stride) maximizes cache line utilization and enables hardware prefetching. Interchange can also position parallel loops outermost for better parallelization granularity.",
+          "action_template": "LoopInterchange(loop_band, permutation) — permutation is an ordering of loop indices within the band. OR LoopInterchangeSwap(adjacent_pair) — swap two adjacent loops in the nest."
+        }
+      ]
+    },
+    {
+      "name": "SIMD Exploitation",
+      "description": "Map inner parallel iterations to SIMD vector lanes and eliminate loop overhead on tiny reduction loops to maximize per-core throughput.",
+      "rationale": "Even though the operation is memory-bound, the CPU must still process incoming data fast enough to not become a bottleneck. AVX2 provides 4-wide f64 max operations (vfmax), quadrupling per-cycle throughput. Unrolling the tiny reduction windows (1-9 iterations) removes branch overhead and allows the compiler to keep data in registers across the full window computation.",
+      "priority": "medium",
+      "transformations": [
+        {
+          "name": "Vectorization",
+          "description": "Map a parallel loop dimension to SIMD vector lanes, producing vector max operations.",
+          "rationale": "The innermost parallel dimension (typically OW) can be vectorized so that 4 f64 output elements are computed simultaneously using AVX2 vfmax instructions. This ensures the core can consume cache-line-delivered data at full rate without stalling on scalar max comparisons.",
+          "action_template": "Vectorization(target_loop, vector_width) — target_loop identifies the loop to vectorize; vector_width specifies the SIMD width. OR Vectorization(loop_band, vector_width) — vectorize the innermost suitable loop in the band."
+        },
+        {
+          "name": "Unrolling",
+          "description": "Fully or partially unroll a loop to eliminate loop overhead and increase instruction-level parallelism.",
+          "rationale": "The reduction loops (KH, KW) have very small trip counts (1 or 3). Full unrolling eliminates branch misprediction and loop counter overhead, and exposes the entire reduction to register allocation and instruction scheduling. For parallel loops, partial unrolling can also improve vectorization opportunities.",
+          "action_template": "Unrolling(loop_id, unroll_factor) — unroll_factor specifies how many iterations to unroll; 0 means full unroll. OR Unrolling(loop_band, unroll_factor) — unroll the innermost loop in the band."
+        }
+      ]
+    }
+  ]
+}

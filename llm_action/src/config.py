@@ -90,6 +90,8 @@ LS = 2
 LSD = 4
 ## Max number of transformation steps in an episode
 MAX_STEPS = 7
+## Per-class execution cap inside one episode for actions with `unique_execution = False`.
+MAX_ACTION_EXECUTIONS = 2
 ## Arithmetic operations to track in the observation
 ARITH_OPS = ["+", "-", "*", "/", "exp"]
 ## Number of operation types tracked in the observation. the enum currently has Generic, Matmul, Conv, Pooling, Add, Relu

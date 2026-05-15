@@ -40,3 +40,6 @@ claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_en
 
 # Conv
 ## python llm_action/src/prompts/action_enumeration.py --intents_num_min 2 --intents_num_max 3 --transformations_num_min 2 --transformations_num_max 3 & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_enumeration.py --benchmark dataset_conv2d)"
+
+# Pooling
+## python llm_action/src/prompts/action_enumeration.py --intents_num_min 2 --intents_num_max 3 --transformations_num_min 2 --transformations_num_max 3 & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_enumeration.py --benchmark dataset_pooling)"

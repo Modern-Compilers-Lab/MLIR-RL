@@ -40,3 +40,6 @@ claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_im
 
 # Conv
 ## python llm_action/src/prompts/action_implementation.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_implementation.py --benchmark dataset_conv2d)"
+
+# Pooling
+## python llm_action/src/prompts/action_implementation.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_implementation.py --benchmark dataset_pooling)"

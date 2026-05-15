@@ -36,5 +36,9 @@ claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_ex
 
 # Matmul
 ## python llm_action/src/prompts/schedule_exploration.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_exploration.py --action-version v29 --benchmark dataset_matmul)"
+
 # Conv
 ## python llm_action/src/prompts/schedule_exploration.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_exploration.py --action-version v30 --benchmark dataset_conv2d)"
+
+# Pooling
+## python llm_action/src/prompts/schedule_exploration.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_exploration.py --action-version v31 --benchmark dataset_pooling)"

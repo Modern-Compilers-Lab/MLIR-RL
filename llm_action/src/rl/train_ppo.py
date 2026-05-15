@@ -457,6 +457,7 @@ def parse_args():
     p.add_argument("--ent-coef", type=float, default=1e-2)
     p.add_argument("--ent-coef-final", type=float, default=1e-4)
     p.add_argument("--ent-coef-schedule", type=str, default="linear", choices=["linear", "exponential"])
+    p.add_argument("--action-head-init", type=str, default="default", choices=["default", "zero"])
     p.add_argument("--vf-coef", type=float, default=0.005)
     p.add_argument("--max-grad-norm", type=float, default=0.5)
     p.add_argument("--net-arch", type=int, nargs="+", default=[512, 512, 512])
@@ -573,6 +574,18 @@ def main():
             policy_kwargs={"net_arch": args.net_arch},
             seed=args.seed, verbose=1,
         )
+        if args.action_head_init == "zero":
+            import torch.nn as nn
+            head = model.policy.action_net
+            assert isinstance(head, nn.Linear), (
+                f"Expected nn.Linear action head for MultiCategorical/Categorical "
+                f"action space; got {type(head).__name__}"
+            )
+            nn.init.zeros_(head.weight)
+            nn.init.zeros_(head.bias)
+            logging.info(
+                f"Zero-initialized policy action head: Linear(in={head.in_features}, out={head.out_features})"
+            )
     model.set_logger(sb3_logger)
 
     registry = load_action_registry(args.action_version)

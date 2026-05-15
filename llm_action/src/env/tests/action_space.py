@@ -85,7 +85,7 @@ def main():
     print("--- Action masks ---")
     masks_full = build_action_masks(
         reg, slot_map, n_loops=L, max_n_loops=L,
-        used_action_indices=set(),
+        used_action_counts={},
     )
     print(f"  n_loops={L}: mask length={len(masks_full)}, True={masks_full.sum()}/{len(masks_full)}")
     assert len(masks_full) == sum(space.nvec)
@@ -93,7 +93,7 @@ def main():
     if L > 1:
         masks_1 = build_action_masks(
             reg, slot_map, n_loops=1, max_n_loops=L,
-            used_action_indices=set(),
+            used_action_counts={},
         )
         print(f"  n_loops=1: mask length={len(masks_1)}, True={masks_1.sum()}/{len(masks_1)}")
         assert masks_1.sum() <= masks_full.sum()
@@ -101,10 +101,27 @@ def main():
 
     masks_used = build_action_masks(
         reg, slot_map, n_loops=L, max_n_loops=L,
-        used_action_indices=set(range(reg.num_actions)),
+        used_action_counts={idx: 1 for idx in range(reg.num_actions)},
     )
     assert masks_used[reg.done_idx], "FAIL: done should always be unmasked"
-    print(f"  All actions used: done still available (per-action unique_execution honored) #")
+    print(f"  All actions used once: done still available (per-action unique_execution honored) #")
+
+    # New cap-coverage assertion: at MAX_ACTION_EXECUTIONS, even unique_execution=False
+    # action indices must be masked.
+    from llm_action.src.config import MAX_ACTION_EXECUTIONS
+    masks_cap = build_action_masks(
+        reg, slot_map, n_loops=L, max_n_loops=L,
+        used_action_counts={idx: MAX_ACTION_EXECUTIONS for idx in range(reg.num_actions)},
+    )
+    for idx in range(reg.num_actions):
+        if idx == reg.done_idx:
+            continue
+        assert masks_cap[idx] == False, (
+            f"FAIL: action {idx} should be masked once count == MAX_ACTION_EXECUTIONS "
+            f"(unique_execution={reg.action_classes[idx].unique_execution})"
+        )
+    assert masks_cap[reg.done_idx], "FAIL: done should always be unmasked"
+    print(f"  All actions at cap ({MAX_ACTION_EXECUTIONS} uses): all masked except done #")
     print()
 
     print("=== ALL CHECKS PASSED ===")

@@ -8,7 +8,7 @@ SB3's MaskablePPO, and provides a slot_map for unpacking.
 import numpy as np
 from gymnasium import spaces
 
-from llm_action.src.config import L
+from llm_action.src.config import L, MAX_ACTION_EXECUTIONS
 
 
 def build_action_space(registry, max_n_loops: int = L):
@@ -57,21 +57,24 @@ def compute_blocked_indices(registry, used_action_indices: set[int]) -> frozense
 
 
 def build_action_masks(registry, slot_map, n_loops: int, max_n_loops: int,
-                       used_action_indices: set,
+                       used_action_counts: dict[int, int],
                        blocked_by_dependency: frozenset[int] = frozenset()) -> np.ndarray:
     """Build per-dimension boolean masks for MaskablePPO.
 
     Returns a flat bool array: [action_mask | param_slot_masks...].
     Each action class declares `unique_execution: bool` (default True via
-    ActionBase). Used actions whose class sets `unique_execution = True` are
-    masked; classes with `unique_execution = False` remain selectable.
-    `blocked_by_dependency` is applied on top of per-action uniqueness; the
-    done action is always kept available so the agent can terminate the episode.
+    ActionBase). The per-class execution cap is:
+      - `unique_execution = True`  -> 1 use per episode (mask after 1 use)
+      - `unique_execution = False` -> MAX_ACTION_EXECUTIONS uses per episode
+    `used_action_counts` maps action_idx -> times already executed this episode.
+    `blocked_by_dependency` is applied on top; the done action is always kept
+    available so the agent can terminate the episode.
     """
     # Action selector mask
     action_mask = np.ones(registry.total_actions, dtype=bool)
-    for idx in used_action_indices:
-        if registry.action_classes[idx].unique_execution:
+    for idx, count in used_action_counts.items():
+        cap = 1 if registry.action_classes[idx].unique_execution else MAX_ACTION_EXECUTIONS
+        if count >= cap:
             action_mask[idx] = False
     for idx in blocked_by_dependency:
         action_mask[idx] = False

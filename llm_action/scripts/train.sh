@@ -41,5 +41,7 @@ python -m llm_action.src.rl.train_ppo "$@"
 ## sbatch llm_action/scripts/train.sh --action-version v29 --benchmarks-name dataset_matmul --exp-name v29_dataset_matmul_ent_decay
 
 # Conv2d Dataset
-## sbatch llm_action/scripts/train.sh --action-version v30 --benchmarks-name dataset_conv2d --exp-name v30_dataset_conv2d_ent.005 --ent-coef 0.005
-## sbatch llm_action/scripts/train.sh --action-version v30 --benchmarks-name dataset_conv2d --exp-name v30_dataset_conv2d_explore --ent-coef 0.02 --ent-coef-final 0.001
+## sbatch llm_action/scripts/train.sh --action-version v30 --benchmarks-name dataset_conv2d --exp-name v30_dataset_conv2d --ent-coef 0.0025 --ent-coef-final 0.0001 --action-head-init zero
+
+# Pooling Dataset
+## sbatch llm_action/scripts/train.sh --action-version v31 --benchmarks-name dataset_pooling --exp-name v31_dataset_pooling --ent-coef 0.01 --ent-coef-final 0.0001 --max-steps 5

@@ -13,7 +13,7 @@ from llm_action.src.execution.dask_executor import DaskExecutor, get_shared_clie
 from llm_action.src.execution.slurm_executor import SlurmExecutor
 from llm_action.src.env.state_extractor import extract_observation, observation_size, count_loops
 from llm_action.src.env.action_space import build_action_space, build_action_masks, compute_blocked_indices
-from llm_action.src.config import L
+from llm_action.src.config import L, MAX_ACTION_EXECUTIONS
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ class MLIROptEnv(gym.Env):
         self._current_code = ""
         self._action_history: list[tuple[str, dict]] = []
         self._action_indices: list[tuple[int, bool]] = []
-        self._used_action_indices: set[int] = set()
+        self._used_action_counts: dict[int, int] = {}
         self._step_count = 0
         self._episode_count = 0
         self._last_exec_time_ms: float = -1.0
@@ -110,7 +110,7 @@ class MLIROptEnv(gym.Env):
         self._current_code = self._benchmark.code
         self._action_history = []
         self._action_indices: list[tuple[int, bool]] = []
-        self._used_action_indices: set[int] = set()
+        self._used_action_counts: dict[int, int] = {}
         self._step_count = 0
         self._last_exec_time_ms = -1.0
 
@@ -135,7 +135,7 @@ class MLIROptEnv(gym.Env):
         terminate.
         """
         blocked = (
-            compute_blocked_indices(self.registry, self._used_action_indices)
+            compute_blocked_indices(self.registry, set(self._used_action_counts.keys()))
             if self.cfg.enable_dependency_masking
             else frozenset()
         )
@@ -145,14 +145,15 @@ class MLIROptEnv(gym.Env):
                 self.registry, self._slot_map,
                 n_loops=self._n_loops,
                 max_n_loops=self.cfg.max_num_loops,
-                used_action_indices=self._used_action_indices,
+                used_action_counts=self._used_action_counts,
                 blocked_by_dependency=blocked,
             )
 
         reg = self.registry
         action_mask = np.ones(reg.total_actions, dtype=bool)
-        for idx in self._used_action_indices:
-            if reg.action_classes[idx].unique_execution:
+        for idx, count in self._used_action_counts.items():
+            cap = 1 if reg.action_classes[idx].unique_execution else MAX_ACTION_EXECUTIONS
+            if count >= cap:
                 action_mask[idx] = False
         for idx in blocked:
             action_mask[idx] = False
@@ -174,13 +175,12 @@ class MLIROptEnv(gym.Env):
             self._log_episode_summary(reward, opt_t)
             return self._obs(), reward, True, False, self._info(reward, opt_time_ms=opt_t)
 
-        if (
-            action_idx in self._used_action_indices
-            and reg.action_classes[action_idx].unique_execution
-        ):
+        _used = self._used_action_counts.get(action_idx, 0)
+        _cap = 1 if reg.action_classes[action_idx].unique_execution else MAX_ACTION_EXECUTIONS
+        if _used >= _cap:
             # Unreachable during MaskablePPO training; safety net for unmasked inference.
             action_name = reg.action_classes[action_idx].__name__
-            self._log(f"  step {self._step_count}: {action_name} | FAIL (already used) [mask bypass]")
+            self._log(f"  step {self._step_count}: {action_name} | FAIL (cap reached: {_used}/{_cap}) [mask bypass]")
             return self._fail_step(action_idx)
 
         action_class = reg.action_classes[action_idx]
@@ -211,7 +211,7 @@ class MLIROptEnv(gym.Env):
         self._current_code = new_code
         self._action_history.append((action_name, params))
         self._action_indices.append((action_idx, True))
-        self._used_action_indices.add(action_idx)
+        self._used_action_counts[action_idx] = self._used_action_counts.get(action_idx, 0) + 1
 
         # Update loop count in case the action changed the op structure
         # (e.g., Image2Col converts 7-loop conv2d to 4-loop generic)
