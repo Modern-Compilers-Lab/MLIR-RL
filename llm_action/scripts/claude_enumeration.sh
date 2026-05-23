@@ -39,7 +39,14 @@ claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_en
 ## python llm_action/src/prompts/action_enumeration.py --intents_num_min 2 --intents_num_max 3 --transformations_num_min 2 --transformations_num_max 3 & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_enumeration.py --benchmark dataset_matmul)"
 
 # Conv
-## python llm_action/src/prompts/action_enumeration.py --intents_num_min 2 --intents_num_max 3 --transformations_num_min 2 --transformations_num_max 3 & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_enumeration.py --benchmark dataset_conv2d)"
+## python llm_action/src/prompts/action_enumeration.py --intents_num_min 2 --intents_num_max 3 --transformations_num_min 2 --transformations_num_max 4 & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_enumeration.py --benchmark dataset_conv2d)"
+## python llm_action/src/prompts/action_enumeration.py --intents_num_min 2 --intents_num_max 3 --transformations_num_min 2 --transformations_num_max 4 & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_enumeration.py --benchmark dataset_conv2d_img2col)"
 
 # Pooling
 ## python llm_action/src/prompts/action_enumeration.py --intents_num_min 2 --intents_num_max 3 --transformations_num_min 2 --transformations_num_max 3 & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_enumeration.py --benchmark dataset_pooling)"
+
+# Add
+## python llm_action/src/prompts/action_enumeration.py --intents_num_min 2 --intents_num_max 3 --transformations_num_min 2 --transformations_num_max 3 & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_enumeration.py --benchmark dataset_add)"
+
+# ReLu
+## python llm_action/src/prompts/action_enumeration.py --intents_num_min 2 --intents_num_max 3 --transformations_num_min 2 --transformations_num_max 3 & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_enumeration.py --benchmark dataset_relu)"

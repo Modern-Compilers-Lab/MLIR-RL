@@ -1,0 +1,64 @@
+{
+  "intents": [
+    {
+      "name": "Data-Level Parallelism (SIMD)",
+      "description": "Exploit AVX2 vector instructions to process multiple elements per cycle, reducing total instruction count for the bandwidth-bound compare+select pattern.",
+      "rationale": "ReLU has negligible arithmetic intensity (~0.15 ops/byte). The per-element compare+select maps directly to SIMD compare and blend instructions. Vectorizing with 4 f64 lanes (256-bit AVX2) reduces instruction count by 4x, which is the highest-impact single-thread optimization for this workload.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Vectorization",
+          "description": "Convert innermost loop iterations into SIMD vector operations, processing multiple elements per instruction.",
+          "rationale": "The element-wise compare+select has no cross-lane dependencies, making it ideal for vectorization. On the target hardware (AVX2, f64), each vector instruction processes 4 elements, directly reducing instruction count and improving throughput for this bandwidth-bound kernel.",
+          "action_template": "Vectorization(target_loop, vector_width) OR Vectorization(loop_band, vector_width) — target_loop identifies which loop to vectorize (typically the innermost); vector_width specifies the number of elements per vector operation."
+        },
+        {
+          "name": "Loop Interchange",
+          "description": "Permute the loop ordering to place a loop with stride-1 memory access at the innermost position.",
+          "rationale": "Vectorization requires contiguous memory access in the target loop for efficient SIMD loads/stores. While default loop ordering often provides this, tiling or non-standard layouts may break contiguity. Interchange restores optimal ordering and also improves spatial cache line utilization for non-vectorized code.",
+          "action_template": "LoopInterchange(loop_band, permutation) OR LoopInterchangeSwap(adjacent_pair) — permutation specifies the new loop ordering within a band; adjacent_pair swaps two neighboring loops."
+        }
+      ]
+    },
+    {
+      "name": "Thread-Level Parallelism",
+      "description": "Distribute loop iterations across multiple CPU cores to saturate memory bandwidth and reduce wall-clock time for large tensors.",
+      "rationale": "All ReLU loops are embarrassingly parallel with zero inter-element dependencies. Large instances (up to ~3.3 GB for 128x256x112x112 at f64) far exceed single-core bandwidth capacity. Distributing across 28 physical cores is essential to approach peak memory bandwidth on this dual-socket system.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Parallelization (Tiling-Based)",
+          "description": "Tile outer loop dimensions and distribute the resulting tiles across threads for parallel execution.",
+          "rationale": "Tiling-based parallelization creates balanced, cache-friendly work units and composes well with subsequent inner tiling or vectorization. It handles arbitrary tensor shapes without requiring exact divisibility of iteration counts.",
+          "action_template": "Parallelization(tile_sizes) — tile_sizes specifies the chunk size per dimension for work distribution; dimensions with tile_size 0 are not parallelized."
+        },
+        {
+          "name": "Parallelization (Direct)",
+          "description": "Directly split a loop's iteration space across a specified number of threads without explicit tiling.",
+          "rationale": "Direct thread-based parallelization is simpler and avoids tile overhead for cases where the iteration count cleanly divides by thread count. It provides a complementary parallelization strategy to the tiling-based approach.",
+          "action_template": "Parallelization(num_threads) — num_threads specifies the number of parallel threads; must be a divisor of the target loop's iteration count to avoid partial-iteration failures in downstream MLIR passes."
+        }
+      ]
+    },
+    {
+      "name": "Iteration Space Restructuring",
+      "description": "Reshape the loop nest structure through blocking and unrolling to improve cache behavior, reduce loop overhead, and increase instruction-level parallelism.",
+      "rationale": "For very large tensors, the streaming access pattern of ReLU causes TLB pressure and poor NUMA locality. Tiling creates bounded working sets that reduce TLB misses and produce well-sized blocks for parallel distribution. Unrolling complements this by reducing per-iteration loop overhead and exposing independent load/store chains to the out-of-order engine.",
+      "priority": "medium",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Partition the iteration space into fixed-size blocks, creating inner loops that operate on cache-friendly data chunks.",
+          "rationale": "While standalone ReLU lacks temporal data reuse, tiling still benefits large tensors by reducing TLB misses, improving spatial locality within cache lines, and creating uniform work units for parallelization. It also establishes inner tile loops that are well-sized for vectorization.",
+          "action_template": "Tiling(tile_sizes) OR Tiling(loop_band, tile_sizes) — tile_sizes is a vector specifying the block size per loop dimension; 0 means the corresponding loop is not tiled."
+        },
+        {
+          "name": "Unrolling",
+          "description": "Replicate the loop body multiple times to reduce loop overhead and expose instruction-level parallelism.",
+          "rationale": "For bandwidth-bound element-wise operations, loop overhead (branch prediction, counter updates) can be a non-trivial fraction of total execution time, especially for small inner trip counts after tiling. Unrolling exposes multiple independent load-compute-store chains, enabling the out-of-order engine to overlap memory accesses with computation.",
+          "action_template": "Unrolling(loop_id, unroll_factor) OR Unrolling(loop_band, unroll_factor) — loop_id or loop_band identifies the target loop; unroll_factor specifies the replication count."
+        }
+      ]
+    }
+  ]
+}

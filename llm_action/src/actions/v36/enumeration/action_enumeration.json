@@ -1,0 +1,70 @@
+{
+  "intents": [
+    {
+      "name": "Cache Locality and Data Reuse",
+      "description": "Restructure the iteration space of the contraction loop nest to maximize temporal and spatial data reuse within L1/L2 caches.",
+      "rationale": "The contraction operation has significant reuse across batch, filter, spatial, and reduction dimensions. Without tiling, working sets far exceed cache capacity, causing excessive DRAM traffic and stalling the compute pipeline.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Partition the contraction's iteration space into multi-dimensional blocks that fit in the target cache level.",
+          "rationale": "Tiling is the most impactful single transformation for loop nests with large iteration spaces and data reuse. It controls the working set size per tile, enabling data to remain in L1/L2 across inner iterations.",
+          "action_template": "Tiling(tile_sizes) OR Tiling(loop_id, factor) OR Tiling(loop_band, tile_sizes) — tile_sizes is a vector where 0 means 'do not tile' for that dimension. Allows multi-level tiling when applied repeatedly."
+        },
+        {
+          "name": "Loop Interchange",
+          "description": "Reorder loops within the contraction's loop nest to improve memory access stride patterns.",
+          "rationale": "The contraction accesses three tensors with different index orderings. Loop interchange places the dimension with stride-one access innermost, reducing cache line waste and enabling hardware prefetching.",
+          "action_template": "LoopInterchange(loop_band, permutation) OR LoopInterchangeSwap(adjacent_pair) — permutation reorders all loops in the band simultaneously; adjacent_pair swaps two neighboring loops."
+        },
+        {
+          "name": "Promotion",
+          "description": "Copy tiled operand slices into contiguous temporary buffers to eliminate non-unit-stride memory accesses.",
+          "rationale": "After tiling, operand slices may have non-contiguous layouts due to the original tensor strides. Promotion into local contiguous buffers ensures vectorization-friendly access patterns and eliminates TLB and cache-line splitting overhead.",
+          "action_template": "Promotion(operands_to_promote) — operands_to_promote is a list of operand indices (e.g., [0], [1], [0,1,2]) specifying which operands to copy into contiguous local buffers. Promotion requires buffer (memref) form, so this action must include an internal bufferization preprocessing step."
+        }
+      ]
+    },
+    {
+      "name": "SIMD Exploitation and Compute Throughput",
+      "description": "Maximize per-core throughput by mapping inner loop iterations to AVX2 vector instructions and saturating the FMA pipeline.",
+      "rationale": "FP64 on AVX2 provides 4-wide SIMD lanes and fused multiply-add capability. The contraction's regular access patterns after tiling are ideal for vectorization. Without SIMD utilization, the core operates at 1/4 of peak FP64 throughput.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Vectorization",
+          "description": "Map innermost loop iterations of the contraction to SIMD vector operations at the target vector width.",
+          "rationale": "Vectorization is essential for achieving peak FP64 throughput on AVX2 hardware. The contraction's multiply-accumulate pattern maps directly to FMA vector instructions.",
+          "action_template": "Vectorization(target_loop, vector_width) OR Vectorization(loop_band, vector_width) — vector_width specifies the number of elements per SIMD operation; target_loop or loop_band identifies which loop(s) to vectorize."
+        },
+        {
+          "name": "Unrolling",
+          "description": "Unroll inner loops to expose more independent operations and reduce loop control overhead.",
+          "rationale": "Unrolling increases instruction-level parallelism by exposing multiple independent FMA operations per loop iteration. This keeps the FMA pipeline full and reduces branch overhead relative to computation.",
+          "action_template": "Unrolling(loop_id, unroll_factor) OR Unrolling(loop_band, unroll_factor) — unroll_factor specifies how many iterations to unroll; loop_id or loop_band identifies the target loop."
+        }
+      ]
+    },
+    {
+      "name": "Multi-Core Work Distribution",
+      "description": "Distribute the contraction's parallel iteration dimensions across physical cores to utilize the full multi-core CPU.",
+      "rationale": "The target machine has 28 physical cores. The contraction has three parallel dimensions with large trip counts (batch up to 256, filters up to 512). Without parallelization, only one core is utilized, leaving 27 cores idle.",
+      "priority": "medium",
+      "transformations": [
+        {
+          "name": "Parallelization (Tiling-Based)",
+          "description": "Create coarse-grained tiles over parallel dimensions and distribute them across threads using parallel loop constructs.",
+          "rationale": "Tiling-based parallelization provides flexible, NUMA-friendly work partitioning. Coarse tiles ensure each thread has enough work to amortize synchronization overhead, and tile sizes can adapt to different loop trip counts.",
+          "action_template": "Parallelization(tile_sizes) — tile_sizes defines the chunk size per dimension for work distribution; dimensions with tile_size 0 are not parallelized. Each tile becomes a parallel work unit."
+        },
+        {
+          "name": "Parallelization (Direct)",
+          "description": "Directly distribute iterations of a parallel loop across a specified number of threads.",
+          "rationale": "Direct parallelization is simpler when a single outer loop has a trip count that divides evenly by the thread count. It avoids the overhead of an extra tiling level when the natural iteration space already partitions cleanly.",
+          "action_template": "Parallelization(num_threads) — num_threads specifies the number of threads to distribute iterations across. The thread count must divide the iteration count for correctness in downstream MLIR lowering."
+        }
+      ]
+    }
+  ]
+}

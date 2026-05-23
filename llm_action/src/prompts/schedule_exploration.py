@@ -110,6 +110,21 @@ Each action tool has the signature:
 ```
 Returns: `(precondition_passed, transformed_code_or_original, postcondition_passed)`
 
+## Parameter Legality: Divisibility Constraints (Critical)
+
+**Protocol for selecting tile/vector sizes:**
+1. Inspect the MLIR code to read the loop bounds of the tagged operation (look for the iteration space in the linalg op or surrounding `scf.for` bounds).
+2. For each dimension, choose a size that **exactly divides** the loop bound.
+3. Never assume a fixed VOCAB value is valid without checking divisibility.
+
+**Why this matters:**
+- `tile_using_for` with a non-divisible tile size produces a remainder loop with a dynamic trip count. This is not an error at the tiling stage, but it causes downstream vectorization to emit dynamic vector types, which MLIR cannot lower to LLVM.
+- During RL training, the `valid_param_mask` mechanism prevents the agent from selecting such parameters automatically. During exploration you must enforce this manually.
+
+**Recording failures:**
+- If a tool call fails solely because of a non-divisible parameter choice, do NOT record a dependency edge — this is a tuning error, not a structural incompatibility.
+- Re-try with a valid divisor before concluding two actions are incompatible.
+
 ## Composability Protocol
 
 To compose a schedule [A(p1), B(p2), C(p3)]:
@@ -144,10 +159,10 @@ Use this exact markdown structure:
 
 ```markdown
 # MLIR Schedule Exploration Log: <kernel_name>
-# Action Version: v<x>
-# Kernel: <brief description, e.g. linalg.matmul 256x512 @ 512x1024, f64>
-# Hardware: Intel Xeon E5-2680 v4 (Broadwell), AVX2, 28 cores
-# Date: <YYYY-MM-DD>
+- Action Version: v<x>
+- Kernel: <brief description, e.g. linalg.matmul 256x512 @ 512x1024, f64>
+- Hardware: Intel Xeon E5-2680 v4 (Broadwell), AVX2, 28 cores
+- Date: <YYYY-MM-DD>
 
 ## Baseline
 - MLIR base time: <X> ms
@@ -240,9 +255,10 @@ Include `X -> Y` only when:
 2. The failure mode is **structural** — tag lost, op lowered away, IR no longer
    in linalg form, payload op invalidated — not parameter-specific.
 
-Parameter-only failures (e.g., wrong tile size, vector length not dividing the
-operation dimension) are NOT dependency edges; they are tuning errors and the
-RL agent should still be allowed to try `Y` with different parameters.
+Parameter-only failures (e.g., non-divisible tile size, vector length not dividing the
+loop bound) are NOT dependency edges; they are tuning errors and the RL agent should
+still be allowed to try `Y` with a valid parameter. Before encoding a block edge, always
+re-try `Y` with a divisor-correct parameter set to confirm the failure is structural.
 
 When in doubt, omit the edge. False negatives only cost some sample
 efficiency; false positives permanently block valid schedules.

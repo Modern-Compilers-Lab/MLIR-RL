@@ -11,7 +11,7 @@ from llm_action.src.env.env_config import EnvConfig
 from llm_action.src.execution.local_executer import LocalExecutor
 from llm_action.src.execution.dask_executor import DaskExecutor, get_shared_client
 from llm_action.src.execution.slurm_executor import SlurmExecutor
-from llm_action.src.env.state_extractor import extract_observation, observation_size, count_loops
+from llm_action.src.env.state_extractor import extract_observation, observation_size, count_loops, _parse_loop_info
 from llm_action.src.env.action_space import build_action_space, build_action_masks, compute_blocked_indices
 from llm_action.src.config import L, MAX_ACTION_EXECUTIONS
 
@@ -81,6 +81,7 @@ class MLIROptEnv(gym.Env):
         self._episode_count = 0
         self._last_exec_time_ms: float = -1.0
         self._n_loops = L
+        self._loop_bounds: list[int] = []
 
     @property
     def param_observation_size(self) -> int:
@@ -118,7 +119,7 @@ class MLIROptEnv(gym.Env):
         self._log(f"[EP {self._episode_count}] RESET | benchmark={self._benchmark.name} | "
                    f"base={self._benchmark.base_exec_time_ms:.2f}ms")
 
-        self._n_loops = count_loops(self._current_code)
+        self._n_loops, self._loop_bounds = _parse_loop_info(self._current_code)
         obs = self._obs()
 
         return obs, {"benchmark": self._benchmark.name}
@@ -147,6 +148,7 @@ class MLIROptEnv(gym.Env):
                 max_n_loops=self.cfg.max_num_loops,
                 used_action_counts=self._used_action_counts,
                 blocked_by_dependency=blocked,
+                loop_bounds=self._loop_bounds,
             )
 
         reg = self.registry
@@ -213,9 +215,9 @@ class MLIROptEnv(gym.Env):
         self._action_indices.append((action_idx, True))
         self._used_action_counts[action_idx] = self._used_action_counts.get(action_idx, 0) + 1
 
-        # Update loop count in case the action changed the op structure
+        # Update loop count and bounds in case the action changed the op structure
         # (e.g., Image2Col converts 7-loop conv2d to 4-loop generic)
-        self._n_loops = count_loops(self._current_code)
+        self._n_loops, self._loop_bounds = _parse_loop_info(self._current_code)
 
         # If the tag was consumed (e.g., Vectorization), auto-terminate
         tag_gone = 'tag = "operation_0"' not in self._current_code
@@ -255,14 +257,15 @@ class MLIROptEnv(gym.Env):
 
     def _resolve_params(self, action_class, param_slots: list[int] | None) -> dict | None:
         n = self._n_loops
+        bounds = self._loop_bounds
 
         if self.param_mode == "multidiscrete":
-            return action_class.decode_params(param_slots or [], n_loops=n)
+            return action_class.decode_params(param_slots or [], n_loops=n, loop_bounds=bounds)
 
         if self.param_mode == "two_policy" and self._param_model is not None:
             param_obs = self._build_param_obs(action_class)
             raw_slots, _ = self._param_model.predict(param_obs, deterministic=False)
-            return action_class.decode_params(raw_slots.tolist(), n_loops=n)
+            return action_class.decode_params(raw_slots.tolist(), n_loops=n, loop_bounds=bounds)
 
         if self.param_mode == "llm" and self._llm_parametrizer is not None:
             for _ in range(self.cfg.parametrizer_retries + 1):
@@ -274,7 +277,7 @@ class MLIROptEnv(gym.Env):
                     pass
             return None
 
-        return action_class.decode_params([0] * action_class.params_size(), n_loops=n)
+        return action_class.decode_params([0] * action_class.params_size(), n_loops=n, loop_bounds=bounds)
 
     def _build_param_obs(self, action_class) -> np.ndarray:
         """Observation for the param policy: base obs + one-hot action."""

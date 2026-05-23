@@ -1,0 +1,64 @@
+{
+  "intents": [
+    {
+      "name": "SIMD Vectorization for Bandwidth Saturation",
+      "description": "Exploit AVX2 vector units to process multiple FP64 elements per cycle, directly increasing per-core memory throughput for this bandwidth-bound element-wise operation.",
+      "rationale": "linalg.add has minimal arithmetic intensity (~0.33 flops per memory access). Without vectorization, each core processes one element per cycle; with AVX2, four FP64 elements per cycle. Vectorization is the primary lever to saturate available memory bandwidth per core.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Vectorization",
+          "description": "Map the innermost contiguous loop iterations to SIMD vector lanes, converting scalar load-add-store sequences into vector operations.",
+          "rationale": "For bandwidth-bound element-wise operations, vectorization provides up to 4x throughput improvement per core (AVX2, FP64). It is the single highest-impact transformation for this workload class.",
+          "action_template": "Vectorization(target_loop, vector_width) OR Vectorization(loop_band, vector_width) — target_loop identifies which loop to vectorize (should be the stride-1 innermost loop), vector_width specifies the SIMD width in elements (e.g., 4 for FP64 with AVX2)."
+        },
+        {
+          "name": "Loop Interchange",
+          "description": "Permute the loop nest to place the stride-1 (memory-contiguous) dimension as the innermost loop, enabling efficient vector memory access and full cache line utilization.",
+          "rationale": "Vectorization requires stride-1 access in the innermost loop. If prior transformations (tiling, parallelization) alter loop ordering, interchange restores the optimal memory access pattern. It also ensures sequential cache line consumption, avoiding partial-line waste.",
+          "action_template": "LoopInterchange(loop_band, permutation) OR LoopInterchangeSwap(adjacent_pair) — permutation is an ordering of loop indices within the band; adjacent_pair specifies two neighboring loops to swap."
+        }
+      ]
+    },
+    {
+      "name": "Multi-Core Work Distribution",
+      "description": "Distribute fully independent loop iterations across all 28 physical cores to scale aggregate memory bandwidth utilization across both NUMA nodes.",
+      "rationale": "All iterations of linalg.add are independent (no reductions or loop-carried dependencies). A single core can only consume a fraction of total DRAM bandwidth. Parallelizing across all cores, spanning both NUMA nodes, is essential to approach peak system memory throughput.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Parallelization (Tiling-Based)",
+          "description": "Partition the iteration space into coarse-grained tiles and distribute tiles across threads, giving the RL agent control over work granularity.",
+          "rationale": "Tiling-based parallelization naturally composes with cache tiling and provides explicit control over per-thread working set size. It handles irregular dimension sizes gracefully and avoids the constraint that dimensions must be evenly divisible by thread count.",
+          "action_template": "Parallelization(tile_sizes) — tile_sizes is a vector specifying the tile size per loop dimension (0 means do not tile/parallelize that dimension). The outer tiled loops are distributed across threads."
+        },
+        {
+          "name": "Parallelization (Thread-Based)",
+          "description": "Directly distribute iterations of an outer loop across a fixed number of threads without explicit tiling.",
+          "rationale": "Simpler than tiling-based parallelization and sufficient when outer dimensions are large enough to divide evenly among threads. Lower transformation overhead but less flexible for irregular shapes.",
+          "action_template": "Parallelization(num_threads) — num_threads specifies the number of parallel threads. The outermost loop iterations are distributed across threads. num_threads should divide the iteration count to avoid partial-iteration edge cases in downstream passes."
+        }
+      ]
+    },
+    {
+      "name": "Cache and Streaming Efficiency",
+      "description": "Organize iteration space to reduce TLB pressure, improve hardware prefetch efficiency, and increase instruction-level parallelism for streaming memory access patterns.",
+      "rationale": "Large 4D tensors (up to ~5 GB total for three FP64 operands) far exceed cache capacity. While element-wise ops have no temporal reuse, tiling reduces the number of concurrent memory streams and active TLB entries, improving hardware prefetcher hit rates. Loop unrolling increases ILP to overlap load latencies with computation.",
+      "priority": "medium",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Block the iteration space into fixed-size tiles to organize memory accesses into cache-friendly streaming patterns and reduce TLB working set.",
+          "rationale": "For large tensors, untiled traversal accesses many distinct virtual pages simultaneously, causing TLB thrashing and degraded prefetch accuracy. Tiling constrains the active working set per tile to L1/L2 cache size, improving hardware prefetch stream tracking and reducing page-table walk overhead.",
+          "action_template": "Tiling(tile_sizes) OR Tiling(loop_band, tile_sizes) — tile_sizes is a vector with one entry per loop dimension (0 means do not tile that dimension). Tile sizes should be chosen to fit the working set of one tile within L1 or L2 cache."
+        },
+        {
+          "name": "Loop Unrolling",
+          "description": "Replicate the loop body multiple times per iteration to increase instruction-level parallelism and reduce loop control overhead.",
+          "rationale": "Unrolling the innermost loop allows the processor to pipeline multiple independent load-add-store sequences, overlapping memory latency with computation. This is especially beneficial for bandwidth-bound code where hiding memory access latency is critical to sustaining peak throughput.",
+          "action_template": "LoopUnrolling(target_loop, unroll_factor) OR LoopUnrolling(loop_band, unroll_factor) — target_loop identifies which loop to unroll, unroll_factor specifies how many iterations to replicate in the loop body."
+        }
+      ]
+    }
+  ]
+}

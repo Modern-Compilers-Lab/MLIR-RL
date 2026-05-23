@@ -1,0 +1,3 @@
+- action enumeration: 00h02m34s / 1.5k tokens
+- action implementation: 00h25m00s / 43k tokens
+- schedule exploration: 00h00m00s / k tokens

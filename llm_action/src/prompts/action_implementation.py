@@ -437,8 +437,12 @@ class ActionBase(ABC):
         return []
 
     @classmethod
-    def decode_params(cls, raw_slots: list[int], n_loops: int) -> dict:
+    def decode_params(cls, raw_slots: list[int], n_loops: int, loop_bounds: list[int] | None = None) -> dict:
         return {{}}
+
+    @classmethod
+    def valid_param_mask(cls, n_loops: int, loop_bounds: list[int]) -> "np.ndarray | None":
+        return None  # override when parameters must divide loop bounds (e.g. tiling, vectorization)
 ```
 
 ## RL Parameter Interface
@@ -545,6 +549,39 @@ specific transformation. Common patterns:
   `params_size() -> 0`, return `[]` from `classes_per_slot`, and return `{{}}` from `decode_params`.
   - Anti-pattern: `ENABLE_VOCAB = [0, 1]`; `params_size() -> 1`; `decode_params -> {{"enable": ...}}`
   - Correct: `params_size() -> 0`; `classes_per_slot() -> []`; `decode_params() -> {{}}`
+
+### Divisibility Masking (`valid_param_mask`)
+
+**When to implement:** Any time your action's parameters must evenly divide loop upper bounds for the transformation to be semantically correct in MLIR. The two canonical cases are:
+- **Tiling** (`tile_using_for` or `tile_using_forall`): a non-divisible tile size produces a remainder loop with a dynamic trip count. Downstream vectorization with static vector sizes then fails at compile time — MLIR cannot lower a dynamic-bound loop to a fixed-width vector.
+- **Vectorization** (`tile_using_for` + `vectorize`): the vector size must divide the inner loop bound, or MLIR emits dynamic vector types that cannot be lowered to LLVM IR.
+
+The environment will call `valid_param_mask` **at every step** and AND its result into the per-slot vocabulary masks before the RL policy samples parameters. This prevents the agent from ever selecting an invalid parameter combination, eliminating a major source of wasted training steps and noisy gradient signal.
+
+**Implementation pattern**:
+```python
+@classmethod
+def valid_param_mask(cls, n_loops: int, loop_bounds: list[int]) -> np.ndarray | None:
+    if not loop_bounds:
+        return None  # safe fallback: no additional masking when bounds unavailable
+    n = min(n_loops, MAX_PARAM_SLOTS)
+    masks = []
+    for i in range(n):
+        bound = loop_bounds[i] if i < len(loop_bounds) else 0
+        slot_mask = np.array([
+            s == 0 or (bound > 0 and bound % s == 0)  # 0 = no-tile, always valid
+            for s in cls.VOCAB
+        ], dtype=bool)
+        if not slot_mask.any():       # if nothing divides, keep smallest entry
+            slot_mask[0] = True
+        masks.append(slot_mask)
+    return np.concatenate(masks)
+```
+
+Concrete example — VOCAB=[0,4,8,16,32], loop_bounds=[10,12,16]:
+- Slot 0 (bound=10): `[T, F, F, F, F]` — only 0 (no-tile) valid; no vocab value divides 10
+- Slot 1 (bound=12): `[T, T, F, F, F]` — 0 and 4 valid (12%4==0; 12%8≠0)
+- Slot 2 (bound=16): `[T, T, T, T, T]` — all valid (16 is divisible by 4, 8, 16; 32>16 but 16%32≠0 → False, corrected: keep True only if divisible)
 
 ## Execution Multiplicity
 

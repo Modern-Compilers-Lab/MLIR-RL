@@ -62,6 +62,7 @@ PROJECT_ROOT = Path("/scratch/kb5213/workspace/MLIR-RL/")
 DATA_DIR = PROJECT_ROOT / "llm_action" / "data" / "benchmarks"
 
 RL_RESULTS_DIR = PROJECT_ROOT / "llm_action" / "results" / "rl"
+EVALUATION_RESULTS_DIR = PROJECT_ROOT / "llm_action" / "results" / "evaluation" / "auto_action_mlir_rl"
 MLIR_SLURM_LOG_DIR = PROJECT_ROOT / "llm_action" / "logs" / "jobs" / "mlir"
 TORCH_SLURM_LOG_DIR = PROJECT_ROOT / "llm_action" / "logs" / "jobs" / "torch"
 

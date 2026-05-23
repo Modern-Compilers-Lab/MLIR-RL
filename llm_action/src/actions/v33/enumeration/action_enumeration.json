@@ -1,0 +1,76 @@
+{
+  "intents": [
+    {
+      "name": "Cache Locality and Data Layout Regularization",
+      "description": "Block the 7-loop conv nest to fit working-set tiles into L1/L2 cache and restructure data layout for stride-1 access, reducing memory bandwidth pressure on both input feature maps and filters.",
+      "rationale": "The dominant cost for conv_2d_nchw_fchw on CPU is repeated re-loading of input/filter data across outer loop iterations. The large channel counts (32–384) and batch sizes (128–256) make the working set far exceed L1/L2 unless explicitly tiled. Additionally, NCHW layout produces non-contiguous inner accesses; packing tiles into contiguous buffers is a prerequisite for efficient vectorization. For 3×3 kernels, im2col restructures the spatial reduction into a matmul-like contraction that unlocks all downstream matrix-oriented optimizations.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Block one or more loops in the iteration space so that the resulting data tiles fit within L1 or L2 cache, amortizing memory latency over many operations.",
+          "rationale": "With large channel and batch dimensions, untiled execution thrashes the cache. Tiling the outer parallel loops (N, F, OH, OW) and the dominant reduction loop (C) bounds the active working set to L1/L2 sizes (~32KB/~256KB per core on Broadwell), dramatically reducing bandwidth demand.",
+          "action_template": "Tiling(tile_sizes) — tile_sizes is a per-loop-dimension vector with 0 meaning do not tile that dimension; OR Tiling(loop_band, tile_sizes) where loop_band selects a contiguous range of loops to tile"
+        },
+        {
+          "name": "Loop Interchange",
+          "description": "Permute the loop order in a loop nest to improve spatial locality or expose inner loops suitable for vectorization and reduction.",
+          "rationale": "The default loop order may place the widest reduction (C) outside short spatial loops (KH, KW), causing poor cache reuse. Interchanging C inward (closer to the innermost loop) maximizes filter and input-channel slice reuse within a tile and exposes the output-width loop as the vectorization candidate.",
+          "action_template": "LoopInterchange(loop_band, permutation) — permutation is a list of indices defining the new loop order within the selected band; OR LoopInterchangeSwap(adjacent_pair) — swaps two adjacent loops identified by their positions"
+        },
+        {
+          "name": "Packing",
+          "description": "Copy selected operand tiles into contiguous temporary buffers with a layout optimized for the inner access pattern, eliminating non-unit strides in the innermost loops.",
+          "rationale": "NCHW filter and input slices accessed after tiling may still have non-unit strides along the packed dimension. Packing rewrites the data into a new contiguous buffer matching the tiled access order, enabling stride-1 vector loads and avoiding gather operations during vectorization.",
+          "action_template": "Packing(packed_sizes) — packed_sizes is a per-loop-dimension pack-size vector with 0 meaning do not pack that dimension"
+        },
+        {
+          "name": "Im2col Lowering",
+          "description": "Lower a convolution into a matmul-like contraction by materializing the implicit sliding-window iteration space into an explicit 2D operand, enabling downstream matrix-oriented optimizations.",
+          "rationale": "For non-1×1 kernels (3×3 in this dataset), the KH×KW spatial reduction nest adds irregularity that limits generic tiling and vectorization. Im2col maps the convolution to a standard contraction loop nest so that tiling, packing, and vectorization can target a uniform matrix-multiplication structure.",
+          "action_template": "Im2colLowering()"
+        }
+      ]
+    },
+    {
+      "name": "SIMD Vectorization and Local Buffer Exploitation",
+      "description": "Widen innermost loop iterations to AVX2 vector widths and promote tiled operand slices into contiguous local buffers to fully utilize the 4-lane FP64 SIMD units available on Broadwell.",
+      "rationale": "After tiling, the innermost loops over output-width or input channels are the primary candidates for SIMD widening. On Broadwell with AVX2, each FP64 vector holds 4 elements; failing to vectorize leaves 4× compute throughput on the table. Promotion is a prerequisite: it copies tiled slices into flat, address-contiguous memref buffers at the buffer level, eliminating gather/scatter penalties and allowing the vectorizer to emit clean unit-stride vector loads.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Vectorization",
+          "description": "Replace scalar loop iterations with SIMD vector operations across a chosen vector width, exploiting AVX2 data-parallel execution units.",
+          "rationale": "The output-width or channel-reduction loops are trivially parallel and typically stride-1 after layout regularization, making them prime candidates for AVX2 widening to 4 FP64 lanes. Vectorization is essential to saturate the FP64 throughput of Broadwell cores.",
+          "action_template": "Vectorization(tile_sizes) — tile_sizes defines the per-loop vector/tile sizes applied before vectorization; all values must be > 0; OR Vectorization(loop_band, vector_width) — applies vectorization to the innermost loop(s) of the selected band with the given vector width"
+        },
+        {
+          "name": "Promotion",
+          "description": "Copy tiled operand data from the original (potentially non-contiguous) tensor storage into a flat, contiguous local buffer at the buffer level, enabling efficient vector loads and reducing TLB pressure.",
+          "rationale": "Vectorization of tiled loops requires stride-1 memory access. Promotion materializes a tile's data into a fresh contiguous memref buffer (requiring bufferization), folding dynamic shapes into static types after canonicalization. This eliminates gather penalties and allows the backend to emit clean AVX2 load/store sequences. Promotion must target the outer tile level so that the copy cost is amortized over many inner iterations.",
+          "action_template": "Promotion(operands_to_promote) — operands_to_promote is a list of operand indices (e.g. [0], [1], [0,1,2]) specifying which operands to copy into contiguous local buffers; this action includes an internal bufferization preprocessing step"
+        }
+      ]
+    },
+    {
+      "name": "Thread-Level Parallelism",
+      "description": "Distribute outer parallel loop iterations across the 28 physical cores to achieve near-linear scaling on the large batch and output-channel dimensions common in this benchmark.",
+      "rationale": "The benchmark features batch sizes of 128–256 and output channel counts of 32–384, yielding thousands of independent parallel iterations in the outermost loops. Broadwell provides 28 physical cores with no SMT; coarse-grain parallelism over N×F outer loops is the most impactful single lever after cache blocking. Both forall-based parallel tiling (flexible, composable) and fixed-thread-count parallelization (simpler scheduling, lower overhead) are enumerated per system guidance.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Parallel Tiling",
+          "description": "Tile outer parallel loops using a forall-based distribution, creating independent work tiles that are dispatched across available threads.",
+          "rationale": "Forall-based parallel tiling is composable with inner tiling and vectorization and provides explicit tile sizes that can be tuned to balance thread occupancy against cache-block granularity. It is the preferred parallelization strategy for RL because tile sizes are a natural continuous parameter.",
+          "action_template": "ParallelTiling(tile_sizes) — tile_sizes is a per-loop-dimension vector for forall-based parallel dispatch with 0 meaning do not tile that dimension"
+        },
+        {
+          "name": "Parallelization",
+          "description": "Distribute the outermost parallel loop directly across a fixed number of threads without explicit tiling, relying on the runtime to partition iterations evenly.",
+          "rationale": "A direct num-threads parallelization over the batch or output-channel loop is a lower-overhead alternative when the iteration count is already a multiple of the thread count. Providing a discrete num_threads parameter (e.g., factors of 28) lets the RL agent make a coarse scheduling decision independently of tile-size choices.",
+          "action_template": "Parallelization(num_threads) — num_threads is the number of parallel threads to distribute the outermost loop across; must be a divisor of the iteration count to avoid remainder handling failures"
+        }
+      ]
+    }
+  ]
+}

@@ -89,15 +89,18 @@ def _extract_op_features(code: str) -> np.ndarray:
 
     return _encode_block(block, code=code)
 
-def count_loops(code: str) -> int:
-    """Count the number of loop dimensions in the tagged operation. Fast fallback: 3."""
+def _parse_loop_info(code: str) -> tuple[int, list[int]]:
+    """Run AST dumper once and return (n_loops, [upper_bound_per_loop]).
+
+    Falls back to (L, []) on any error so callers degrade gracefully.
+    """
     try:
         result = subprocess.run(
             f"{AST_DUMPER_BIN_PATH} -", shell=True,
             input=code.encode(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=AST_DUMPER_TIMEOUT,
         )
         if result.returncode != 0:
-            return L
+            return L, []
         raw = result.stdout.decode()
         info, _ = raw.split("########################################")
         operations_lines, _ = info.split("#BEGIN_GRAPH")
@@ -111,10 +114,28 @@ def count_loops(code: str) -> int:
         _, rest = rest.split("#START_VECTORIZABLE")
         _, rest = rest.split("#START_NESTED_LOOPS")
         loops_str, _ = rest.split("#START_LOAD_DATA")
-        n = sum(1 for line in loops_str.strip().split("\n") if line.strip())
-        return max(1, n)
+        loops = []
+        for line in loops_str.strip().split("\n"):
+            if not line.strip():
+                continue
+            p = line.strip().split(" ")
+            loops.append(int(p[2]))  # upper bound is index 2: (var, lower, upper, step, flag)
+        n = max(1, len(loops))
+        return n, loops
     except Exception:
-        return L
+        return L, []
+
+
+def count_loops(code: str) -> int:
+    """Count the number of loop dimensions in the tagged operation. Fast fallback: L."""
+    n, _ = _parse_loop_info(code)
+    return n
+
+
+def extract_loop_bounds(code: str) -> list[int]:
+    """Upper bounds for each loop in the tagged operation. Returns [] on error (safe fallback)."""
+    _, bounds = _parse_loop_info(code)
+    return bounds
 
 def _encode_block(block: str, code: str = "") -> np.ndarray:
     vec = np.zeros(OP_FEATURES_SIZE, dtype=np.float32)

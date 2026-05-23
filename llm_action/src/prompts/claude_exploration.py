@@ -20,13 +20,13 @@ FILE WRITING: The directory creation won't work because of the spack error. Crea
 BENCHMARKS:
 {format_for_prompt(benchmark, split="train", annotate_baselines=True)}
 
-TASK: For each kernel listed above (the "Example instance" plus every entry under "Other <family> shapes in this set"):
+TASK: For 1 representative kernel per kernel type listed above:
 1. Read the kernel MLIR file from `{PROJECT_ROOT}/llm_action/data/benchmarks/{benchmark}/train/<kernel_name>.mlir`.
 2. Establish baselines (MLIR base execution via execute_mlir_code).
 3. Systematically explore single actions, pairwise compositions, and multi-step schedules using the action MCP tools.
 4. Measure performance of each successful schedule using execute_mlir_code and measure_speedup.
-5. Write the structured exploration log following the format in the instructions.
-6. After all kernels are explored, synthesize a single cross-kernel `ACTION_DEPENDENCIES` dict per the "Dependency Graph Synthesis" section of the instructions, and append it to `llm_action/src/actions/{action_version}/registry.py` directly below the existing `ACTION_CLASSES` list. Only include block edges that held on every kernel where both endpoints were applicable — kernel-specific quirks do not belong in the graph.
+5. Write the structured exploration log following the format in the instructions. Make sure to write progressively so you don't lose track when conversation gets compacted.
+6. After the chosen kernel is explored, synthesize a single cross-kernel `ACTION_DEPENDENCIES` dict per the "Dependency Graph Synthesis" section of the instructions, and append it to `llm_action/src/actions/{action_version}/registry.py` directly below the existing `ACTION_CLASSES` list. Only include block edges that held on every kernel where both endpoints were applicable — kernel-specific quirks do not belong in the graph.
 
 BUDGET: Up to "Unlimited (ensure full coverage)" candidates per kernel. Prioritize breadth in Phases 1-2, depth in Phases 3-4.
 

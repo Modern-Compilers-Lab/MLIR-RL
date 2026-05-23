@@ -1,0 +1,70 @@
+{
+  "intents": [
+    {
+      "name": "Cache Locality and Data Reuse",
+      "description": "Restructure the iteration space and data access patterns to maximize cache line utilization and minimize capacity misses for large input tensors accessed with non-unit strides.",
+      "rationale": "Pooling is memory-bound: the per-element compute (max comparison) is trivial relative to data movement cost. Input tensors can exceed 1GB, vastly exceeding cache capacity. Strided spatial access from pooling strides further degrades cache efficiency. Tiling, reordering, and promotion directly address this dominant bottleneck.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Partition the iteration space into smaller blocks so that the working set of each tile fits within L1 or L2 cache.",
+          "rationale": "The large input and output tensors far exceed cache capacity. Blocking the parallel and reduction dimensions ensures temporal reuse of cache lines within each tile, converting capacity misses into hits.",
+          "action_template": "Tiling(tile_sizes) — tile_sizes is a vector with one entry per loop dimension; a value of 0 means 'do not tile' that dimension. OR Tiling(loop_band, tile_sizes) — tile_sizes applies to the specified loop band."
+        },
+        {
+          "name": "Loop Interchange",
+          "description": "Reorder loops within the nest to improve spatial locality and achieve stride-1 memory access on the innermost loop.",
+          "rationale": "The default loop order may not align with the NCHW memory layout, especially after tiling. Interchange enables stride-1 access along the fastest-varying dimension, maximizing cache line utilization per access.",
+          "action_template": "LoopInterchange(loop_band, permutation) — permutation is a reordering of loop indices within the specified band. OR LoopInterchangeSwap(adjacent_pair) — swaps two adjacent loops in the nest."
+        },
+        {
+          "name": "Promotion",
+          "description": "Copy tiled operand slices into contiguous temporary buffers to eliminate non-unit-stride access patterns.",
+          "rationale": "Pooling with stride > 1 causes the input reads to skip elements, wasting cache line bandwidth. Promoting tiled input slices into dense contiguous buffers converts strided gathers into sequential reads, improving both cache and vectorization efficiency.",
+          "action_template": "Promotion(operands_to_promote) — operands_to_promote is a list of operand indices specifying which operands to copy into contiguous local buffers. Promotion requires buffer (memref) form, so this action must include an internal bufferization preprocessing step."
+        }
+      ]
+    },
+    {
+      "name": "SIMD Exploitation",
+      "description": "Map loop iterations to SIMD vector lanes and reduce loop overhead to maximize instruction throughput for the memory-bound max-reduction operation.",
+      "rationale": "AVX2 provides 4 FP64 lanes per vector register. The max operation maps directly to SIMD max instructions. With trivial per-element compute, saturating SIMD width is essential to match memory bandwidth. Unrolling further reduces overhead when reduction windows are very small (1-9 iterations).",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Vectorization",
+          "description": "Map the innermost parallel loop iterations to SIMD vector lanes, enabling multiple output elements to be computed simultaneously.",
+          "rationale": "With 4 FP64 lanes per AVX2 register, vectorization yields up to 4x throughput improvement for the max comparison. The parallel output-width dimension is naturally vectorizable with contiguous output writes.",
+          "action_template": "Vectorization(target_loop, vector_width) — target_loop identifies which loop to vectorize, vector_width specifies the SIMD width. OR Vectorization(loop_band, vector_width) — vectorizes the innermost loop of the specified band at the given width."
+        },
+        {
+          "name": "Unrolling",
+          "description": "Unroll loop iterations to reduce branch overhead and expose instruction-level parallelism across multiple loop bodies.",
+          "rationale": "Reduction windows are often very small (1x1 to 7x7, meaning 1-49 iterations). Loop overhead dominates at low trip counts. Unrolling amortizes this overhead and enables the processor to overlap independent max operations across unrolled iterations.",
+          "action_template": "Unrolling(loop_id, unroll_factor) — unrolls the specified loop by the given factor. OR Unrolling(loop_band, unroll_factor) — unrolls the innermost loop of the band by the given factor."
+        }
+      ]
+    },
+    {
+      "name": "Coarse-Grain Parallelism",
+      "description": "Distribute independent iterations of outer parallel loops across multiple CPU cores to exploit the multi-core topology.",
+      "rationale": "The batch and channel dimensions are embarrassingly parallel with no inter-iteration dependencies, providing ample work for 28 physical cores. However, since pooling is memory-bound, the benefit is limited by shared memory bandwidth and NUMA effects, making this medium priority relative to single-core cache and SIMD optimizations.",
+      "priority": "medium",
+      "transformations": [
+        {
+          "name": "Parallelization",
+          "description": "Tile outer parallel loop dimensions and distribute the resulting tiles across threads for coarse-grain multi-core execution.",
+          "rationale": "Tiling-based parallelization handles non-divisible iteration counts gracefully and integrates naturally with cache-blocking strategies, allowing each thread to work on a cache-friendly tile.",
+          "action_template": "Parallelization(tile_sizes) — tile_sizes specifies the parallel tile granularity per outer loop dimension; tiles are distributed across available threads."
+        },
+        {
+          "name": "Parallelization By Num Threads",
+          "description": "Directly partition iterations of an outer parallel loop across a fixed number of threads without explicit tiling.",
+          "rationale": "Simpler than tiling-based parallelization and sufficient when the outer dimension is large and evenly divisible by the thread count. Provides a lightweight alternative for shapes with regular parallel dimensions.",
+          "action_template": "ParallelizationByNumThreads(num_threads) — num_threads specifies the number of threads to distribute work across. The number of threads must be a divisor of the iteration count of the targeted parallel loop, otherwise subsequent MLIR transformations may fail."
+        }
+      ]
+    }
+  ]
+}

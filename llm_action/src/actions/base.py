@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+import numpy as np
 
 class ActionBase(ABC):
     unique_execution: bool = True
@@ -37,5 +38,9 @@ class ActionBase(ABC):
         return []
 
     @classmethod
-    def decode_params(cls, raw_slots: list[int], n_loops: int) -> dict:
+    def decode_params(cls, raw_slots: list[int], n_loops: int, loop_bounds: list[int] | None = None) -> dict:
         return {}
+
+    @classmethod
+    def valid_param_mask(cls, n_loops: int, loop_bounds: list[int]) -> "np.ndarray | None":
+        return None

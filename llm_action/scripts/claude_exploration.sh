@@ -35,10 +35,17 @@ claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_ex
 # Example usage:
 
 # Matmul
-## python llm_action/src/prompts/schedule_exploration.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_exploration.py --action-version v29 --benchmark dataset_matmul)"
+## python llm_action/src/prompts/schedule_exploration.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_exploration.py --action-version v32 --benchmark dataset_matmul)"
 
 # Conv
-## python llm_action/src/prompts/schedule_exploration.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_exploration.py --action-version v30 --benchmark dataset_conv2d)"
+## python llm_action/src/prompts/schedule_exploration.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_exploration.py --action-version v33 --benchmark dataset_conv2d)"
+## python llm_action/src/prompts/schedule_exploration.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_exploration.py --action-version v36 --benchmark dataset_conv2d_img2col)"
 
 # Pooling
-## python llm_action/src/prompts/schedule_exploration.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_exploration.py --action-version v31 --benchmark dataset_pooling)"
+## python llm_action/src/prompts/schedule_exploration.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_exploration.py --action-version v34 --benchmark dataset_pooling)"
+
+# Add
+## python llm_action/src/prompts/schedule_exploration.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_exploration.py --action-version v35 --benchmark dataset_add)"
+
+# ReLu
+## python llm_action/src/prompts/schedule_exploration.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_exploration.py --action-version v37 --benchmark dataset_relu)"

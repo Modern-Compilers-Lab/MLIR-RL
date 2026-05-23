@@ -30,6 +30,7 @@ Split = Literal["train", "eval", "all"]
 
 # Family detection. Each entry is (family_name, regex matched against the file stem).
 _FAMILY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("img2col_conv_2d_nchw_fchw", re.compile(r"^img2col_conv_2d_nchw_fchw_.+$")),
     ("conv_2d_nchw_fchw", re.compile(r"^conv_2d_nchw_fchw_.+$")),
     ("matmul",            re.compile(r"^matmul_.+$")),
     ("pooling_nchw",      re.compile(r"^pooling_nchw_.+$")),

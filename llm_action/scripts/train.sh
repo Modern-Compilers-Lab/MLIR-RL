@@ -38,10 +38,18 @@ python -m llm_action.src.rl.train_ppo "$@"
 # Usage
 
 # Matmul Dataset
-## sbatch llm_action/scripts/train.sh --action-version v29 --benchmarks-name dataset_matmul --exp-name v29_dataset_matmul_ent_decay
+## sbatch llm_action/scripts/train.sh --action-version v32 --benchmarks-name dataset_matmul --exp-name v32_dataset_matmul
+## sbatch llm_action/scripts/train.sh --action-version v32 --benchmarks-name dataset_matmul --exp-name v32_dataset_matmul_ent01 --ent-coef 0.01 --ent-coef-final 0.0
 
 # Conv2d Dataset
-## sbatch llm_action/scripts/train.sh --action-version v30 --benchmarks-name dataset_conv2d --exp-name v30_dataset_conv2d --ent-coef 0.0025 --ent-coef-final 0.0001 --action-head-init zero
+## sbatch llm_action/scripts/train.sh --action-version v33 --benchmarks-name dataset_conv2d --exp-name v33_dataset_conv2d_ent0025 --ent-coef 0.0025 --ent-coef-final 0.0001
+## sbatch llm_action/scripts/train.sh --action-version v36 --benchmarks-name dataset_conv2d_img2col --exp-name v36_dataset_conv2d_img2col_ent01 --ent-coef 0.01 --ent-coef-final 0.0001
 
 # Pooling Dataset
-## sbatch llm_action/scripts/train.sh --action-version v31 --benchmarks-name dataset_pooling --exp-name v31_dataset_pooling --ent-coef 0.01 --ent-coef-final 0.0001 --max-steps 5
+## sbatch llm_action/scripts/train.sh --action-version v34 --benchmarks-name dataset_pooling --exp-name v34_dataset_pooling --ent-coef 0.005 --ent-coef-final 0.0
+
+# Add Dataset
+## sbatch llm_action/scripts/train.sh --action-version v35 --benchmarks-name dataset_add --exp-name v35_dataset_add --ent-coef 0.01 --ent-coef-final 0.0001
+
+# ReLu Dataset
+## sbatch llm_action/scripts/train.sh --action-version v37 --benchmarks-name dataset_relu --exp-name v37_dataset_relu --ent-coef 0.01 --ent-coef-final 0.0001

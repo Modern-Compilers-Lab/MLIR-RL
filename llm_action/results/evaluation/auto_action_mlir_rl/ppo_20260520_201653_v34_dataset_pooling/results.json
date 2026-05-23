@@ -1,0 +1,194 @@
+{
+  "run_name": "ppo_20260520_201653_v34_dataset_pooling",
+  "run_dir": "/scratch/kb5213/workspace/MLIR-RL/llm_action/results/rl/ppo_20260520_201653_v34_dataset_pooling",
+  "eval_source": "training-logs",
+  "best_eval_count": 26,
+  "best_timestep": 26000,
+  "evaluated_at": "2026-05-24T01:00:34",
+  "n_benchmarks": 10,
+  "train_config": {
+    "benchmarks_name": "dataset_pooling",
+    "total_timesteps": 250000,
+    "n_steps": 128,
+    "batch_size": 32,
+    "n_epochs": 8,
+    "lr": 0.0003,
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "clip_range": 0.2,
+    "ent_coef": 0.005,
+    "ent_coef_final": 0.0,
+    "ent_coef_schedule": "linear",
+    "action_head_init": "default",
+    "vf_coef": 0.005,
+    "max_grad_norm": 0.5,
+    "net_arch": [
+      512,
+      512,
+      512
+    ],
+    "n_envs": 1,
+    "max_steps": 7,
+    "action_version": "v34",
+    "param_mode": "multidiscrete",
+    "executor_type": "dask",
+    "dask_nodes": 2,
+    "history_mode": "success-encoding",
+    "reward_scale": "log",
+    "reward_mode": "final",
+    "reward_baseline": "mlir",
+    "checkpoint_freq": 5000,
+    "eval_freq": 1000,
+    "eval_sample_runs": 5,
+    "log_dir": null,
+    "exp_name": "v34_dataset_pooling",
+    "seed": 42,
+    "wandb_project": "mlir-rl",
+    "wandb_entity": null,
+    "resume": null,
+    "enable_dependency_masking": true,
+    "verbose": true
+  },
+  "greedy_results": [
+    {
+      "benchmark": "pooling_nchw_max_256_11_113_113_3_56_56",
+      "reward": 3.2150699349002574,
+      "base_time_ms": 85.106203,
+      "torch_time_ms": 10.594743,
+      "opt_time_ms": 3.417229,
+      "speedup": 24.905033581302277,
+      "speedup_to_torch": 3.100390111403128,
+      "actions": [
+        "ParallelizationByNumThreads",
+        "LoopInterchange"
+      ],
+      "n_steps": 3
+    },
+    {
+      "benchmark": "pooling_nchw_max_256_192_71_71_3_35_35",
+      "reward": 3.2848631159060897,
+      "base_time_ms": 578.849586,
+      "torch_time_ms": 67.068847,
+      "opt_time_ms": 21.675434,
+      "speedup": 26.705328529984687,
+      "speedup_to_torch": 3.094233176599832,
+      "actions": [
+        "ParallelizationByNumThreads",
+        "LoopInterchange"
+      ],
+      "n_steps": 3
+    },
+    {
+      "benchmark": "pooling_nchw_max_256_22_57_57_3_28_28",
+      "reward": 3.070896532789389,
+      "base_time_ms": 43.096489,
+      "torch_time_ms": 6.10421,
+      "opt_time_ms": 1.998796,
+      "speedup": 21.56122435706295,
+      "speedup_to_torch": 3.053943473971331,
+      "actions": [
+        "ParallelizationByNumThreads",
+        "LoopInterchange"
+      ],
+      "n_steps": 3
+    },
+    {
+      "benchmark": "pooling_nchw_max_256_336_43_43_3_21_21",
+      "reward": 3.2929533769026538,
+      "base_time_ms": 361.132018,
+      "torch_time_ms": 42.005026,
+      "opt_time_ms": 13.413883,
+      "speedup": 26.922257932322804,
+      "speedup_to_torch": 3.131459100992606,
+      "actions": [
+        "ParallelizationByNumThreads",
+        "LoopInterchange"
+      ],
+      "n_steps": 3
+    },
+    {
+      "benchmark": "pooling_nchw_max_256_42_167_167_3_83_83",
+      "reward": 3.3116128780225824,
+      "base_time_ms": 707.656306,
+      "torch_time_ms": 83.736606,
+      "opt_time_ms": 25.799256,
+      "speedup": 27.42932997757765,
+      "speedup_to_torch": 3.2456984806073477,
+      "actions": [
+        "ParallelizationByNumThreads",
+        "LoopInterchange"
+      ],
+      "n_steps": 3
+    },
+    {
+      "benchmark": "pooling_nchw_max_256_64_114_114_3_56_56",
+      "reward": 3.3387417211542414,
+      "base_time_ms": 503.966772,
+      "torch_time_ms": 57.999227,
+      "opt_time_ms": 17.881535,
+      "speedup": 28.183641505049764,
+      "speedup_to_torch": 3.243526184972375,
+      "actions": [
+        "ParallelizationByNumThreads",
+        "LoopInterchange"
+      ],
+      "n_steps": 3
+    },
+    {
+      "benchmark": "pooling_nchw_max_256_64_147_147_3_73_73",
+      "reward": 3.3134718954996853,
+      "base_time_ms": 831.024276,
+      "torch_time_ms": 99.455502,
+      "opt_time_ms": 30.240652,
+      "speedup": 27.48036900791689,
+      "speedup_to_torch": 3.2888015112901665,
+      "actions": [
+        "ParallelizationByNumThreads",
+        "LoopInterchange"
+      ],
+      "n_steps": 3
+    },
+    {
+      "benchmark": "pooling_nchw_max_256_672_23_23_3_11_11",
+      "reward": 3.1846891121999006,
+      "base_time_ms": 242.913504,
+      "torch_time_ms": 23.433844,
+      "opt_time_ms": 10.05446,
+      "speedup": 24.159776258496226,
+      "speedup_to_torch": 2.330691454339666,
+      "actions": [
+        "ParallelizationByNumThreads",
+        "LoopInterchange"
+      ],
+      "n_steps": 3
+    },
+    {
+      "benchmark": "pooling_nchw_max_256_84_85_85_3_42_42",
+      "reward": 3.273002510924296,
+      "base_time_ms": 361.254416,
+      "torch_time_ms": 42.40016,
+      "opt_time_ms": 13.688827,
+      "speedup": 26.39045814517197,
+      "speedup_to_torch": 3.097428289509393,
+      "actions": [
+        "ParallelizationByNumThreads",
+        "LoopInterchange"
+      ],
+      "n_steps": 3
+    },
+    {
+      "benchmark": "pooling_nchw_max_256_88_29_29_3_14_14",
+      "reward": 3.275387517828683,
+      "base_time_ms": 53.992018,
+      "torch_time_ms": 6.075529,
+      "opt_time_ms": 2.041018,
+      "speedup": 26.453474687631367,
+      "speedup_to_torch": 2.976715051018658,
+      "actions": [
+        "ParallelizationByNumThreads",
+        "LoopInterchange"
+      ],
+      "n_steps": 3
+    }
+  ]
+}

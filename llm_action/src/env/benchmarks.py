@@ -30,6 +30,9 @@ class Benchmark:
 
 _MATMUL_PATTERN = re.compile(r"matmul_(\d+)_(\d+)_(\d+)$")
 _CONV2D_PATTERN = re.compile(r"conv_2d_nchw_fchw_" + "_".join([r"(\d+)"] * 9) + r"$")
+_IMG2COL_CONV2D_PATTERN = re.compile(
+    r"img2col_conv_2d_nchw_fchw_" + "_".join([r"(\d+)"] * 9) + r"$"
+)
 _ADD_PATTERN = re.compile(r"add_(\d+)_(\d+)_(\d+)_(\d+)$")
 _POOLING_NCHW_MAX_PATTERN = re.compile(
     r"pooling_nchw_max_" + "_".join([r"(\d+)"] * 7) + r"$"
@@ -52,6 +55,8 @@ def _parse_op_dims(name: str) -> tuple[str, tuple[int, ...]] | None:
     if m := _MATMUL_PATTERN.match(name):
         return ("matmul", tuple(int(x) for x in m.groups()))
     if m := _CONV2D_PATTERN.match(name):
+        return ("conv2d", tuple(int(x) for x in m.groups()))
+    if m := _IMG2COL_CONV2D_PATTERN.match(name):
         return ("conv2d", tuple(int(x) for x in m.groups()))
     if m := _ADD_PATTERN.match(name):
         return ("add", tuple(int(x) for x in m.groups()))
