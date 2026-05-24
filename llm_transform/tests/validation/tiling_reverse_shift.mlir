@@ -13,15 +13,18 @@
 //
 // Iterator types are "parallel" so MLIR has no dependence information to
 // check and silently performs the illegal tiling.
+//
+// The 96x96 iteration extent is a multiple of the 32x32 tile size, so
+// tiling produces only full tiles (no dynamic partial-tile bounds).
 
 func.func @tiling_reverse_shift(%base: memref<100x100xf64>) {
-    // Read view: base[1..99, 0..98] — represents reading A[i+1, j].
-    %in_sub = memref.subview %base[1, 0] [99, 99] [1, 1]
-        : memref<100x100xf64> to memref<99x99xf64, strided<[100, 1], offset: 100>>
+    // Read view: base[1..96, 0..95] — represents reading A[i+1, j].
+    %in_sub = memref.subview %base[1, 0] [96, 96] [1, 1]
+        : memref<100x100xf64> to memref<96x96xf64, strided<[100, 1], offset: 100>>
 
-    // Write view: base[0..98, 1..99] — represents writing A[i, j+1].
-    %out_sub = memref.subview %base[0, 1] [99, 99] [1, 1]
-        : memref<100x100xf64> to memref<99x99xf64, strided<[100, 1], offset: 1>>
+    // Write view: base[0..95, 1..96] — represents writing A[i, j+1].
+    %out_sub = memref.subview %base[0, 1] [96, 96] [1, 1]
+        : memref<100x100xf64> to memref<96x96xf64, strided<[100, 1], offset: 1>>
 
     linalg.generic {tag = "operation",
         indexing_maps = [
@@ -29,8 +32,8 @@ func.func @tiling_reverse_shift(%base: memref<100x100xf64>) {
             affine_map<(d0, d1) -> (d0, d1)>
         ],
         iterator_types = ["parallel", "parallel"]
-    } ins(%in_sub : memref<99x99xf64, strided<[100, 1], offset: 100>>)
-      outs(%out_sub : memref<99x99xf64, strided<[100, 1], offset: 1>>) {
+    } ins(%in_sub : memref<96x96xf64, strided<[100, 1], offset: 100>>)
+      outs(%out_sub : memref<96x96xf64, strided<[100, 1], offset: 1>>) {
     ^bb0(%in: f64, %out: f64):
         %cst = arith.constant 1.0 : f64
         %add = arith.addf %in, %cst : f64

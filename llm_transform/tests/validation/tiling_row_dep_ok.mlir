@@ -9,13 +9,16 @@
 // before d0; across tile-rows, (d0-1, d1) is in tile-row (d0-1)/T,
 // which runs before tile-row d0/T. So the transform is legal and the
 // baseline / tiled outputs must agree.
+//
+// The 96x96 iteration extent is a multiple of the 32x32 tile size, so
+// tiling produces only full tiles (no dynamic partial-tile bounds).
 
 func.func @tiling_row_dep_ok(%base: memref<100x100xf64>) {
-    %in_sub = memref.subview %base[0, 0] [99, 100] [1, 1]
-        : memref<100x100xf64> to memref<99x100xf64, strided<[100, 1], offset: 0>>
+    %in_sub = memref.subview %base[0, 0] [96, 96] [1, 1]
+        : memref<100x100xf64> to memref<96x96xf64, strided<[100, 1], offset: 0>>
 
-    %out_sub = memref.subview %base[1, 0] [99, 100] [1, 1]
-        : memref<100x100xf64> to memref<99x100xf64, strided<[100, 1], offset: 100>>
+    %out_sub = memref.subview %base[1, 0] [96, 96] [1, 1]
+        : memref<100x100xf64> to memref<96x96xf64, strided<[100, 1], offset: 100>>
 
     linalg.generic {tag = "operation",
         indexing_maps = [
@@ -23,8 +26,8 @@ func.func @tiling_row_dep_ok(%base: memref<100x100xf64>) {
             affine_map<(d0, d1) -> (d0, d1)>
         ],
         iterator_types = ["parallel", "parallel"]
-    } ins(%in_sub : memref<99x100xf64, strided<[100, 1], offset: 0>>)
-      outs(%out_sub : memref<99x100xf64, strided<[100, 1], offset: 100>>) {
+    } ins(%in_sub : memref<96x96xf64, strided<[100, 1], offset: 0>>)
+      outs(%out_sub : memref<96x96xf64, strided<[100, 1], offset: 100>>) {
     ^bb0(%in: f64, %out: f64):
         %cst = arith.constant 1.0 : f64
         %add = arith.addf %in, %cst : f64

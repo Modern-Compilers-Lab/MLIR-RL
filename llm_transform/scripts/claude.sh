@@ -78,15 +78,15 @@ CLAUDE_PROMPT=$(python -m llm_transform.tools.build_prompt)
 rm -f logs/jobs/*
 EXPERIMENT_START=$(date +%s)
 START=$(date +%s)
-OUTPUT=$(claude --permission-mode dontAsk --print --output-format=json "$CLAUDE_PROMPT")
+OUTPUT=$(claude --effort max --permission-mode dontAsk --print --output-format=json "$CLAUDE_PROMPT")
 DURATION=$(( $(date +%s) - START ))
 log_tokens "$OUTPUT" "$DURATION"
-# for ((i = 0 ; i < 99 ; i++ )); do
-#     START=$(date +%s)
-#     OUTPUT=$(claude --continue --permission-mode dontAsk --print --output-format=json "$CLAUDE_PROMPT")
-#     DURATION=$(( $(date +%s) - START ))
-#     log_tokens "$OUTPUT" "$DURATION"
-# done
+for ((i = 1 ; i < 5 ; i++ )); do
+    START=$(date +%s)
+    OUTPUT=$(claude --continue --effort max --permission-mode dontAsk --print --output-format=json "$CLAUDE_PROMPT")
+    DURATION=$(( $(date +%s) - START ))
+    log_tokens "$OUTPUT" "$DURATION"
+done
 TOTAL_DURATION=$(( $(date +%s) - EXPERIMENT_START ))
 TOTAL_TOKENS=$(( TOTAL_INPUT_TOKENS + TOTAL_OUTPUT_TOKENS ))
 echo "TOTAL | input=$TOTAL_INPUT_TOKENS | output=$TOTAL_OUTPUT_TOKENS | total=$TOTAL_TOKENS | duration=$(format_duration "$TOTAL_DURATION")" >> "$EXPERIMENT_DIR/tokens.log"

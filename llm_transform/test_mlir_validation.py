@@ -8,9 +8,17 @@ For each MLIR file in `tests/validation/`:
   3. Bufferize and lower both to a shared library.
   4. Generate random inputs, run both with matching copies, and compare
      the (in-place mutated) outputs.
-  5. Watch stderr during the entire pipeline. If outputs differ and MLIR
-     was silent, the test fails; if MLIR emitted any warning/error, the
-     test passes (detection succeeded).
+  5. Run up to three independent detectors and watch their stderr:
+       - mlir         : stderr emitted while applying the schedule and lowering.
+       - legality     : the PolyhedralLegalityCheck plugin on the transformed
+                        module.
+       - equivalence  : the array-dataflow EquivalenceVerifier comparing the
+                        original and transformed kernels (requires the
+                        TagLinalgOps pass to run on both first).
+     The (in-place mutated) outputs are the ground truth: if they differ the
+     transform is illegal and at least one active detector must flag it; if
+     they match no active detector may flag it. `--tool` restricts evaluation
+     to a single detector.
 """
 
 import argparse
@@ -35,6 +43,7 @@ RED = "31"
 YELLOW = "33"
 CYAN = "36"
 BOLD = "1"
+FAINT = "2"
 
 
 PARENT_DIR = Path(__file__).parent
@@ -46,6 +55,34 @@ LEGALITY_PLUGIN = (
     "build" / "lib" / "libPolyhedralLegalityCheck.so"
 )
 LEGALITY_PASS_PIPELINE = "builtin.module(convert-linalg-to-affine-loops,func.func(fold-memref-alias-ops,affine-raise-from-memref,check-polyhedral-legality))"
+
+EQUIVALENCE_DIR = (
+    PARENT_DIR / "llm_transform" / "tools" / "c" / "equivalence" / "build" / "lib"
+)
+TAG_LINALG_PLUGIN = EQUIVALENCE_DIR / "libTagLinalgOps.so"
+EQUIVALENCE_PLUGIN = EQUIVALENCE_DIR / "libEquivalenceVerifier.so"
+RAISE_SCF_PLUGIN = EQUIVALENCE_DIR / "libRaiseSCFToAffine.so"
+
+# Tag every linalg op (on the still-linalg form) with a stable `eq_id_<n>` so
+# the verifier can line up an original access with its transformed counterpart.
+TAG_LINALG_PIPELINE = "builtin.module(func.func(tag-linalg-ops-for-equivalence))"
+# Lower a tagged kernel to the affine + memref form the verifier consumes.
+# Tiling via the transform dialect emits `scf.forall`/`scf.for` tile loops; we
+# normalize those to `affine.for` (scf-forall-to-for + raise-scf-to-affine)
+# *before* lowering the linalg body, otherwise convert-linalg-to-affine-loops
+# would build inner affine loops bounded by SCF induction variables — not a
+# legal affine quantity. The tail mirrors the legality plugin's preprocessing.
+EQUIVALENCE_LOWER_PIPELINE = "builtin.module(func.func(scf-forall-to-for,raise-scf-to-affine),convert-linalg-to-affine-loops,func.func(fold-memref-alias-ops,affine-raise-from-memref))"
+# Compare the `original` and `transformed` functions placed in a single module.
+EQUIVALENCE_CHECK_PIPELINE = "builtin.module(check-array-dataflow-equivalence{original-func=original transformed-func=transformed})"
+
+ALL_TOOLS = ("mlir", "legality", "equivalence")
+TOOL_LABELS = {"mlir": "MLIR", "legality": "Legality", "equivalence": "Equivalence"}
+
+def _prefix_tool_name(message: str, tool: str) -> str:
+    prefix = f"[{TOOL_LABELS[tool]}] "
+    return "\n".join(prefix + line for line in message.splitlines())
+
 
 def load_legality_plugin() -> bool:
     """Dlopen the PolyhedralLegalityCheck plugin so its pass self-registers.
@@ -67,7 +104,38 @@ def load_legality_plugin() -> bool:
     return True
 
 
+def load_equivalence_plugins() -> bool:
+    """Dlopen the TagLinalgOps, RaiseSCFToAffine and EquivalenceVerifier plugins
+    so their passes self-register.
+
+    All of `tag-linalg-ops-for-equivalence`, `raise-scf-to-affine` and
+    `check-array-dataflow-equivalence` are needed; returns True only if every .so
+    loads. If any is missing, prints a build hint and returns False so the
+    equivalence column is n/a.
+    """
+    ok = True
+    for env, default, pass_name in (
+        ("TAG_LINALG_PLUGIN", TAG_LINALG_PLUGIN, "tag-linalg-ops-for-equivalence"),
+        ("RAISE_SCF_PLUGIN", RAISE_SCF_PLUGIN, "raise-scf-to-affine"),
+        ("EQUIVALENCE_PLUGIN", EQUIVALENCE_PLUGIN, "check-array-dataflow-equivalence"),
+    ):
+        path = Path(os.environ.get(env, default))
+        if not path.exists():
+            print(
+                f"[warn] {pass_name} plugin not found at {path}; "
+                f"build it with `make -C llm_transform/tools/c/equivalence "
+                f"PREFIX=$(python -c 'import sys;print(sys.prefix)')` "
+                f"or set {env}=/path/to/plugin.so",
+                file=sys.stderr,
+            )
+            ok = False
+            continue
+        ctypes.CDLL(str(path), mode=ctypes.RTLD_GLOBAL)
+    return ok
+
+
 PLUGIN_LOADED = load_legality_plugin()
+EQUIVALENCE_LOADED = load_equivalence_plugins()
 
 
 from mlir.ir import (
@@ -77,6 +145,7 @@ from mlir.ir import (
     IntegerType,
     MemRefType,
     Module,
+    StringAttr,
     UnitAttr,
 )
 from mlir.dialects.func import FuncOp
@@ -86,6 +155,7 @@ from llm_transform.utils.transformation import (
     apply_pipeline_to_module,
     apply_pipeline_to_module_with_opt,
     bufferize_module,
+    transform_module,
     transform_module_with_opt,
 )
 
@@ -177,7 +247,7 @@ def _mark_c_interface(module: Module):
 
 
 def prepare_module_for_lowering(module: Module):
-    """Apply bufferization and other transformations to get ready for lowering."""
+    """Mark the main kernel function(s) with llvm.emit_c_interface and bufferize the module."""
     _mark_c_interface(module)
     bufferize_module(module)
 
@@ -223,6 +293,65 @@ def run_legality_plugin(module: Module) -> str:
     return "\n".join(cap).strip()
 
 
+def _append_func_as(dest: Module, src: Module, new_name: str):
+    """Clone the first func.func from `src` into `dest`, renamed to `new_name`.
+
+    `src` and `dest` must share a context. The verifier expects both functions in
+    a single module under the names `original` and `transformed`; renaming also
+    avoids the symbol collision that would otherwise occur (both kernels carry the
+    same original name).
+    """
+    for op in src.body.operations:
+        if isinstance(op, FuncOp):
+            clone = op.operation.clone()
+            clone.attributes["sym_name"] = StringAttr.get(new_name, dest.context)
+            dest.body.append(clone)
+            return
+    raise ValueError("no func.func found to combine for equivalence check")
+
+
+def run_equivalence_verifier(kernel_code: str, transform_sched: str) -> str:
+    """Prove array-dataflow equivalence of the original and transformed kernels.
+
+    Builds two affine functions from `kernel_code` — one untouched (`original`),
+    one with `transform_sched` applied (`transformed`) — tagging the linalg ops of
+    each with stable `eq_id_<n>` ids before lowering so the verifier can match an
+    original access against its transformed counterpart. Returns the captured
+    stderr from `check-array-dataflow-equivalence` (non-empty means a violation or
+    a failed match was reported).
+    """
+    if not EQUIVALENCE_LOADED:
+        return ''
+
+    with Context() as ctx:
+        ctx.load_all_available_dialects()
+        # Build both functions to the tagged affine form. Any diagnostics from
+        # the transform/bufferize/lowering belong to MLIR's column, not the
+        # verifier, so swallow them here.
+        with capture_stderr_fd():
+            original = Module.parse(kernel_code)
+            apply_pipeline_to_module(original, TAG_LINALG_PIPELINE)
+            transformed = original.operation.clone()
+
+            bufferize_module(original)
+            apply_pipeline_to_module(original, EQUIVALENCE_LOWER_PIPELINE)
+
+            transform_module(transformed, transform_sched)
+            bufferize_module(transformed)
+            apply_pipeline_to_module(transformed, EQUIVALENCE_LOWER_PIPELINE)
+
+            combined = Module.parse("module {}")
+            _append_func_as(combined, original, "original")
+            _append_func_as(combined, transformed, "transformed")
+
+    with capture_stderr_fd() as cap:
+        try:
+            apply_pipeline_to_module(combined, EQUIVALENCE_CHECK_PIPELINE)
+        except Exception as exc:
+            cap.append(f"[equivalence exception] {exc}")
+    return "\n".join(cap).strip()
+
+
 def run_kernel(engine: ExecutionEngine, func_name: str, arrs):
     """Invoke the JIT-compiled kernel via MLIR's ExecutionEngine."""
     args = [
@@ -232,9 +361,16 @@ def run_kernel(engine: ExecutionEngine, func_name: str, arrs):
     engine.invoke(func_name, *args)
 
 
-def run_test(path: Path) -> tuple[bool | None, bool, bool, str]:
-    """Returns (passed, mlir_detected, plugin_detected, message)."""
+def run_test(path: Path, active_tools: set[str]) -> tuple[bool | None, dict[str, bool], str]:
+    """Run the test and the requested detectors.
 
+    Returns (outputs_equal, detections, message) where `detections` maps each
+    active tool name to whether it flagged the transform, and `outputs_equal` is
+    the ground-truth comparison of the executed kernels (None if the transform
+    itself failed to apply).
+    """
+
+    # Read the code and split the kernel from the transform schedule
     code = path.read_text()
     kernel_code, transform_sched = split_test(code)
     if transform_sched is None:
@@ -249,6 +385,7 @@ def run_test(path: Path) -> tuple[bool | None, bool, bool, str]:
     with Context() as ctx:
         ctx.load_all_available_dialects()
         trans_module = Module.parse(kernel_code)
+    # If anything is captured here it means MLIR has detected an issue
     with capture_stderr_fd() as cap:
         try:
             transform_module_with_opt(trans_module, transform_sched)
@@ -260,14 +397,36 @@ def run_test(path: Path) -> tuple[bool | None, bool, bool, str]:
     mlir_stderr = "\n".join(cap).strip()
     if not transform_ran:
         # If the transformation itself failed, we consider that a form of detection.
-        return None, bool(mlir_stderr), False, mlir_stderr
+        return None, {"mlir": bool(mlir_stderr)}, mlir_stderr
 
+    # After the transformations are applied we can prepare the module for lowering
     prepare_module_for_lowering(trans_module)
 
-    # Second, independent detection: run our PolyhedralLegalityCheck pass on
-    # the transformed module. This is orthogonal to MLIR's own stderr-based
-    # detection during lowering/compile.
-    plugin_stderr = run_legality_plugin(trans_module)
+    detections: dict[str, bool] = {}
+    messages: list[str] = []
+
+    # The "mlir" detector is a byproduct of applying the schedule above.
+    if "mlir" in active_tools:
+        detections["mlir"] = bool(mlir_stderr)
+        if mlir_stderr:
+            messages.append(mlir_stderr)
+
+    # Independent detector: the PolyhedralLegalityCheck pass on the transformed
+    # module, orthogonal to MLIR's own stderr-based detection during lowering.
+    if "legality" in active_tools:
+        legality_stderr = run_legality_plugin(trans_module)
+        detections["legality"] = bool(legality_stderr)
+        if legality_stderr:
+            messages.append(legality_stderr)
+
+    # Independent detector: the array-dataflow EquivalenceVerifier comparing the
+    # original kernel against the transformed one (rebuilt from source so it can
+    # be tagged on the still-linalg form before lowering to affine).
+    if "equivalence" in active_tools:
+        equivalence_stderr = run_equivalence_verifier(kernel_code, transform_sched)
+        detections["equivalence"] = bool(equivalence_stderr)
+        if equivalence_stderr:
+            messages.append(equivalence_stderr)
 
     func_name, input_types = kernel_func_info(base_module)
     inputs_base = gen_inputs(input_types, seed=0xC0FFEE)
@@ -289,19 +448,26 @@ def run_test(path: Path) -> tuple[bool | None, bool, bool, str]:
         for a, b in zip(inputs_base, inputs_trans)
     )
 
-    return equal, bool(mlir_stderr), bool(plugin_stderr), mlir_stderr + ("\n" if mlir_stderr and plugin_stderr else "") + plugin_stderr
+    return equal, detections, "\n\n".join(messages)
 
 
 def main():
     ap = argparse.ArgumentParser(description="Run MLIR dependence-violation validation tests.")
-    ap.add_argument("-v", "--verbose", action="store_true", help="Print captured MLIR stderr for each test.")
+    ap.add_argument("-v", "--verbose", action="store_true", help="Print captured detector stderr for each test.")
     ap.add_argument("--filter", default=None, help="Only run tests whose filename contains this substring.")
+    ap.add_argument(
+        "--tool", choices=("all", *ALL_TOOLS), default="all",
+        help="Only evaluate the given detection tool (default: all).",
+    )
     args = ap.parse_args()
+
+    active_tools = set(ALL_TOOLS) if args.tool == "all" else {args.tool}
 
     if not TESTS_DIR.is_dir():
         print(f"No tests directory at {TESTS_DIR}", file=sys.stderr)
         sys.exit(2)
 
+    # Get all test cases and filter them
     tests = sorted(TESTS_DIR.glob("*.mlir"))
     if args.filter:
         tests = [t for t in tests if args.filter in t.name]
@@ -313,34 +479,32 @@ def main():
     for path in tests:
         print(f"{_c(CYAN, '[RUN ]')} {path.name}", flush=True)
         try:
-            ok, mlir_detected, plugin_detected, message = run_test(path)
+            ok, detections, message = run_test(path, active_tools)
         except Exception as exc:
             print(f"{_c(RED + ';' + BOLD, '[FAIL]')} {path.name}: harness error: {exc}")
             failed += 1
             continue
 
-        test_passed = (ok and not mlir_detected and not plugin_detected) or (
-            not ok and (mlir_detected or plugin_detected)
-        )
-        if ok is not None:
-            if test_passed:
-                passed += 1
-            else:
-                failed += 1
         if ok is None:
             tag = _c(YELLOW + ';' + BOLD, "[UNKW]")
-        elif test_passed:
-            tag = _c(GREEN + ';' + BOLD, "[PASS]")
         else:
-            tag = _c(RED + ';' + BOLD, "[FAIL]")
+            any_detected = any(detections.values())
+            test_passed = (ok and not any_detected) or (not ok and any_detected)
+            if test_passed:
+                tag = _c(GREEN + ';' + BOLD, "[PASS]")
+                passed += 1
+            else:
+                tag = _c(RED + ';' + BOLD, "[FAIL]")
+                failed += 1
         print(tag, path.name)
 
         outputs_str = _c(GREEN, "match") if ok else _c(RED, "differ")
-        mlir_str = _c(YELLOW, "detected") if mlir_detected else _c(GREEN, "silent")
-        plugin_str = _c(YELLOW, "detected") if plugin_detected else _c(GREEN, "silent")
         print("    - Outputs:", outputs_str)
-        print("    - MLIR:", mlir_str)
-        print("    - Plugin:", plugin_str)
+        for tool in ALL_TOOLS:
+            if tool not in detections:
+                continue
+            tool_str = _c(YELLOW, "detected") if detections[tool] else _c(FAINT, "silent")
+            print(f"    - {TOOL_LABELS[tool]}:", tool_str)
         if args.verbose and message:
             print("    - Message:")
             prefix = "      | "
