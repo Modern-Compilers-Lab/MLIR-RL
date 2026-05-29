@@ -73,6 +73,7 @@ log_tokens() {
 
 # Render the prompt; scope is derived from $INSTANCE_FILTER.
 CLAUDE_PROMPT=$(python -m llm_transform.tools.build_prompt)
+CONTINUE_PROMPT=$(cat resources/prompts/continue.txt)
 
 # Start claude code sessions
 rm -f logs/jobs/*
@@ -87,7 +88,7 @@ echo "Session ID: ${SESSION_ID:-UNKNOWN}"
 
 for ((i = 1 ; i < 5 ; i++ )); do
     START=$(date +%s)
-    OUTPUT=$(claude --resume "$SESSION_ID" --permission-mode dontAsk --print --output-format=json "$CLAUDE_PROMPT")
+    OUTPUT=$(claude --resume "$SESSION_ID" --permission-mode dontAsk --print --output-format=json "$CONTINUE_PROMPT")
     DURATION=$(( $(date +%s) - START ))
     log_tokens "$OUTPUT" "$DURATION"
 done
