@@ -54,14 +54,6 @@ echo "Evaluating code $CODE_ID:"
 
 # echo "Base:"
 # TIME_BASE=$(python -m llm_transform.utils.execution -i $CODE_ID -t resources/base_schedule.mlir -p resources/base_passes.txt)
-# Return saved values since the base doesn't change
-# MATMUL_TYPE="${CODE_ID##*_}"
-# case $MATMUL_TYPE in
-#   1) TIME_BASE=17707650426 ;;
-#   2) TIME_BASE=346113949 ;;
-#   3) TIME_BASE=338921024 ;;
-#   *) echo "Error: MATMUL_TYPE $MATMUL_TYPE does not exist" >&2; exit 1 ;;
-# esac
 # echo "Execution time (ns): $TIME_BASE"
 
 echo "Optimized:"

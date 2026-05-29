@@ -62,13 +62,13 @@ To create a new instance of an existing benchmark, use [llm_transform/tools/crea
 python -m llm_transform.tools.create_instance <benchmark> <sizes...>
 ```
 
-Refer to `data/<benchmark>/sizes.json` for the size parameters expected by a given benchmark — pass them as `key=value` pairs (or as positional ints when the file stores a list). For example:
+Refer to `data/<name>/sizes.json` for the size parameters expected by a given benchmark — pass them as `key=value` pairs (or as positional integers when the file stores a list). For example:
 
 ```bash
 # key=value pairs (when sizes.json stores a dict, e.g. matmul):
 python -m llm_transform.tools.create_instance matmul M=1024 K=1024 N=1024
 
-# positional ints (when sizes.json stores a list, e.g. add):
+# positional integers (when sizes.json stores a list, e.g. add):
 python -m llm_transform.tools.create_instance add 64 64 64 64
 ```
 
@@ -80,7 +80,7 @@ The entry point is the Slurm script [scripts/claude.sh](scripts/claude.sh). Subm
 sbatch scripts/claude.sh
 ```
 
-By default Claude optimizes every benchmark in `data/`. To restrict a session to a subset, pass benchmark names and/or full IDs (`{name}_{instance}`) as positional arguments:
+By default Claude optimizes every instance in `data/`. To restrict a session to a subset, pass benchmark names and/or full IDs (`<name>_<instance>`) as positional arguments:
 
 ```bash
 # Just one instance:
@@ -126,13 +126,13 @@ Outside the per-session folders, `logs/claude/` and `logs/jobs/` hold raw Slurm 
 
 Two helper scripts under [llm_transform/tools/](llm_transform/tools/) visualize the experiment logs.
 
-Plot speedup over time, one curve per benchmark, for a single experiment:
+Plot speedup over time, one curve per instance, for a single experiment:
 
 ```bash
 python -m llm_transform.tools.plot_performance <EXPERIMENT_ID>
 ```
 
-Compare multiple experiments side by side (one subplot per benchmark):
+Compare multiple experiments side by side (one subplot per instance):
 
 ```bash
 python -m llm_transform.tools.plot_performance_compare <EXPERIMENT_ID_1> <EXPERIMENT_ID_2> ...

@@ -78,12 +78,16 @@ CLAUDE_PROMPT=$(python -m llm_transform.tools.build_prompt)
 rm -f logs/jobs/*
 EXPERIMENT_START=$(date +%s)
 START=$(date +%s)
-OUTPUT=$(claude --effort max --permission-mode dontAsk --print --output-format=json "$CLAUDE_PROMPT")
+OUTPUT=$(claude --permission-mode dontAsk --print --output-format=json "$CLAUDE_PROMPT")
 DURATION=$(( $(date +%s) - START ))
 log_tokens "$OUTPUT" "$DURATION"
+
+SESSION_ID=$(echo "$OUTPUT" | jq -r '.session_id // empty')
+echo "Session ID: ${SESSION_ID:-UNKNOWN}"
+
 for ((i = 1 ; i < 5 ; i++ )); do
     START=$(date +%s)
-    OUTPUT=$(claude --continue --effort max --permission-mode dontAsk --print --output-format=json "$CLAUDE_PROMPT")
+    OUTPUT=$(claude --resume "$SESSION_ID" --permission-mode dontAsk --print --output-format=json "$CLAUDE_PROMPT")
     DURATION=$(( $(date +%s) - START ))
     log_tokens "$OUTPUT" "$DURATION"
 done
