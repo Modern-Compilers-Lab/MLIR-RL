@@ -9,4 +9,6 @@ The actions that are generated follow the template in llm_action/src/actions/v0
 
 Then the action space integrates seamlessly with the RL environment: llm_action/src/env/
 
+The RL agents can be trained with PPO: llm_action/src/rl
+
 <task>
