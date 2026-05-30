@@ -1,0 +1,76 @@
+{
+  "intents": [
+    {
+      "name": "Cache Locality and Data Reuse",
+      "description": "Restructure the loop nest and data layout so that operand tiles fit in L1/L2 cache and are maximally reused across reduction iterations, minimizing capacity misses and memory bandwidth pressure.",
+      "rationale": "The matmul loop nest performs O(I*J*K) FLOPs over O(I*J + J*K + I*K) data elements. Without tiling, even moderate matrix sizes exceed L1/L2 capacity, causing heavy cache thrashing. Proper blocking, loop ordering, and data packing are the single largest performance lever for this workload on cache-based CPUs.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Partition the iteration space into rectangular blocks so that the working set of each tile fits within a target cache level, enabling temporal data reuse across loop iterations.",
+          "rationale": "Tiling is the foundational transformation for cache locality in dense loop nests. For a 3-deep reduction loop nest, tiling all three dimensions creates blocks whose operand slices fit in L1 or L2, converting capacity misses into hits and dramatically increasing arithmetic intensity.",
+          "action_template": "Tiling(tile_sizes) — tile_sizes is a list with one entry per loop dimension; a value of 0 means 'do not tile that dimension'. OR Tiling(loop_band, tile_sizes) — tile_sizes applies to the specified loop band."
+        },
+        {
+          "name": "Loop Interchange",
+          "description": "Permute the order of loops in a loop band to improve memory access patterns, placing the loop iterating over the fastest-varying (contiguous) memory dimension innermost.",
+          "rationale": "In a multi-dimensional loop nest, the default loop order may cause non-unit-stride memory accesses, wasting cache line fetches. Reordering loops so that the innermost loop walks contiguously through memory maximizes spatial locality and prefetcher effectiveness.",
+          "action_template": "LoopInterchange(loop_band, permutation) — permutation specifies the new loop order as a list of indices. OR LoopInterchangeSwap(adjacent_pair) — swaps two adjacent loops in the nest."
+        },
+        {
+          "name": "Promotion",
+          "description": "Copy tiled operand slices into contiguous temporary buffers in fast memory, eliminating non-unit strides and TLB pressure from the original tensor layout.",
+          "rationale": "After tiling, operand sub-tensors may still be accessed with large strides in the original allocation. Promoting (packing) them into small, contiguous buffers ensures unit-stride access within each tile, reduces TLB misses, and enables more efficient vectorization of the inner computation.",
+          "action_template": "Promotion(operands_to_promote) — operands_to_promote is a list of operand indices (e.g., [0], [1], [0,1,2]) specifying which operands to copy into contiguous local buffers. Promotion requires buffer (memref) form, so this action must include an internal bufferization preprocessing step."
+        }
+      ]
+    },
+    {
+      "name": "Compute Throughput Maximization",
+      "description": "Expose SIMD parallelism and instruction-level parallelism so the CPU's vector units and execution pipeline are fully utilized, maximizing FLOPs per cycle.",
+      "rationale": "The target CPU has AVX2+FMA units capable of 4 FP64 FMAs per cycle. Without vectorization, scalar execution uses only ~25% of peak throughput. For a compute-bound kernel like matmul, closing this gap is essential. Unrolling further increases ILP by giving the out-of-order engine more independent operations to schedule.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Vectorization",
+          "description": "Map innermost loop iterations to SIMD vector instructions, preceded by a sequential tiling preprocessing step that shapes a target loop dimension to the chosen vector width before SIMD lowering.",
+          "rationale": "Vectorization converts scalar arithmetic into 4-wide FP64 AVX2 operations, achieving up to 4x throughput improvement on the innermost loop. The sequential tiling preprocessing ensures the loop trip count aligns with the vector width for clean, remainder-free vectorization.",
+          "action_template": "Vectorization(loop_band, vector_sizes) — vector_sizes is a list with one entry per loop in the band; a value of 0 means 'do not vectorize that loop'. Vectorization is preceded by a sequential tiling preprocessing step that tiles the target loops to the chosen vector widths before SIMD lowering."
+        },
+        {
+          "name": "Parallel Vectorization",
+          "description": "Map innermost loop iterations to SIMD vector instructions, preceded by a parallel tiling preprocessing step that both shapes dimensions to vector widths and distributes outer tiles across threads.",
+          "rationale": "This variant fuses thread distribution with vectorization preparation, reducing scheduling overhead compared to applying parallelization and vectorization as separate passes. It is particularly effective when the outer parallel dimensions are large enough to distribute across cores.",
+          "action_template": "ParallelVectorization(loop_band, vector_sizes) — vector_sizes is a list with one entry per loop in the band; a value of 0 means 'do not vectorize that loop'. Preceded by a parallel tiling preprocessing step that tiles target loops to vector widths and distributes the outer tiles across threads via parallel loop distribution."
+        },
+        {
+          "name": "Loop Unrolling",
+          "description": "Replicate the loop body multiple times per iteration to increase instruction-level parallelism and reduce loop overhead (branch, increment, compare).",
+          "rationale": "Unrolling exposes independent operations within a single iteration, allowing the CPU's out-of-order engine to overlap FMA latencies. It also reduces the ratio of loop control instructions to useful computation, and can enable register-level reuse of loaded values across unrolled iterations.",
+          "action_template": "LoopUnrolling(loop_id, unroll_factor) — unroll_factor specifies how many times to replicate the body. OR LoopUnrolling(loop_band, unroll_factor) — applies uniform unrolling to the specified loop band."
+        }
+      ]
+    },
+    {
+      "name": "Multi-Core Parallelism",
+      "description": "Distribute parallel loop iterations across the available physical cores to exploit coarse-grain thread-level parallelism for large workloads.",
+      "rationale": "With 28 physical cores available, parallelizing the outer parallel loops of the matmul nest can yield up to 28x speedup for sufficiently large matrices. For the largest shapes in this benchmark set (dimensions up to 3072), single-core execution severely underutilizes the machine. However, for smaller shapes, thread management overhead may outweigh the benefit, making this shape-dependent.",
+      "priority": "medium",
+      "transformations": [
+        {
+          "name": "Tiling-Based Parallelization",
+          "description": "Tile a parallel loop dimension and distribute the resulting tiles across threads, combining work partitioning with cache-friendly blocking.",
+          "rationale": "Tiling before parallelization ensures each thread works on a contiguous, cache-friendly block of the iteration space. This approach provides natural load balancing and avoids false sharing, and the tile size can be tuned independently of the thread count.",
+          "action_template": "TilingBasedParallelization(tile_sizes) — tile_sizes is a list with one entry per loop dimension; a value of 0 means 'do not parallelize that dimension'. Tiles the specified dimensions and distributes the resulting parallel loop iterations across available threads."
+        },
+        {
+          "name": "Direct Parallelization",
+          "description": "Map iterations of a parallel loop directly to threads without prior tiling, using a thread-count parameter to control the degree of parallelism.",
+          "rationale": "For cases where the iteration space is already well-structured or tiling is handled separately, direct parallelization provides a simpler mechanism with lower transformation overhead. The trade-off is that the thread count must evenly divide the iteration count for correct downstream lowering.",
+          "action_template": "DirectParallelization(num_threads) — num_threads specifies the number of threads to distribute work across. The iteration count of the target parallel loop must be divisible by num_threads."
+        }
+      ]
+    }
+  ]
+}

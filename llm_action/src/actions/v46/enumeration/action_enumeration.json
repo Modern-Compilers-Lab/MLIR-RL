@@ -1,0 +1,82 @@
+{
+  "intents": [
+    {
+      "name": "Data Locality & Cache Efficiency",
+      "description": "Restructure the iteration space and data layout so that working sets of the 3-deep loop nest fit within L1/L2 cache, maximizing temporal and spatial data reuse across all three operands.",
+      "rationale": "Matmul has O(n^3) compute over O(n^2) data, but only achieves high reuse when tiled. On this hardware, even moderate shapes (256x256 in f64) produce working sets exceeding L2 (256KB). Without cache-aware blocking, repeated evictions dominate execution time. Tiling, loop reordering for stride-1 access, and data packing to eliminate conflict misses are the highest-impact optimizations for this loop nest.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Partition the iteration space into multi-dimensional blocks (tiles) so that the data accessed per tile fits within a target cache level, enabling temporal reuse of operand sub-matrices.",
+          "rationale": "Tiling is the foundational optimization for matmul. It converts a global traversal of large matrices into repeated local computations on cache-resident blocks. Multi-level tiling (L2-then-L1) is common. Without it, capacity misses dominate for any shape whose working set exceeds L1.",
+          "action_template": "Tiling(tile_sizes) — tile_sizes is a vector of integers, one per loop dimension of the operation; a value of 0 means 'do not tile' that dimension. The RL agent selects tile sizes to target specific cache levels."
+        },
+        {
+          "name": "Loop Interchange",
+          "description": "Reorder the loops in the loop nest to improve memory access patterns, placing loops with stride-1 access in the innermost position.",
+          "rationale": "The default loop ordering of a matmul may not produce stride-1 access for all operands simultaneously. Interchanging loops can ensure the innermost loop traverses contiguous memory, reducing cache line waste and improving prefetcher effectiveness. For f64 matmul, each cache line holds only 8 elements, making access order critical.",
+          "action_template": "LoopInterchange(permutation) — permutation is a reordering of loop indices in the loop band, specified as a list of integers representing the new loop order."
+        },
+        {
+          "name": "Packing",
+          "description": "Copy operand tiles into contiguous, densely-packed buffers so that sub-tile accesses have unit stride and avoid cache conflict misses.",
+          "rationale": "After tiling, operand sub-tiles may still have non-unit leading-dimension strides, causing cache line conflicts and TLB pressure. Packing eliminates these issues by materializing contiguous copies. This is especially important for the operand accessed with a large stride (typically the second operand in row-major layout), and enables more efficient vectorization of the inner kernel.",
+          "action_template": "Packing(packed_sizes) — packed_sizes is a vector of integers, one per dimension; a value of 0 means 'do not pack' along that dimension. Non-zero values specify the packing granularity per dimension."
+        }
+      ]
+    },
+    {
+      "name": "SIMD & Compute Throughput",
+      "description": "Exploit AVX2 + FMA vector units to process multiple f64 elements per instruction, approaching the hardware peak of 8 f64 FLOPs/cycle/core through vectorized multiply-accumulate and instruction-level parallelism.",
+      "rationale": "The matmul inner loop is a multiply-accumulate, perfectly matching FMA instructions. AVX2 provides 4-wide f64 vectors, and Broadwell has 2 FMA units per core. Without vectorization, scalar execution uses only ~12.5% of peak compute. Loop unrolling further exposes independent operations to fill both FMA pipelines and hide latency, which is critical for approaching peak throughput.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Vectorization (Sequential)",
+          "description": "SIMD-lower the innermost loop(s) by first tiling them sequentially (tile_using_for) to match vector widths, then lowering the resulting fixed-trip-count loops to vector operations.",
+          "rationale": "Sequential preprocessing tiling creates inner loops whose trip counts equal the desired vector width, enabling direct lowering to SIMD instructions. The outer tile loops remain as regular for-loops, preserving simple sequential control flow. This is the standard vectorization approach for single-threaded inner kernels.",
+          "action_template": "VectorizationSequential(vector_sizes) — vector_sizes specifies the SIMD width per loop dimension. Preprocessing tiles the targeted loops sequentially (tile_using_for) so that loop bounds match the vector sizes, then lowers to vector operations."
+        },
+        {
+          "name": "Vectorization (Parallel)",
+          "description": "SIMD-lower the innermost loop(s) by first tiling them in parallel (tile_using_forall) to match vector widths, distributing outer tiles across threads, then lowering inner loops to vector operations.",
+          "rationale": "Parallel preprocessing tiling uses tile_using_forall, which both creates vector-width inner loops and distributes the outer tile iterations across threads. This combines vectorization with work distribution in a single action, enabling thread-level parallelism as a side effect of the vectorization preprocessing.",
+          "action_template": "VectorizationParallel(tile_sizes) — tile_sizes specifies the vector/tile width per loop dimension. Preprocessing tiles using parallel forall (tile_using_forall), distributing outer tiles across threads, then lowers inner loops to vector operations."
+        },
+        {
+          "name": "Loop Unrolling",
+          "description": "Replicate the loop body multiple times within a single iteration, reducing loop overhead and exposing independent instructions for pipelining across functional units.",
+          "rationale": "After tiling, inner loops have small known trip counts. Unrolling these loops by a factor of 2-8 reduces branch overhead and exposes multiple independent FMA operations that can fill both FMA pipelines simultaneously. This is essential for achieving high fractions of peak FMA throughput on Broadwell.",
+          "action_template": "LoopUnrolling(unroll_factor) — unroll_factor is a single integer specifying how many consecutive iterations to fuse into one loop body. Applied to the innermost eligible loop."
+        }
+      ]
+    },
+    {
+      "name": "Multi-Core Parallelism & Buffer Management",
+      "description": "Distribute the parallel dimensions of the loop nest across the 28 available physical cores, and manage per-thread buffer locality through operand promotion to contiguous local storage.",
+      "rationale": "With 28 cores across 2 NUMA nodes, thread-level parallelism provides up to 28x speedup for large matmul shapes. The two parallel loop dimensions (rows and columns of the output) offer abundant parallelism. Promotion of tiled operands into contiguous local buffers ensures each thread works on cache-friendly data without cross-NUMA traffic, and amortizes copy cost over many inner iterations.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Parallelization (Tiling)",
+          "description": "Partition parallel loop dimensions via tiling, then distribute the resulting outer tile loops across threads for coarse-grain parallelism. Reduction dimensions are automatically excluded from distribution.",
+          "rationale": "Tiling-based parallelization gives fine control over work granularity per thread. Larger tiles reduce scheduling overhead and improve per-thread cache locality; smaller tiles improve load balance across the 28 cores. The tile sizes serve as the RL agent's knob for balancing these tradeoffs.",
+          "action_template": "ParallelizationTiling(tile_sizes) — tile_sizes is a vector of integers, one per loop dimension; a value of 0 means 'do not parallelize' that dimension. Reduction dimensions are automatically zeroed. The outer tile loops are distributed across available threads."
+        },
+        {
+          "name": "Parallelization (Threads)",
+          "description": "Directly distribute iterations of parallel loops across a fixed number of threads without explicit tiling, using a thread-count parameter to control the degree of parallelism.",
+          "rationale": "Thread-based parallelization offers a simpler parameterization — a single num_threads value — and lets the runtime handle work partitioning. This is effective when the iteration space divides evenly and the RL agent needs a simple action with fewer parameters to tune.",
+          "action_template": "ParallelizationThreads(num_threads) — num_threads specifies how many threads to distribute parallel loop iterations across. The iteration count should be divisible by num_threads for correct downstream lowering."
+        },
+        {
+          "name": "Promotion",
+          "description": "Copy tiled operand data into contiguous temporary local buffers at the memref level, requiring an internal bufferization step, so that each tile's data is densely laid out for efficient access.",
+          "rationale": "After tiling and parallelization, each thread operates on a sub-tile of the operands. Promotion materializes these sub-tiles into contiguous local buffers, eliminating non-unit strides and improving cache utilization per thread. The internal bufferization-then-promote-then-canonicalize sequence ensures downstream transformations see static buffer shapes suitable for vectorization. Promotion targets the outer tile level to amortize copy cost.",
+          "action_template": "Promotion(tile_sizes) — tile_sizes specifies the tiling granularity before promotion. Promotion copies tiled operands into contiguous local buffers. Requires internal bufferization preprocessing; canonicalization after promotion folds dynamic shapes into static types for efficient downstream vectorization."
+        }
+      ]
+    }
+  ]
+}

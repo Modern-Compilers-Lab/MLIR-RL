@@ -14,12 +14,15 @@ from sb3_contrib import MaskablePPO
 from sb3_contrib.common.wrappers import ActionMasker
 
 from llm_action.src.env import MLIROptEnv
+# Ensure BehaviorMaskedActorCriticPolicy is importable so MaskablePPO.load can restore
+# models trained with --policy-mask-mode behavior-only (policy class resolved by ref).
+import llm_action.src.rl.behavior_masking  # noqa: F401
 from llm_action.src.config import RL_RESULTS_DIR, EVALUATION_RESULTS_DIR
 
 ENV_CONFIG_KEYS = [
     "benchmarks_name", "action_version", "param_mode", "max_steps",
     "history_mode", "reward_scale", "reward_mode", "reward_baseline",
-    "enable_dependency_masking",
+    "loop_bound_encoding", "enable_dependency_masking", "masking_mode",
 ]
 
 STAT_KEYS = ["min", "q25", "median", "q75", "max"]

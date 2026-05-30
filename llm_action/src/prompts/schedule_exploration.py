@@ -40,11 +40,21 @@ You have **three responsibilities**:
   (`tag = "operation_0"` lost after a transform), and crashes.
 - Report which action pairs compose cleanly and which do not.
 
-## 2. Investigate Promising Schedules
-- Explore action sequences to find the **best achievable speedup** for each kernel.
-- This establishes a **performance baseline** we can reference while training the RL agent.
-  If the RL agent cannot approach these speedups, it signals a learning or action-space problem.
-- Focus on practical schedules: parallelization, multi-level tiling, vectorization.
+## 2. Discover Optimal Schedule SHAPES per Case
+- Your goal is to find **which schedule shapes (ordered action-sequence skeletons) are
+  optimal for which kernel cases** — NOT to tune their parameters. Parameter optimization
+  (tile/vector sizes, thread counts, permutations) is the **RL policy's** job downstream.
+- To compare shapes you must run them, so use **one reasonable, divisor-valid parameter set
+  per schedule as a probe** — just enough to measure and rank shapes. Do not sweep or
+  fine-tune parameters.
+- Judge a shape by its **potential**: never discard a structurally promising skeleton because
+  a single probe parameter value underperformed — the RL agent will tune it.
+- The best shapes also establish a **performance reference** for RL training: if the trained
+  agent cannot approach these speedups, it signals a learning or action-space problem.
+- Track the **winning schedule shape per kernel subset**, not just one global best. Different
+  shapes within a family (e.g. square vs skinny matmul, compute- vs memory-bound) often
+  prefer different schedule shapes. These per-subset winners are the raw material for the
+  Schedule Graph (Synthesis below), so record which shape wins for which subset.
 
 ## 3. Log Everything
 - Produce **human-readable, step-by-step markdown logs** of your entire exploration.
@@ -56,6 +66,9 @@ You have **three responsibilities**:
 - Enumerating optimization intents (Layer 1).
 - Implementing or modifying action code (Layer 2).
 - Training RL policies.
+- **Optimizing parameters** (tile/vector sizes, thread counts, permutations) — that is the
+  RL policy's job. Use a single reasonable, divisor-valid parameter set only as a probe to
+  compare schedule shapes; do not sweep or fine-tune.
 - Writing raw MLIR Transform dialect code. Use only the provided action MCP tools.
 """
 
@@ -70,8 +83,9 @@ Follow this phased approach for **each kernel**:
 
 ## Phase 1 — Single Actions
 For each action tool:
-- Try **2-3 representative parameter variants** (small, medium, large).
-- Record for each: precondition result, postcondition result, execution time, speedup vs base.
+- Apply it with **one valid, representative parameter set** (a divisor-correct probe — not a
+  parameter sweep). The goal here is to learn structure, not to tune.
+- Record: precondition result, postcondition result, execution time, rough speedup vs base.
 - Note which actions are **applicable** to this kernel (precondition passes).
 - Note which actions **preserve the tag** (postcondition passes and tag still present in output).
 
@@ -87,16 +101,23 @@ IR compatibility is frequently wrong — e.g., "Promotion is terminal because it
 to memref" was assumed without testing and turned out to be false (all actions compose
 after Promotion). Only actual tool invocation results count.
 
-## Phase 3 — Multi-Step Schedules (3+ actions)
+## Phase 3 — Multi-Step Schedule Shapes (3+ actions)
 - Build on successful pairs from Phase 2.
-- Try the **canonical HPC pattern**: parallelization -> tiling -> tiling -> vectorization.
-- Also try: interchange -> tiling -> vectorization, packing -> tiling -> vectorization, etc.
-- Explore different parameter combinations within each schedule template.
+- Enumerate and measure **distinct schedule shapes** (ordered action-sequence skeletons),
+  each run **once** with a reasonable valid probe parameter set to gauge its potential.
+- Cover structurally different shapes: the **canonical HPC pattern**
+  (parallelization -> tiling -> tiling -> vectorization), plus alternatives like
+  interchange -> tiling -> vectorization, packing -> tiling -> vectorization, etc.
+- **Breadth of distinct shapes > parameter depth.** Do not enumerate parameter combinations
+  within a shape — the RL policy tunes parameters.
 
-## Phase 4 — Local Tuning
-- Take the **top 3-5 schedules** from Phase 3 by speedup.
-- Vary parameters within each schedule to search for local optima
-  (e.g., different tile sizes, thread counts, vector widths).
+## Phase 4 — Schedule Selection Across Cases
+- For each kernel case/subset, identify the **best schedule shape** (the ordered action
+  sequence, ignoring exact parameters) — not the best parameters.
+- Assemble the **curated set of distinct winning skeletons** across cases; this set becomes
+  the Schedule Graph (Synthesis below).
+- **No parameter sweeps.** A shape that looks merely decent under its probe params but is
+  structurally promising still belongs — the RL agent will tune it.
 """
 
 def get_tool_usage_instructions() -> str:
@@ -124,6 +145,9 @@ Returns: `(precondition_passed, transformed_code_or_original, postcondition_pass
 **Recording failures:**
 - If a tool call fails solely because of a non-divisible parameter choice, do NOT record a dependency edge — this is a tuning error, not a structural incompatibility.
 - Re-try with a valid divisor before concluding two actions are incompatible.
+
+**You are measuring schedule SHAPES, not searching for optimal parameters.** Pick a single
+divisor-valid parameter set as a probe per schedule; the RL policy tunes parameters later.
 
 ## Composability Protocol
 
@@ -182,9 +206,9 @@ Use this exact markdown structure:
 |-----------|----------|-----------|---------| -------------------|
 | C1 | parallel(28) -> tile(4,16,64) -> tile(4,4,64) -> vec(4,4,64) | 0.94 | 312x | 400x |
 
-## Phase 4: Local Tuning
-| Candidate | Base | Variation | Time (ms) | Speedup | Speedup to PyTorch |
-|-----------|------|-----------|-----------|---------| -------------------|
+## Phase 4: Best Schedule Shape per Case
+| Kernel case/subset | Winning skeleton (action sequence) | Probe params | Time (ms) | Speedup | Speedup to PyTorch |
+|--------------------|------------------------------------|--------------|-----------|---------| -------------------|
 
 ## Composability Matrix
 | After \\ Before | tiling | packing | vec | unroll | interchange | parallel |
@@ -220,7 +244,7 @@ This ensures progress is preserved if the session ends early due to context limi
 def get_dependency_graph_synthesis() -> str:
     return """# Dependency Graph Synthesis
 
-After Phases 1-3 complete, distill your Composability Matrix into a Python
+After Phases 1-4 complete, distill your Composability Matrix into a Python
 `ACTION_DEPENDENCIES` dict that the RL training loop will consume for action
 masking. The training agent uses this to skip actions that are provably
 illegal given what has already run, improving sample efficiency.
@@ -279,6 +303,81 @@ dict) summarizing the structural reason for the block, so a reviewer can audit
 the graph without re-running exploration.
 """
 
+def get_schedule_graph_synthesis() -> str:
+    return """# Schedule Graph Synthesis
+
+This is your **primary deliverable**. Distill your exploration into a `SCHEDULE_GRAPH`:
+a per-family **allowlist of high-value schedule PATHS**. Where `ACTION_DEPENDENCIES`
+(above) is a *denylist* that masks provably-illegal transitions, the `SCHEDULE_GRAPH`
+is an *allowlist* that positively guides the RL policy: at each episode step the policy
+may only choose an action that **extends the sequence of successfully-applied actions
+along one of these paths**. This focuses learning on schedule *shapes* that are known to
+be optimal, while the policy still freely tunes their *parameters* and chooses *which
+branch* to follow — the subtle, high-value variations — instead of wandering the full
+action product space.
+
+## Semantics & Schema
+```python
+SCHEDULE_GRAPH: dict[str, list[list[str]]] = {
+    "<family>": [
+        ["<ActionName>", "<ActionName>", ...],   # one allowed schedule path (skeleton)
+        ...
+    ],
+}
+```
+- **Keys are op families** (e.g. `matmul`, `conv2d`, `pooling`, `relu`, `add`) — exactly
+  the families present in the benchmark set. Add a `"default"` key as a catch-all only if
+  you have a sensible family-agnostic path set.
+- **Each path is an ordered list of action *class names*** (CamelCase, matching
+  `ACTION_CLASSES`). A path is a **skeleton: NO parameters**. The RL policy tunes
+  tile/vector sizes, thread counts, permutations, etc. itself.
+- **Shared prefixes branch into a tree.** Paths that share a leading action (e.g. several
+  starting with `ParallelizationTile`) form a decision tree the policy navigates.
+- **`done` is implicit** at the end of any path (and as a safety escape) — do not encode it.
+- **Terminal / tag-consuming actions go last.** Any action that lowers away the linalg op
+  / consumes the tag (e.g. vectorization) must be the **final** element of its path.
+- **Respect `unique_execution`.** Never repeat a `unique_execution = True` action within a
+  single path. Repeatable actions (e.g. multi-level `Tiling`) may appear more than once.
+
+## Selection Criteria (the balance that makes this work)
+1. **Empirically grounded** — every path must be an **actually-measured** schedule *shape*
+   that was best (or within a small margin) for **some** kernel subset under a reasonable
+   probe parameter set; the RL agent will tune it further. No theory-only paths. Do NOT
+   discard a structurally promising shape because one probe parameter value underperformed.
+2. **Coverage / balance** — include the **distinct** winning skeletons across the shape
+   subsets within each family, so the graph is not prematurely biased toward one dominant
+   shape. If square and skinny matmuls prefer different schedules, include both.
+3. **Parsimony / sample efficiency** — keep the set **small and curated**. A path earns its
+   place only if it (a) wins for some subset AND (b) is structurally distinct from paths
+   already included. Do **NOT** enumerate every composable sequence — an over-comprehensive
+   graph defeats the whole point (it stops being a useful prior and wastes RL samples).
+4. **Legality** — only structurally-valid transitions (as established by your Phase-2
+   composability matrix). A path must be composable end-to-end on the kernels it targets.
+
+## Relationship to ACTION_DEPENDENCIES
+Emit **both**. They come from the same exploration and serve two selectable masking modes:
+`ACTION_DEPENDENCIES` (legacy denylist) and `SCHEDULE_GRAPH` (new allowlist). The
+`SCHEDULE_GRAPH` paths must of course be consistent with the dependency edges (never
+encode a path that includes a blocked transition).
+
+## Output
+At the end of your exploration log, append a fenced Python code block containing the
+`SCHEDULE_GRAPH` dict, ready to paste into `llm_action/src/actions/v<x>/registry.py`
+directly below `ACTION_CLASSES` (and below the `ACTION_DEPENDENCIES` dict):
+```python
+SCHEDULE_GRAPH: dict[str, list[list[str]]] = {
+    "matmul": [
+        ["ParallelizationTile", "VectorizationPar"],
+        ["VectorizationPar"],
+        ["LoopInterchange", "ParallelizationTile", "VectorizationSeq"],
+    ],
+}
+```
+In the markdown log (NOT in the dict), put a one-line rationale above each path: which
+kernel subset it wins for and its best measured speedup, so a reviewer can audit the
+graph's coverage and parsimony without re-running exploration.
+"""
+
 def get_layer3_system_prompt() -> str:
     return f"""{get_agent_identity()}
 {get_agent_position()}
@@ -286,7 +385,8 @@ def get_layer3_system_prompt() -> str:
 {get_exploration_strategy()}
 {get_tool_usage_instructions()}
 {get_logging_instructions()}
-{get_dependency_graph_synthesis()}"""
+{get_dependency_graph_synthesis()}
+{get_schedule_graph_synthesis()}"""
 
 if __name__ == "__main__":
     save_prompt(get_layer3_system_prompt(), version="1", name="schedule_exploration")

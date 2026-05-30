@@ -11,6 +11,10 @@ class ActionRegistry:
     total_actions: int
     name_to_idx: dict[str, int]
     blocks: dict[int, frozenset[int]] = field(default_factory=dict)
+    # Per-family allowlist of schedule paths (action-name skeletons resolved to indices).
+    # family -> tuple of paths, each path a tuple of action indices. Consumed by the
+    # "schedule_graph" masking mode; empty when the version defines no SCHEDULE_GRAPH.
+    schedule_paths: dict[str, tuple[tuple[int, ...], ...]] = field(default_factory=dict)
 
 def load_action_registry(version: str) -> ActionRegistry:
     mod = importlib.import_module(f"llm_action.src.actions.{version}.registry")
@@ -41,6 +45,22 @@ def load_action_registry(version: str) -> ActionRegistry:
         if resolved:
             blocks[blocker_idx] = frozenset(resolved)
 
+    raw_graph: dict[str, list[list[str]]] = getattr(mod, "SCHEDULE_GRAPH", {})
+    schedule_paths: dict[str, tuple[tuple[int, ...], ...]] = {}
+    for family, paths in raw_graph.items():
+        resolved_paths: list[tuple[int, ...]] = []
+        for path in paths:
+            resolved_path: list[int] = []
+            for action_name in path:
+                if action_name not in name_to_idx:
+                    raise ValueError(
+                        f"SCHEDULE_GRAPH in {version}: unknown action '{action_name}' "
+                        f"in family '{family}' (known actions: {sorted(name_to_idx)})"
+                    )
+                resolved_path.append(name_to_idx[action_name])
+            resolved_paths.append(tuple(resolved_path))
+        schedule_paths[family] = tuple(resolved_paths)
+
     return ActionRegistry(
         action_classes=classes,
         num_actions=n,
@@ -48,4 +68,5 @@ def load_action_registry(version: str) -> ActionRegistry:
         total_actions=n + 1,
         name_to_idx=name_to_idx,
         blocks=blocks,
+        schedule_paths=schedule_paths,
     )

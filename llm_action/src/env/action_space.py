@@ -56,9 +56,42 @@ def compute_blocked_indices(registry, used_action_indices: set[int]) -> frozense
     return frozenset(blocked)
 
 
+def compute_schedule_allowed(registry, family: str,
+                             prefix: tuple[int, ...]) -> tuple[frozenset[int], bool] | None:
+    """Positive allowlist for the "schedule_graph" masking mode.
+
+    Given the ordered tuple of SUCCESSFULLY-applied action indices this episode
+    (`prefix`), walk the per-family schedule paths and return:
+      (allowed_next_action_indices, allow_done)
+    `allowed_next` is the set of actions that extend the current prefix along some
+    path; `allow_done` is True when the prefix is the end of a path (terminal) or
+    when no path can extend it (off-graph / leaf escape).
+
+    Returns None when the family is unconstrained (no entry and no "default"
+    fallback) — the caller then applies no schedule constraint (allow-all).
+    """
+    paths = registry.schedule_paths.get(family) or registry.schedule_paths.get("default")
+    if not paths:
+        return None
+    allowed: set[int] = set()
+    can_done = False
+    plen = len(prefix)
+    for path in paths:
+        if path[:plen] == prefix:
+            if len(path) > plen:
+                allowed.add(path[plen])
+            else:
+                can_done = True
+    if not allowed:  # at a leaf or off-graph -> allow termination (safety escape)
+        can_done = True
+    return frozenset(allowed), can_done
+
+
 def build_action_masks(registry, slot_map, n_loops: int, max_n_loops: int,
                        used_action_counts: dict[int, int],
                        blocked_by_dependency: frozenset[int] = frozenset(),
+                       allowed_selector: frozenset[int] | None = None,
+                       allow_done: bool = True,
                        loop_bounds: list[int] | None = None) -> np.ndarray:
     """Build per-dimension boolean masks for MaskablePPO.
 
@@ -68,20 +101,32 @@ def build_action_masks(registry, slot_map, n_loops: int, max_n_loops: int,
       - `unique_execution = True`  -> 1 use per episode (mask after 1 use)
       - `unique_execution = False` -> MAX_ACTION_EXECUTIONS uses per episode
     `used_action_counts` maps action_idx -> times already executed this episode.
-    `blocked_by_dependency` is applied on top; the done action is always kept
-    available so the agent can terminate the episode.
+
+    Two mutually exclusive action-selector strategies:
+      - `allowed_selector is None` (dependency / no masking): start all-available
+        and subtract `blocked_by_dependency`; the done action stays available.
+      - `allowed_selector` provided (schedule_graph): start all-forbidden and allow
+        only the listed indices (the schedule's next-step actions); the done action
+        follows `allow_done`.
+    The `unique_execution` caps and the per-slot param masks apply identically in
+    both strategies.
     `loop_bounds` is passed to each action's `valid_param_mask` to further restrict
     per-slot vocabulary choices (e.g., mask out non-divisible tile sizes).
     """
     # Action selector mask
-    action_mask = np.ones(registry.total_actions, dtype=bool)
+    if allowed_selector is None:
+        action_mask = np.ones(registry.total_actions, dtype=bool)
+        for idx in blocked_by_dependency:
+            action_mask[idx] = False
+    else:
+        action_mask = np.zeros(registry.total_actions, dtype=bool)
+        for idx in allowed_selector:
+            action_mask[idx] = True
     for idx, count in used_action_counts.items():
         cap = 1 if registry.action_classes[idx].unique_execution else MAX_ACTION_EXECUTIONS
         if count >= cap:
             action_mask[idx] = False
-    for idx in blocked_by_dependency:
-        action_mask[idx] = False
-    action_mask[registry.done_idx] = True
+    action_mask[registry.done_idx] = allow_done
 
     # Parameter slot masks
     param_masks = []

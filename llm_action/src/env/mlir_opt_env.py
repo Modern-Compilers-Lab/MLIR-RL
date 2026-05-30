@@ -6,13 +6,14 @@ import numpy as np
 from gymnasium import spaces
 
 from llm_action.src.env.action_registry import load_action_registry, ActionRegistry
-from llm_action.src.env.benchmarks import Benchmark, load_benchmarks
+from llm_action.src.env.benchmarks import Benchmark, load_benchmarks, compute_loop_bound_norm
 from llm_action.src.env.env_config import EnvConfig
 from llm_action.src.execution.local_executer import LocalExecutor
 from llm_action.src.execution.dask_executor import DaskExecutor, get_shared_client
 from llm_action.src.execution.slurm_executor import SlurmExecutor
 from llm_action.src.env.state_extractor import extract_observation, observation_size, count_loops, _parse_loop_info
-from llm_action.src.env.action_space import build_action_space, build_action_masks, compute_blocked_indices
+from llm_action.src.env.action_space import build_action_space, build_action_masks, compute_blocked_indices, compute_schedule_allowed
+from llm_action.src.data.benchmarks import detect_family
 from llm_action.src.config import L, MAX_ACTION_EXECUTIONS
 
 logger = logging.getLogger(__name__)
@@ -63,6 +64,11 @@ class MLIROptEnv(gym.Env):
         )
         assert self.benchmarks, "No benchmarks loaded"
 
+        self._bound_norm = 1.0
+        if cfg.loop_bound_encoding == "max":
+            self._bound_norm = compute_loop_bound_norm(cfg.benchmarks_name)
+            logger.info(f"Loop-bound 'max' encoding: dataset-train divisor = {self._bound_norm:.0f}")
+
         # Parametrizer: only created for LLM mode
         self._llm_parametrizer = None
         if self.param_mode == "llm":
@@ -71,6 +77,9 @@ class MLIROptEnv(gym.Env):
 
         # Two-policy mode: param model set externally via set_param_model()
         self._param_model = None
+
+        # Emit the "no SCHEDULE_GRAPH for family" fallback warning at most once.
+        self._warned_no_schedule = False
 
         self._benchmark: Benchmark | None = None
         self._current_code = ""
@@ -124,6 +133,12 @@ class MLIROptEnv(gym.Env):
 
         return obs, {"benchmark": self._benchmark.name}
 
+    def _success_prefix(self) -> tuple[int, ...]:
+        """Ordered tuple of SUCCESSFULLY-applied action indices this episode
+        (excluding the done pseudo-action). This is the schedule-graph prefix."""
+        done = self.registry.done_idx
+        return tuple(idx for idx, ok in self._action_indices if ok and idx != done)
+
     def action_masks(self) -> np.ndarray:
         """Boolean mask over the action space for MaskablePPO.
 
@@ -132,14 +147,34 @@ class MLIROptEnv(gym.Env):
 
         Per-action `unique_execution` (ActionBase class attribute, default True)
         decides whether a successfully-applied action is masked for the rest of
-        the episode. The done action is always unmasked so the episode can
-        terminate.
+        the episode.
+
+        `masking_mode` selects the action-selector strategy:
+          - "dependencies": subtract ACTION_DEPENDENCIES blocks (gated by
+            `enable_dependency_masking`); the done action stays available.
+          - "schedule_graph": allow only the SCHEDULE_GRAPH next-step actions for
+            the current kernel's family; done follows the path-terminal rule.
+          - "none": no selector constraint.
         """
-        blocked = (
-            compute_blocked_indices(self.registry, set(self._used_action_counts.keys()))
-            if self.cfg.enable_dependency_masking
-            else frozenset()
-        )
+        blocked: frozenset[int] = frozenset()
+        allowed_selector: frozenset[int] | None = None
+        allow_done = True
+
+        if self.cfg.masking_mode == "schedule_graph":
+            family = detect_family(self._benchmark.name) or "default"
+            res = compute_schedule_allowed(self.registry, family, self._success_prefix())
+            if res is None:
+                if not self._warned_no_schedule:
+                    logger.warning(
+                        "masking_mode='schedule_graph' but no SCHEDULE_GRAPH entry for "
+                        f"family '{family}' (kernel '{self._benchmark.name}') in version "
+                        f"'{self.cfg.action_version}'; falling back to allow-all."
+                    )
+                    self._warned_no_schedule = True
+            else:
+                allowed_selector, allow_done = res
+        elif self.cfg.masking_mode == "dependencies" and self.cfg.enable_dependency_masking:
+            blocked = compute_blocked_indices(self.registry, set(self._used_action_counts.keys()))
 
         if self.param_mode == "multidiscrete":
             return build_action_masks(
@@ -148,18 +183,25 @@ class MLIROptEnv(gym.Env):
                 max_n_loops=self.cfg.max_num_loops,
                 used_action_counts=self._used_action_counts,
                 blocked_by_dependency=blocked,
+                allowed_selector=allowed_selector,
+                allow_done=allow_done,
                 loop_bounds=self._loop_bounds,
             )
 
         reg = self.registry
-        action_mask = np.ones(reg.total_actions, dtype=bool)
+        if allowed_selector is None:
+            action_mask = np.ones(reg.total_actions, dtype=bool)
+            for idx in blocked:
+                action_mask[idx] = False
+        else:
+            action_mask = np.zeros(reg.total_actions, dtype=bool)
+            for idx in allowed_selector:
+                action_mask[idx] = True
         for idx, count in self._used_action_counts.items():
             cap = 1 if reg.action_classes[idx].unique_execution else MAX_ACTION_EXECUTIONS
             if count >= cap:
                 action_mask[idx] = False
-        for idx in blocked:
-            action_mask[idx] = False
-        action_mask[reg.done_idx] = True
+        action_mask[reg.done_idx] = allow_done
         return action_mask
 
     def step(self, action):
@@ -347,6 +389,8 @@ class MLIROptEnv(gym.Env):
         if ratio > self.cfg.max_speedup_cap:
             return self.cfg.failed_exec_penalty
 
+        # Track best overall speedup (base/opt) for the "relative" reward scale.
+        self._benchmark.best_speedup_seen = max(self._benchmark.best_speedup_seen, base / t)
         self._last_exec_time_ms = t
         return self._compute_reward(ratio)
 
@@ -369,6 +413,8 @@ class MLIROptEnv(gym.Env):
                            f"(base={base:.2f}ms, opt={t:.4f}ms) — penalizing")
             return self.cfg.failed_exec_penalty, t
 
+        # Track best overall speedup for this instance (used by "relative" scale).
+        self._benchmark.best_speedup_seen = max(self._benchmark.best_speedup_seen, ratio)
         return self._compute_reward(ratio), t
 
     def _compute_reward(self, ratio: float) -> float:
@@ -377,13 +423,21 @@ class MLIROptEnv(gym.Env):
                 return ratio
             case "delta":
                 return 1.0 - (1.0 / ratio)
+            case "relative":
+                # Per-shape scale-free reward: speedup as a fraction of the best
+                # speedup seen for this instance so far. ~1.0 when matching the
+                # instance's best, so small and large matrices contribute
+                # comparable gradients. Intended for "final"/"schedule" modes.
+                best = self._benchmark.best_speedup_seen if self._benchmark else 1.0
+                return ratio / best if best > 0 else 0.0
             case _:
                 return math.log(ratio)
 
     def _obs(self) -> np.ndarray:
         return extract_observation(
             self._current_code, self._action_indices, self._step_count,
-            self.registry.total_actions, self.cfg.max_steps, self.cfg.history_mode
+            self.registry.total_actions, self.cfg.max_steps, self.cfg.history_mode,
+            loop_bound_encoding=self.cfg.loop_bound_encoding, bound_norm=self._bound_norm,
         )
 
     def _info(self, reward: float, failed: bool = False, opt_time_ms: float = -1) -> dict:

@@ -1,16 +1,3 @@
-"""Unified benchmark loader and prompt formatter.
-
-Single source of truth for benchmark file discovery, op-family grouping,
-template lookup, and the structured representation embedded in the L1/L2/L3
-LLM prompts.
-
-Layout convention:
-    data/benchmarks/<set>/                     # flat or split set
-    data/benchmarks/<set>/{train,eval}/*.mlir  # split set (e.g. "standard")
-    data/benchmarks/<set>/baselines.json       # flat or {train,eval}-nested
-    data/benchmarks/templates/<family>_template.mlir
-"""
-
 from __future__ import annotations
 
 import json

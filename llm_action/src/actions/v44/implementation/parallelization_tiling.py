@@ -1,0 +1,146 @@
+import re
+import numpy as np
+from llm_action.src.actions.base import ActionBase
+from llm_action.src.config import MAX_PARAM_SLOTS, MAX_VOCAB_SIZE_PER_SLOT
+from llm_action.src.utils.transformation import run_transform_code
+
+
+class ParallelizationTiling(ActionBase):
+    """Tile outer parallel loop dimensions into coarse-grain blocks and distribute
+    across threads using tile_using_forall.
+
+    unique_execution = True: introduces scf.forall; a second forall tiling
+    is ill-defined on the same target."""
+
+    unique_execution: bool = True  # forall changes the loop structure fundamentally
+
+    VOCAB = [0, 4, 8, 16, 32, 64]  # tile sizes; 0 = do not tile
+
+    # Iterator type patterns for known op families
+    _ITERATOR_TYPES = {
+        "matmul": ["parallel", "parallel", "reduction"],
+        "conv_2d_nchw_fchw": ["parallel", "parallel", "parallel", "parallel", "reduction", "reduction", "reduction"],
+        "pooling_nchw_max": ["parallel", "parallel", "parallel", "parallel", "reduction", "reduction"],
+        "add": ["parallel", "parallel", "parallel", "parallel"],
+    }
+
+    @classmethod
+    def _detect_iterator_types(cls, code: str, n_dims: int) -> list[str]:
+        """Detect iterator types from the IR."""
+        if "linalg.matmul" in code:
+            return cls._ITERATOR_TYPES["matmul"]
+        if "linalg.conv_2d_nchw_fchw" in code:
+            return cls._ITERATOR_TYPES["conv_2d_nchw_fchw"]
+        if "linalg.pooling_nchw_max" in code:
+            return cls._ITERATOR_TYPES["pooling_nchw_max"]
+        if "linalg.add" in code:
+            return cls._ITERATOR_TYPES["add"]
+        match = re.search(r'iterator_types\s*=\s*\[(.*?)\]', code)
+        if match:
+            types_str = match.group(1)
+            return [t.strip().strip('"') for t in types_str.split(',')]
+        return ["parallel"] * n_dims
+
+    @classmethod
+    def parameters(cls) -> dict:
+        return {
+            "tile_sizes": {
+                "description": "Tile size per dimension for parallel distribution; 0 = do not tile. "
+                               "Reduction dims are automatically zeroed.",
+                "type": "list[int]",
+                "values": cls.VOCAB,
+            }
+        }
+
+    @classmethod
+    def precondition(cls, code: str, params: dict) -> bool:
+        if 'tag = "operation_0"' not in code:
+            return False
+        tile_sizes = params.get("tile_sizes", [])
+        if not tile_sizes:
+            return False
+        if all(s == 0 for s in tile_sizes):
+            return False
+        return True
+
+    @classmethod
+    def preprocess(cls, code: str, params: dict) -> str:
+        return code
+
+    @classmethod
+    def implement(cls, code: str, params: dict) -> str:
+        tile_sizes = params["tile_sizes"]
+        n_dims = len(tile_sizes)
+        iterator_types = cls._detect_iterator_types(code, n_dims)
+
+        # Zero out reduction dimensions (forall can't tile them)
+        safe_sizes = []
+        for i, s in enumerate(tile_sizes):
+            if i < len(iterator_types) and iterator_types[i] == "reduction":
+                safe_sizes.append(0)
+            else:
+                safe_sizes.append(s)
+
+        if all(s == 0 for s in safe_sizes):
+            return code
+
+        sizes_str = str(safe_sizes)
+
+        transform_code = (
+            f'module attributes {{transform.with_named_sequence}} {{\n'
+            f'  transform.named_sequence @__transform_main(%arg1: !transform.any_op {{transform.readonly}}) {{\n'
+            f'    %op = transform.structured.match attributes{{tag = "operation_0"}} in %arg1'
+            f' : (!transform.any_op) -> !transform.any_op\n'
+            f'    %tiled_op, %forall = transform.structured.tile_using_forall %op'
+            f' tile_sizes {sizes_str} : (!transform.any_op) -> (!transform.any_op, !transform.any_op)\n'
+            f'    %tag = transform.param.constant "operation_0" -> !transform.any_param\n'
+            f'    transform.annotate %forall "tag" = %tag : !transform.any_op, !transform.any_param\n'
+            f'    transform.yield\n'
+            f'  }}\n'
+            f'}}\n'
+        )
+
+        try:
+            return run_transform_code(code, transform_code)
+        except Exception:
+            return code
+
+    @classmethod
+    def postcondition(cls, before: str, after: str, params: dict) -> bool:
+        if after.strip() == before.strip():
+            return False
+        if "func.func" not in after:
+            return False
+        return True
+
+    @classmethod
+    def params_size(cls) -> int:
+        return MAX_PARAM_SLOTS
+
+    @classmethod
+    def classes_per_slot(cls, n_loops: int) -> list[int]:
+        n = min(n_loops, MAX_PARAM_SLOTS)
+        return [len(cls.VOCAB)] * n
+
+    @classmethod
+    def decode_params(cls, raw_slots: list[int], n_loops: int, loop_bounds: list[int] | None = None) -> dict:
+        n = min(n_loops, MAX_PARAM_SLOTS)
+        sizes = [cls.VOCAB[raw_slots[i] % len(cls.VOCAB)] for i in range(n)]
+        return {"tile_sizes": sizes}
+
+    @classmethod
+    def valid_param_mask(cls, n_loops: int, loop_bounds: list[int]) -> "np.ndarray | None":
+        if not loop_bounds:
+            return None
+        n = min(n_loops, MAX_PARAM_SLOTS)
+        masks = []
+        for i in range(n):
+            bound = loop_bounds[i] if i < len(loop_bounds) else 0
+            slot_mask = np.array([
+                s == 0 or (bound > 0 and bound % s == 0)
+                for s in cls.VOCAB
+            ], dtype=bool)
+            if not slot_mask.any():
+                slot_mask[0] = True
+            masks.append(slot_mask)
+        return np.concatenate(masks)

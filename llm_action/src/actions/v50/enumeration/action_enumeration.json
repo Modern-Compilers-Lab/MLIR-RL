@@ -1,0 +1,70 @@
+{
+  "intents": [
+    {
+      "name": "Data Locality and Cache Efficiency",
+      "description": "Restructure the loop nest and data access patterns to maximize cache reuse across the L1/L2/L3 hierarchy for the memory-bandwidth-bound pooling operation.",
+      "rationale": "Pooling over NCHW tensors involves large input arrays (up to tens of GB for the largest shapes) with sliding-window access patterns. Without tiling, each output element computation streams through input data that far exceeds cache capacity, causing severe capacity misses and saturating memory bandwidth on this dual-socket Broadwell system. Improving data locality is the single highest-impact optimization for this memory-bound operation.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Partition the iteration space of the 6-deep loop nest (4 parallel + 2 reduction loops) into multi-dimensional tiles whose working sets fit in target cache levels.",
+          "rationale": "The input tensor working set for even moderately sized pooling instances (e.g., 128x128x56x56xf64, approximately 400 MB) vastly exceeds L1 (32 KB) and L2 (256 KB). Tiling creates temporal reuse within tiles that fits in cache, converting capacity misses into hits and reducing main-memory bandwidth pressure. For the sliding-window access pattern, tiling the output spatial dimensions also captures inter-window overlap reuse.",
+          "action_template": "Tiling(tile_sizes) OR Tiling(loop_id, factor) OR Tiling(loop_band, tile_sizes) — tile_sizes is a vector with one entry per loop dimension; a value of 0 means 'do not tile' that dimension."
+        },
+        {
+          "name": "Loop Interchange",
+          "description": "Reorder loops within a loop band to improve spatial locality and stride-1 memory access along the contiguous dimension of the tensor layout.",
+          "rationale": "In NCHW layout the W (width) dimension is contiguous in memory. Ensuring that the innermost loops iterate along or near this contiguous dimension maximizes cache-line utilization and reduces TLB pressure. After tiling, the default loop order of the tile loops may not align iteration with the underlying memory layout, making interchange necessary to restore spatial locality.",
+          "action_template": "LoopInterchange(loop_band, permutation) OR LoopInterchangeMove(loop_id, shift) OR LoopInterchangeSwap(adjacent_pair) — permutation is a reordering of loop indices within the specified band."
+        },
+        {
+          "name": "Promotion",
+          "description": "Copy tiled operand sub-regions into contiguous temporary buffers to eliminate non-unit-stride accesses within the inner tile computation.",
+          "rationale": "After tiling, sub-regions of the input tensor accessed by the pooling window may span non-contiguous memory rows due to the NCHW layout and strided window access. Promoting these sub-regions into compact, contiguous scratch buffers ensures stride-1 access within the tile, improving vectorization efficiency and reducing cache-line waste. Promotion should target the outer tile level so that copy cost is amortized over many inner iterations.",
+          "action_template": "Promotion(operands_to_promote) — operands_to_promote is a list of operand indices (e.g., [0], [1], [0,1,2]) specifying which operands to copy into contiguous local buffers. Promotion requires buffer (memref) form, so this action must include an internal bufferization preprocessing step."
+        }
+      ]
+    },
+    {
+      "name": "SIMD Exploitation",
+      "description": "Leverage AVX2 vector instructions (256-bit, 4 f64 lanes) to process multiple output elements simultaneously via vectorized max operations and memory transfers.",
+      "rationale": "Even though pooling is memory-bandwidth bound, vectorized loads, stores, and max instructions (vmaxpd) improve effective memory throughput by processing 4 f64 elements per cycle. Vectorization also reduces loop overhead and total dynamic instruction count, which matters especially for smaller spatial dimensions where loop trip counts are modest and per-iteration overhead is proportionally significant.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Sequential Vectorization",
+          "description": "Tile the target loops to match SIMD vector widths using sequential (for-loop) tiling, then lower the resulting fixed-size inner loops to vector operations.",
+          "rationale": "Preprocessing via sequential tiling (tile_using_for) creates fixed-trip-count inner loops that exactly match the vector width, enabling clean lowering to SIMD max and memory operations. This variant keeps outer loops sequential, making it composable with a separate parallelization action that distributes work across cores independently.",
+          "action_template": "SequentialVectorization(vector_sizes) — SIMD-lower the innermost loop(s) after preprocessing by sequential tiling (tile_using_for) to match vector_sizes to loop bounds. vector_sizes is a vector aligned to hardware SIMD width (e.g., 4 for f64 on AVX2)."
+        },
+        {
+          "name": "Parallel Vectorization",
+          "description": "Tile the target loops to match SIMD vector widths using parallel (forall) tiling, which simultaneously distributes outer tiles across threads, then lower inner loops to vector operations.",
+          "rationale": "Preprocessing via parallel tiling (tile_using_forall) achieves vectorization and thread distribution in a single composite step. The outer tiles become parallel work units distributed across cores while inner tiles match the SIMD width for vectorized execution. This is effective for pooling where the four parallel dimensions provide abundant independent work units to distribute.",
+          "action_template": "ParallelVectorization(vector_sizes) — SIMD-lower the innermost loop(s) after preprocessing by parallel tiling (tile_using_forall) that distributes outer tiles across threads. vector_sizes is a vector aligned to hardware SIMD width."
+        }
+      ]
+    },
+    {
+      "name": "Coarse-Grain Work Distribution",
+      "description": "Distribute the abundant loop-level parallelism across the 28 physical cores of the dual-socket Broadwell system to maximize aggregate memory bandwidth and throughput.",
+      "rationale": "Pooling has four fully parallel loop dimensions (batch, channels, output height, output width) providing thousands to millions of independent work units. Without explicit parallelization, only a single core is utilized, wasting 27 cores. For this memory-bound operation on a dual-socket NUMA system, multi-core execution is critical not only for compute throughput but also for accessing aggregate memory bandwidth from both memory controllers.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling-based Parallelization",
+          "description": "Partition the iteration space into coarse tiles and distribute them across threads, providing flexible control over work granularity independent of original loop trip counts.",
+          "rationale": "Tiling-based parallelization (tile_using_forall) decouples the number of parallel work units from the original loop bounds, allowing the tile size to be tuned for load balancing and NUMA-aware data placement. This is important when loop trip counts are not clean multiples of the thread count or when tile sizes need to be co-optimized with cache tiling.",
+          "action_template": "TilingParallelization(tile_sizes) — partition parallel loops into tiles of the given sizes and distribute outer tiles across threads via forall. tile_sizes is a vector with one entry per loop; 0 means 'do not tile/parallelize' that dimension."
+        },
+        {
+          "name": "Thread-count-based Parallelization",
+          "description": "Directly map parallel loop iterations to a fixed number of threads, partitioning the iteration space evenly among them.",
+          "rationale": "Direct thread-count parallelization avoids the overhead of explicit tiling and is simpler to reason about. When the parallel loop trip count is a clean multiple of the thread count — common for batch and channel dimensions like 128 or 256 on 28 cores — this produces balanced work distribution with minimal scheduling overhead. Less flexible than tiling-based parallelization but lower overhead.",
+          "action_template": "ThreadParallelization(num_threads) — distribute iterations of a parallel loop across num_threads threads. num_threads must divide the loop trip count evenly to avoid remainder-handling issues in downstream transformations."
+        }
+      ]
+    }
+  ]
+}

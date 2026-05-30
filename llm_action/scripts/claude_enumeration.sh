@@ -36,17 +36,20 @@ claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_en
 # Example usage:
 
 # Matmul
-## python llm_action/src/prompts/action_enumeration.py --intents_num_min 2 --intents_num_max 3 --transformations_num_min 2 --transformations_num_max 3 & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_enumeration.py --benchmark dataset_matmul)"
+## python llm_action/src/prompts/action_enumeration.py --intents_num_min 2 --intents_num_max 3 --transformations_num_min 2 --transformations_num_max 4 & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_enumeration.py --benchmark dataset_matmul --limit 25)"
 
 # Conv
-## python llm_action/src/prompts/action_enumeration.py --intents_num_min 2 --intents_num_max 3 --transformations_num_min 2 --transformations_num_max 4 & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_enumeration.py --benchmark dataset_conv2d)"
+## python llm_action/src/prompts/action_enumeration.py --intents_num_min 2 --intents_num_max 3 --transformations_num_min 3 --transformations_num_max 4 & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_enumeration.py --benchmark dataset_conv2d --limit 25)"
 ## python llm_action/src/prompts/action_enumeration.py --intents_num_min 2 --intents_num_max 3 --transformations_num_min 2 --transformations_num_max 4 & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_enumeration.py --benchmark dataset_conv2d_img2col)"
 
 # Pooling
-## python llm_action/src/prompts/action_enumeration.py --intents_num_min 2 --intents_num_max 3 --transformations_num_min 2 --transformations_num_max 3 & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_enumeration.py --benchmark dataset_pooling)"
+## python llm_action/src/prompts/action_enumeration.py --intents_num_min 2 --intents_num_max 3 --transformations_num_min 2 --transformations_num_max 3 & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_enumeration.py --benchmark dataset_pooling --limit 25)"
 
 # Add
-## python llm_action/src/prompts/action_enumeration.py --intents_num_min 2 --intents_num_max 3 --transformations_num_min 2 --transformations_num_max 3 & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_enumeration.py --benchmark dataset_add)"
+## python llm_action/src/prompts/action_enumeration.py --intents_num_min 2 --intents_num_max 3 --transformations_num_min 2 --transformations_num_max 3 & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_enumeration.py --benchmark dataset_add --limit 25)"
 
 # ReLu
-## python llm_action/src/prompts/action_enumeration.py --intents_num_min 2 --intents_num_max 3 --transformations_num_min 2 --transformations_num_max 3 & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_enumeration.py --benchmark dataset_relu)"
+## python llm_action/src/prompts/action_enumeration.py --intents_num_min 2 --intents_num_max 3 --transformations_num_min 2 --transformations_num_max 3 & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_enumeration.py --benchmark dataset_relu --limit 25)"
+
+# ML
+## python llm_action/src/prompts/action_enumeration.py --intents_num_min 3 --intents_num_max 4 --transformations_num_min 3 --transformations_num_max 4 & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_enumeration.py --benchmark dataset_ml --limit 5)"

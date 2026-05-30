@@ -296,11 +296,9 @@ Therefore, every Action MUST:
 - NOT attempt to find the target op via heuristics (e.g., "first linalg op").
 - NOT inject or modify tags via regex or MLIR text rewriting.
 - Treat missing tag as **not applicable** (precondition returns False).
-- RE-ANNOTATE the result operation with `tag = "operation_0"` after every transform
-  (using `transform.param.constant` + `transform.annotate`), so that subsequent actions
-  in a composed schedule can still find the target.
+- RE-ANNOTATE the result operation with `tag = "operation_0"` after every transform (using `transform.param.constant` + `transform.annotate`), so that subsequent actions in a composed schedule can still find the target. Make sure that the reannotation is unique to ensure action compositionality properly (especially parallelization). 
 
-## Action Contract (PoC)
+## Action Contract
 
 Each Action must define the following conceptual stages:
 
@@ -335,7 +333,7 @@ Each Action must define the following conceptual stages:
 3) **Preprocessing**
    - Necessary canonicalization, generalization (eg, before interchange in MLIR), or any preparation.
    - Prefer identity unless required for correctness.
-   - Leverage preprocessing to minimize the complexity of the action dependencies, e.g., use tiling as a preprocessing step for vectorization to match vector sizes parameters.
+   - Leverage preprocessing to minimize the complexity of the action dependencies, e.g., use tiling as a preprocessing step for vectorization to match vector sizes parameters. This preprocessing tiling can be sequential (`tile_using_for`) or parallel (`tile_using_forall`, which also distributes the outer tiles across threads). When Layer 1 enumerates a sequential and a parallel vectorization variant as two separate transformations, implement each as its own action whose preprocessing uses the corresponding tiling op — `tile_using_for` for the sequential variant, `tile_using_forall` for the parallel variant — rather than collapsing them into one action with a mode toggle.
    - Must NOT rely on brittle regex rewriting of MLIR.
    - Must NOT edit or insert tags.
 
@@ -413,7 +411,7 @@ You may use the following MCP tools to validate the MLIR transform while synthes
   - "How to tile a linalg operation using Transform dialect?"
   - "How to vectorize loops in Transform dialect?"
   - "What is the Transform dialect op for loop interchange?"
-  This lookup agent provides authoritative, pre-scraped MLIR Transform dialect documentation, including exact operation names, required handles, key attributes, and minimal Transform IR skeletons, and should be used to ground Transform dialect usage before implementation.
+  This lookup agent provides authoritative, pre-scraped MLIR Transform dialect documentation, including exact operation names, required handles, key attributes, and minimal Transform IR skeletons, and should be used to ground Transform dialect usage before implementation. Make sure to make single-action tasks in order to remain within the token limit of the retrieval agent.
 
 - `transform_mlir_code(code: str, transformation_code: str) -> str`
   Applies Transform dialect code and returns transformed MLIR.
@@ -475,19 +473,14 @@ When a transformation introduces `vector<...>` types, you MUST ensure:
    - If any vector exceeds its bound → **reject the candidate immediately**.
 
 2) **Limit vector rank**
-   - Prefer rank-1 vectors: `vector<kxf32>`
-   - Allow rank-2 vectors only if small (e.g. `vector<4x8xf32>`)
-   - Rank ≥ 3 vectors are **disallowed**, unless they are very small (e.g. `vector<2x2x2xf32>`, `vector<4x4x4xf32>`, ...).
+   - Allow Rank <= 3 vectors that remain within limit (2048)
 
 3) **No tile-as-vector lowering**
    - Vectors resembling whole tiles or buffers
      (e.g. `vector<128x128x256xf64>`) are illegal and must be rejected.
 
 ### Preferred Vectorization Pattern (Positive Guidance)
-- Target realistic SIMD widths:
-  - f64: 2, 4, 8, 16
-  - f32: 4, 8, 16, 32
-  - f16/bf16: 8, 16, 32, 64
+- Target realistic SIMD widths: 2, 4, 8, 16, 32, 64
 - Prefer `vector.transfer` + small vectors over large `vector.contract`.
 - If vectorization increases vector rank or size significantly, back off.
 
@@ -611,7 +604,7 @@ You must implement the action as a Python class inheriting the following pre-imp
 
 ```python
 MAX_PARAM_SLOTS = 7  # maximum number of parameter slots any action can use
-MAX_VOCAB_SIZE_PER_SLOT = 5  # maximum vocabulary size (number of categories) per slot
+MAX_VOCAB_SIZE_PER_SLOT = 6  # maximum vocabulary size (number of categories) per slot
 
 class ActionBase(ABC):
     unique_execution: bool = True  # override to False if the action can be applied multiple times in one episode
@@ -671,7 +664,7 @@ Each action defines its own **vocabulary** (the set of values each slot can take
 constant. There is no global vocabulary — every action chooses what makes sense for its parameters.
 Two global constants bound the space:
 - `MAX_PARAM_SLOTS = 7` — upper bound on the number of slots any action may use.
-- `MAX_VOCAB_SIZE_PER_SLOT = 5` — upper bound on the vocabulary size (number of categories) per slot.
+- `MAX_VOCAB_SIZE_PER_SLOT = 6` — upper bound on the vocabulary size (number of categories) per slot.
 
 ### Design Guidelines (Avoiding the Curse of Dimensionality)
 
@@ -685,7 +678,7 @@ specific transformation. Common patterns:
 - Example:
   ```python
   class Tiling(ActionBase):
-      VOCAB = [0, 4, 8, 16, 32]  # action-specific vocabulary (≤ MAX_VOCAB_SIZE_PER_SLOT entries)
+      VOCAB = [0, 4, 8, 16, 32, 64]  # action-specific vocabulary (≤ MAX_VOCAB_SIZE_PER_SLOT entries)
 
       @classmethod
       def params_size(cls) -> int:
@@ -732,7 +725,7 @@ specific transformation. Common patterns:
 - Example (this is just an example, it should not affect the actual implementation of Parallelization (using tile sizes for instance)):
   ```python
   class Parallelization(ActionBase):
-      THREAD_OPTIONS = [2, 4, 8, 16, 32]  # multiples of 2 to not produce dynamic shape (bugs in MLIR)
+      THREAD_OPTIONS = [2, 4, 8, 16, 32, 64]  # multiples of 2 to not produce dynamic shape (bugs in MLIR)
 
       @classmethod
       def params_size(cls) -> int:
@@ -749,13 +742,13 @@ specific transformation. Common patterns:
 
 ### Key Rules
 - `params_size()` must return a value ≤ `MAX_PARAM_SLOTS` (7).
-- Each slot's vocabulary must have at most `MAX_VOCAB_SIZE_PER_SLOT` (5) categories.
+- Each slot's vocabulary must have at most `MAX_VOCAB_SIZE_PER_SLOT` (6) categories.
 - `len(classes_per_slot(n))` must equal `params_size()` for all valid `n` (no padding with `[1]` entries).
 - `decode_params` must return the **exact dict format** expected by `precondition`/`implement`/`postcondition`.
 - Prefer **independent per-dimension choices** over joint distributions.
 - Vocabulary values should be powers of 2 where possible (composable, cache-friendly), but choose
   whatever values are most meaningful for the transformation (e.g., thread counts, unroll factors).
-- For safety constraints (e.g., vector product ≤ 1024), enforce them inside `decode_params` by clamping.
+- For safety constraints (e.g., vector product ≤ 2048), enforce them inside `decode_params` by clamping.
 - **NO boolean enable/disable parameters.** The RL policy's decision to select an action IS the
   enable decision — adding a boolean `enable` toggle is redundant and wastes 50% of selections as
   no-ops. If an action has no meaningful tunable parameters (e.g., a fixed lowering), use
@@ -791,10 +784,10 @@ def valid_param_mask(cls, n_loops: int, loop_bounds: list[int]) -> np.ndarray | 
     return np.concatenate(masks)
 ```
 
-Concrete example — VOCAB=[0,4,8,16,32], loop_bounds=[10,12,16]:
-- Slot 0 (bound=10): `[T, F, F, F, F]` — only 0 (no-tile) valid; no vocab value divides 10
-- Slot 1 (bound=12): `[T, T, F, F, F]` — 0 and 4 valid (12%4==0; 12%8≠0)
-- Slot 2 (bound=16): `[T, T, T, T, T]` — all valid (16 is divisible by 4, 8, 16; 32>16 but 16%32≠0 → False, corrected: keep True only if divisible)
+Concrete example — VOCAB=[0,4,8,16,32,64], loop_bounds=[10,12,16]:
+- Slot 0 (bound=10): `[T, F, F, F, F, F]` — only 0 (no-tile) valid; no vocab value divides 10
+- Slot 1 (bound=12): `[T, T, F, F, F, F]` — 0 and 4 valid (12%4==0; 12%8≠0)
+- Slot 2 (bound=16): `[T, T, T, T, T, F]` — all valid (16 is divisible by 4, 8, 16; 32>16 but 16%32≠0 → False, corrected: keep True only if divisible)
 
 ## Execution Multiplicity
 

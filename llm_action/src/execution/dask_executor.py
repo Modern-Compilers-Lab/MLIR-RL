@@ -123,7 +123,7 @@ def create_dask_client(
         walltime="5-00",
         job_extra_directives=[
             "--reservation=c2",
-            "--qos=c2",
+            # "--qos=c2",
             "--nodes=1",
             "--exclusive",
         ],

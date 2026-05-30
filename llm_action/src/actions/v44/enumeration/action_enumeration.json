@@ -1,0 +1,88 @@
+{
+  "intents": [
+    {
+      "name": "Cache Locality and Data Reuse",
+      "description": "Restructure loop nests and data access patterns so that working sets fit in L1/L2 cache, maximizing temporal and spatial data reuse across all kernel types.",
+      "rationale": "The target CPU has a 32KB L1 and 256KB L2 per core. For compute-bound kernels (matmul, conv), tiling converts O(N^3)-class memory traffic to O(N^2) by reusing data in cache. For memory-bound element-wise kernels (add, relu) and pooling, cache-friendly blocking improves prefetcher effectiveness, TLB utilization, and streaming bandwidth. Loop reordering and data packing ensure stride-1 innermost access within tiles.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Partition the iteration space into smaller rectangular blocks (tiles) so that the data accessed within each tile fits in a target cache level.",
+          "rationale": "Tiling is the most fundamental transformation for data reuse. It applies to all five kernel families: for matmul and conv it creates temporal reuse of operands; for pooling it localizes reduction windows; for add and relu it improves streaming locality. Tile sizes control the trade-off between reuse and loop overhead.",
+          "action_template": "Tiling(tile_sizes) — tile_sizes is a vector with one entry per loop dimension; 0 means 'do not tile' that dimension. Layer 2 determines legal value ranges based on loop bounds and cache capacity."
+        },
+        {
+          "name": "Loop Interchange",
+          "description": "Permute the order of loops in a loop nest to improve memory access patterns, bringing loops with stride-1 access to the innermost position.",
+          "rationale": "NCHW-layout tensors have their last dimension (W) contiguous in memory. When reduction or batch loops are innermost, accesses become strided, causing cache line waste. Interchange moves the best-stride dimension inward. For matmul, interchange can swap reduction and parallel loops to improve vectorization opportunities.",
+          "action_template": "LoopInterchange(permutation) — permutation is a reordering of loop dimension indices. OR LoopInterchange(loop_band, permutation) — applies the permutation within a specific loop band."
+        },
+        {
+          "name": "Packing",
+          "description": "Reorganize operand data into contiguous memory blocks aligned with tile boundaries, converting non-unit-stride accesses within tiles into unit-stride accesses.",
+          "rationale": "After tiling, operand sub-tensors may be accessed with non-unit strides due to the original data layout. Packing copies and transposes data into a tile-friendly contiguous format, eliminating TLB misses and cache line conflicts within the inner tile computation. Particularly important for matmul and conv where operand reuse is high.",
+          "action_template": "Packing(packed_sizes) — packed_sizes is a vector with one entry per dimension specifying the block size for packing; 0 means 'do not pack' that dimension."
+        },
+        {
+          "name": "Promotion",
+          "description": "Copy tiled operand slices into contiguous local temporary buffers, ensuring data reuse within the tile occurs entirely from fast local storage without interference from outer-loop accesses.",
+          "rationale": "Promotion materializes tile-level operand data in local buffers, providing guaranteed contiguous access and avoiding cache set conflicts. It is especially effective when applied at the outer tile level so that the copy cost is amortized over many inner iterations. Requires an internal bufferization step (tensor to memref) since promotion operates at the buffer level.",
+          "action_template": "Promotion(operands_to_promote) — operands_to_promote is a list of operand indices (e.g., [0], [1], [0,1,2]) specifying which operands to copy into contiguous local buffers. This action must include an internal bufferization preprocessing step."
+        }
+      ]
+    },
+    {
+      "name": "SIMD and Instruction-Level Parallelism",
+      "description": "Map innermost loop iterations to SIMD vector lanes and expose independent operations for pipelining, fully utilizing the AVX2+FMA execution units.",
+      "rationale": "The target CPU supports AVX2 with FMA, providing 4 FP64 lanes per 256-bit vector register and 2 FMA operations per cycle per core. Vectorization is essential for all kernel types: for compute-bound kernels it directly multiplies throughput by the vector width; for memory-bound kernels it improves load/store bandwidth utilization. Loop unrolling further exposes instruction-level parallelism for out-of-order execution.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Vectorization (Sequential)",
+          "description": "Tile the innermost loop dimensions to vector-width sizes using sequential for-loops, then lower the tiled inner body to SIMD operations.",
+          "rationale": "Sequential vectorization is the baseline SIMD strategy. It preprocesses the loop nest by tiling innermost dimensions to match vector width (e.g., 4 for FP64 AVX2) using sequential for-loops (tile_using_for), then applies vectorization to the inner tiled loops. Suitable when outer-loop parallelism is handled separately or when the loop nest is small enough that threading overhead is not justified.",
+          "action_template": "VectorizationSequential(vector_sizes) — vector_sizes is a vector with one entry per loop dimension specifying the SIMD width; 1 means scalar (no vectorization) for that dimension. The preprocessing step tiles using sequential for-loops (tile_using_for) to the specified vector sizes before lowering to SIMD."
+        },
+        {
+          "name": "Vectorization (Parallel)",
+          "description": "Tile the innermost loop dimensions to vector-width sizes using parallel forall-loops for the outer tiles, simultaneously vectorizing the inner computation and distributing outer tile work across threads.",
+          "rationale": "Parallel vectorization combines SIMD lowering with thread-level distribution in a single action. The outer tiles created by the preprocessing step use forall-loops (tile_using_forall), which distribute iterations across threads while the inner tiled body is vectorized. This is a natural fit for element-wise operations (add, relu) where all dimensions are parallel, and for the parallel dimensions of matmul, conv, and pooling.",
+          "action_template": "VectorizationParallel(vector_sizes) — vector_sizes is a vector with one entry per loop dimension specifying the SIMD width; 1 means scalar (no vectorization) for that dimension. The preprocessing step tiles using parallel forall-loops (tile_using_forall) to the specified vector sizes before lowering to SIMD."
+        },
+        {
+          "name": "Loop Unrolling",
+          "description": "Replicate the loop body a fixed number of times per iteration, reducing loop control overhead and exposing independent instructions for hardware pipelining.",
+          "rationale": "Unrolling complements vectorization by creating multiple independent operations within the loop body, enabling FMA pipelining and out-of-order execution. For compute-bound kernels (matmul, conv), unrolling the innermost tiled loops exposes register-level data reuse. For memory-bound kernels, moderate unrolling reduces branch misprediction and loop overhead. Over-unrolling risks register spills on Broadwell's 16 YMM registers.",
+          "action_template": "LoopUnrolling(unroll_factor) — unroll_factor is an integer specifying how many copies of the loop body to emit per iteration."
+        }
+      ]
+    },
+    {
+      "name": "Thread-Level Parallelism and Iteration Space Restructuring",
+      "description": "Distribute coarse-grain parallel work across the 28 physical cores and restructure complex iteration spaces into regular forms amenable to efficient parallel execution.",
+      "rationale": "The target has 28 physical cores across 2 NUMA nodes. Without thread-level parallelism, only 1/28th of the hardware is utilized. For compute-bound kernels, parallelism over outer dimensions yields near-linear speedup. For memory-bound kernels, multi-threaded execution increases aggregate memory bandwidth across sockets. Convolution operations benefit from im2col restructuring that converts irregular windowed access patterns into regular dense contractions before parallelization.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Parallelization (Tiling)",
+          "description": "Tile outer parallel loop dimensions into coarse-grain blocks and distribute these blocks across threads, providing explicit control over work granularity and data locality per thread.",
+          "rationale": "Tiling-based parallelization gives the RL agent control over the tile sizes used for thread distribution, enabling it to balance work per thread against NUMA locality and cache utilization. Coarse tiles reduce synchronization overhead; tile sizes can be tuned to match cache and NUMA boundaries. Applicable to all kernel families that have parallel loop dimensions.",
+          "action_template": "ParallelizationTiling(tile_sizes) — tile_sizes is a vector with one entry per dimension specifying the tile size for parallel distribution; 0 means 'do not tile' that dimension."
+        },
+        {
+          "name": "Parallelization (Threads)",
+          "description": "Directly map parallel loop iterations to a fixed number of threads, letting the runtime divide the iteration space evenly across the thread pool.",
+          "rationale": "Direct thread mapping provides a simpler parallelization model where the RL agent chooses only the thread count. This is effective for regular iteration spaces where uniform partitioning yields balanced workloads (common for add, relu, and uniform-shaped matmul/conv). The thread count should divide the iteration count for clean partitioning.",
+          "action_template": "ParallelizationThreads(num_threads) — num_threads is an integer specifying the number of threads. The iteration space is divided among threads by the runtime. num_threads should be a divisor of the parallel iteration count to avoid partial work units."
+        },
+        {
+          "name": "Im2col Lowering",
+          "description": "Convert convolution operations into matmul-like contraction loop nests by materializing the input patch matrix, transforming irregular windowed access patterns into regular dense iteration spaces.",
+          "rationale": "Convolution (24% of the dataset) has reduction loops with windowed, potentially strided access patterns that complicate tiling, vectorization, and parallelization. Im2col restructures the computation into a matrix contraction (the primary compute operation) surrounded by reshape operations, producing a regular dense loop nest that all standard optimizations (tiling, vectorization, thread distribution) handle efficiently. Subsequent transformations must target the resulting contraction operation, not the surrounding reshapes.",
+          "action_template": "Im2colLowering() — zero-parameter action that restructures convolution into a matmul-like contraction. The RL policy's action selection itself is the decision to apply this transformation."
+        }
+      ]
+    }
+  ]
+}

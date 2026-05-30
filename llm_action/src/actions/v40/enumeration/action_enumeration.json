@@ -1,0 +1,56 @@
+{
+  "intents": [
+    {
+      "name": "Data Locality & Cache Efficiency",
+      "description": "Restructure the iteration space and data access patterns to maximize cache reuse and minimize memory bandwidth pressure across the L1/L2/L3 hierarchy.",
+      "rationale": "The triply-nested matmul loop (two parallel dimensions, one reduction) creates working sets that far exceed cache capacity for all but the smallest shapes. Without blocking, operand data is repeatedly streamed from DRAM, making execution memory-bandwidth-bound. Locality optimizations convert the computation from memory-bound to compute-bound.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Partition the iteration space into multi-dimensional blocks (tiles) so that the working set of each tile fits within a target cache level.",
+          "rationale": "Tiling is the single most impactful transformation for dense loop nests. It reduces the reuse distance of operand elements, converting O(N) cache misses into O(N/tile_size) misses per operand dimension. For matmul, proper tile sizes can keep the A-tile, B-tile, and C-tile simultaneously resident in L1 or L2.",
+          "action_template": "Tiling(tile_sizes, parallelize) OR Tiling(loop_band, tile_sizes, parallelize). tile_sizes is a per-loop vector (0 means 'do not tile' a loop); parallelize is a binary mode selecting sequential tiling vs parallel tiling that also distributes the outer tiles across threads. Expose tiling and tiling-based parallelization as this single action carrying the binary mode, rather than two separate actions."
+        },
+        {
+          "name": "Loop Interchange",
+          "description": "Reorder the loops in a loop nest to improve spatial locality by placing the dimension with stride-1 memory access in the innermost position.",
+          "rationale": "Loop ordering determines whether memory accesses are contiguous (cache-line friendly) or strided. For row-major matmul, placing the wrong dimension innermost causes column-strided accesses with a cache miss on every element. Interchange can improve performance by an order of magnitude by ensuring stride-1 access in the innermost loop.",
+          "action_template": "LoopInterchange(loop_band, permutation) OR LoopInterchangeMove(loop_id, shift) OR LoopInterchangeSwap(adjacent_pair). permutation is a full reordering of loop indices; shift moves a single loop by a relative offset; adjacent_pair swaps two neighboring loops."
+        },
+        {
+          "name": "Promotion",
+          "description": "Copy tiled operand slices into contiguous, aligned temporary buffers before the inner computation, eliminating conflict misses and TLB pressure.",
+          "rationale": "After tiling, operand tiles are subviews of large matrices with potentially non-unit strides and non-aligned base addresses. Promoting them into compact scratch buffers ensures contiguous access, eliminates set-associativity conflict misses, reduces TLB entries needed, and provides the aligned, dense layout that vectorized inner kernels require for peak throughput.",
+          "action_template": "Promotion(operands_to_promote) — operands_to_promote is a list of operand indices (e.g. [0], [1], [0,1,2]) specifying which operands to copy into contiguous local buffers. Promotion requires buffer (memref) form, so this action must include an internal bufferization preprocessing step."
+        }
+      ]
+    },
+    {
+      "name": "Compute Throughput Maximization",
+      "description": "Maximize utilization of the CPU's execution units through SIMD vectorization, instruction-level parallelism, and multi-core parallel execution.",
+      "rationale": "Once data locality is established and the computation is no longer memory-bound, performance is determined by how effectively the available FLOPS are utilized. AVX2 FMA units provide 4x FP64 throughput over scalar, loop unrolling exposes ILP to the out-of-order engine, and 28 cores provide 28x potential scaling — all are essential to approach peak performance.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Vectorization",
+          "description": "Map innermost loop iterations to SIMD vector lanes, enabling multiple data elements to be processed per instruction using AVX2 FMA units.",
+          "rationale": "Without vectorization, only scalar FMA operations are issued, utilizing just 1 of the 4 available FP64 lanes per 256-bit vector register. Vectorization provides up to 4x throughput improvement for FP64 matmul and is a prerequisite for approaching peak FLOPS on Broadwell.",
+          "action_template": "Vectorization(loop_band, vector_width, parallelize). Vectorization is preceded by a tiling preprocessing step that shapes the target loop band to the chosen vector widths before SIMD lowering; parallelize is a binary mode selecting whether that preprocessing tiling is sequential or parallel (the parallel mode additionally distributes the outer tiles across threads, fusing work distribution with vectorization). Expose this as a single vectorization action carrying the binary mode, rather than two separate actions."
+        },
+        {
+          "name": "Unrolling",
+          "description": "Replicate the loop body multiple times to reduce branch overhead, expose independent operations for out-of-order execution, and improve register utilization.",
+          "rationale": "Unrolling the innermost loops of a tiled matmul kernel exposes multiple independent FMA instructions per iteration, allowing the CPU's out-of-order engine to overlap execution and hide latency. It also reduces loop control overhead and enables the register allocator to keep more partial sums in registers simultaneously.",
+          "action_template": "Unrolling(loop_id, unroll_factor) OR Unrolling(loop_band, unroll_factor). loop_id targets a specific loop for unrolling; loop_band targets a band of loops; unroll_factor specifies how many iterations to replicate in the loop body."
+        },
+        {
+          "name": "Parallelization",
+          "description": "Distribute outer loop iterations across multiple threads to utilize all available physical cores for concurrent execution.",
+          "rationale": "Matmul's parallel loop dimensions (output rows and columns) provide natural partitioning boundaries. With 28 physical cores available, parallelizing the outermost tiled loops can yield near-linear speedup for sufficiently large matrices. This standalone num_threads-based parallelization complements the tiling action's built-in parallelize mode.",
+          "action_template": "Parallelization(num_threads) — distribute the outer loop iterations across a fixed number of threads. num_threads must be a divisor of the iteration count, otherwise subsequent MLIR transformations may fail. Tiling-based parallelization is NOT a separate action here: it is expressed as the 'parallelize' mode of the Tiling action above, so only enumerate the num_threads-based parallelization as a standalone action."
+        }
+      ]
+    }
+  ]
+}

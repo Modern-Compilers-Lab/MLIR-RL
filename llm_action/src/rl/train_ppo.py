@@ -446,7 +446,7 @@ class EntCoefScheduleCallback(BaseCallback):
 def parse_args():
     p = argparse.ArgumentParser(description="PPO for MLIR optimization")
     p.add_argument("--benchmarks-name", type=str, default="standard", help="Name of the benchmark set under data/benchmarks/ (default: standard)")
-    p.add_argument("--total-timesteps", type=int, default=250_000) # 500_000
+    p.add_argument("--total-timesteps", type=int, default=125_000) # 500_000
     p.add_argument("--n-steps", type=int, default=128)
     p.add_argument("--batch-size", type=int, default=32)
     p.add_argument("--n-epochs", type=int, default=8)
@@ -454,33 +454,37 @@ def parse_args():
     p.add_argument("--gamma", type=float, default=0.99)
     p.add_argument("--gae-lambda", type=float, default=0.95)
     p.add_argument("--clip-range", type=float, default=0.2)
-    p.add_argument("--ent-coef", type=float, default=1e-2)
-    p.add_argument("--ent-coef-final", type=float, default=1e-4)
+    p.add_argument("--ent-coef", type=float, default=5e-3)
+    p.add_argument("--ent-coef-final", type=float, default=5e-5)
     p.add_argument("--ent-coef-schedule", type=str, default="linear", choices=["linear", "exponential"])
+    p.add_argument("--ent-coef-decay-frac", type=float, default=1.0, help="Fraction of the timestep budget over which entropy decays to --ent-coef-final. 1.0 = legacy (decay completes at total_timesteps//max_steps episodes); >1.0 lengthens/flattens the schedule (more late-stage exploration); <1.0 shortens.")
     p.add_argument("--action-head-init", type=str, default="default", choices=["default", "zero"])
-    p.add_argument("--vf-coef", type=float, default=0.005)
+    p.add_argument("--vf-coef", type=float, default=0.05)
     p.add_argument("--max-grad-norm", type=float, default=0.5)
-    p.add_argument("--net-arch", type=int, nargs="+", default=[512, 512, 512])
+    p.add_argument("--net-arch", type=int, nargs="+", default=[128, 128]) # [512, 512, 512]
     p.add_argument("--n-envs", type=int, default=1)
     p.add_argument("--max-steps", type=int, default=MAX_STEPS)
     p.add_argument("--action-version", type=str, default="v10")
     p.add_argument("--param-mode", type=str, default="multidiscrete", choices=["multidiscrete", "two_policy", "llm"])
     p.add_argument("--executor-type", type=str, default="dask", choices=["slurm", "dask", "local"])
-    p.add_argument("--dask-nodes", type=int, default=2)
+    p.add_argument("--dask-nodes", type=int, default=1)
     p.add_argument("--history-mode", type=str, default="success-encoding", choices=["include-all", "ignore-failed", "success-encoding"])
-    p.add_argument("--reward-scale", type=str, default="log", choices=["log", "raw", "delta"])
+    p.add_argument("--reward-scale", type=str, default="log", choices=["log", "raw", "delta", "relative"], help="Reward transform of the speedup ratio. 'relative' normalizes by the best speedup seen so far for the same instance (per-shape scale-free).")
+    p.add_argument("--loop-bound-encoding", type=str, default="log", choices=["log", "max"], help="Observation encoding of loop bounds: 'log' (log2 of bound) or 'max' (bound / dataset-train max).")
     p.add_argument("--reward-mode", type=str, default="final", choices=["final", "intermediate", "schedule"])
     p.add_argument("--reward-baseline", type=str, default="mlir", choices=["mlir", "torch"], help="Baseline for speedup ratio: 'mlir' (unoptimized MLIR) or 'torch' (PyTorch)")
-    p.add_argument("--checkpoint-freq", type=int, default=5_000)
-    p.add_argument("--eval-freq", type=int, default=1_000)
-    p.add_argument("--eval-sample-runs", type=int, default=5, help="Number of stochastic sampling runs per benchmark during evaluation")
+    p.add_argument("--checkpoint-freq", type=int, default=10_000)
+    p.add_argument("--eval-freq", type=int, default=2_000)
+    p.add_argument("--eval-sample-runs", type=int, default=3, help="Number of stochastic sampling runs per benchmark during evaluation")
     p.add_argument("--log-dir", type=str, default=None)
     p.add_argument("--exp-name", "-n", type=str, default=None, help="Free-form experiment label appended to the run name")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--wandb-project", type=str, default="mlir-rl")
     p.add_argument("--wandb-entity", type=str, default=None)
     p.add_argument("--resume", type=str, default=None, help="Path to a checkpoint .zip to resume training from")
-    p.add_argument("--enable-dependency-masking", action=argparse.BooleanOptionalAction, default=True, help="Mask actions made provably illegal by registry.ACTION_DEPENDENCIES (default: enabled). Pass --no-enable-dependency-masking to disable.")
+    p.add_argument("--enable-dependency-masking", action=argparse.BooleanOptionalAction, default=True, help="Mask actions made provably illegal by registry.ACTION_DEPENDENCIES (default: enabled). Pass --no-enable-dependency-masking to disable. Only consulted when --masking-mode=dependencies.")
+    p.add_argument("--masking-mode", type=str, default="dependencies", choices=["dependencies", "schedule_graph", "none"], help="Action-selector masking strategy: 'dependencies' = ACTION_DEPENDENCIES denylist (default), 'schedule_graph' = SCHEDULE_GRAPH per-family allowlist, 'none' = no masking.")
+    p.add_argument("--policy-mask-mode", type=str, default="hard", choices=["hard", "behavior-only"], help="How the policy treats the action mask: 'hard' = stock MaskablePPO (masks behavior AND objective; default), 'behavior-only' = constrain only the executed action; compute log_prob/entropy on the UNMASKED distribution for better-conditioned gradients.")
     p.add_argument("--verbose", action="store_true", default=True)
     return p.parse_args()
 
@@ -540,7 +544,9 @@ def main():
         "reward_scale": args.reward_scale,
         "reward_mode": args.reward_mode,
         "reward_baseline": args.reward_baseline,
+        "loop_bound_encoding": args.loop_bound_encoding,
         "enable_dependency_masking": args.enable_dependency_masking,
+        "masking_mode": args.masking_mode,
         "verbose": args.verbose,
     }
 
@@ -565,8 +571,15 @@ def main():
         model = MaskablePPO.load(args.resume, env=train_env)
         logging.info(f"Loaded model from {args.resume}")
     else:
+        # "hard" = stock MaskablePPO (masks behavior AND objective). "behavior-only" masks
+        # only the executed action; log_prob/entropy use the unmasked distribution.
+        if args.policy_mask_mode == "behavior-only":
+            from llm_action.src.rl.behavior_masking import BehaviorMaskedActorCriticPolicy
+            policy_class = BehaviorMaskedActorCriticPolicy
+        else:
+            policy_class = "MlpPolicy"
         model = MaskablePPO(
-            "MlpPolicy", train_env,
+            policy_class, train_env,
             learning_rate=args.lr, n_steps=args.n_steps, batch_size=args.batch_size,
             n_epochs=args.n_epochs, gamma=args.gamma, gae_lambda=args.gae_lambda,
             clip_range=args.clip_range, ent_coef=args.ent_coef, vf_coef=args.vf_coef,
@@ -609,7 +622,7 @@ def main():
         ),
     ]
     if args.ent_coef_final is not None:
-        total_episodes = max(1, args.total_timesteps // max(1, args.max_steps))
+        total_episodes = max(1, int((args.total_timesteps * args.ent_coef_decay_frac) // max(1, args.max_steps)))
         callbacks.append(EntCoefScheduleCallback(
             initial=args.ent_coef,
             final=args.ent_coef_final,

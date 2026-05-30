@@ -1,0 +1,64 @@
+{
+  "intents": [
+    {
+      "name": "Cache-Efficient Data Movement",
+      "description": "Restructure the iteration space so that the active working set (tiles of both input tensors and the output tensor) fits within L1 or L2 cache, converting long streaming passes into many short cache-resident passes.",
+      "rationale": "Elementwise addition on large 4D f64 tensors is purely memory-bound with zero data reuse across iterations. Without tiling, the working set far exceeds cache capacity, causing constant cache misses and underutilizing available memory bandwidth. Tiling and loop reordering ensure spatial and temporal locality within each tile.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Partition the 4D iteration space into smaller blocks so that the corresponding slices of both input tensors and the output tensor fit within L1 or L2 cache.",
+          "rationale": "For a memory-bound elementwise operation, tiling is the primary mechanism to achieve cache residency. Each tile processes a small, cache-fitting region of the three tensors before moving on, maximizing effective bandwidth utilization.",
+          "action_template": "Tiling(tile_sizes) OR Tiling(loop_id, factor) OR Tiling(loop_band, tile_sizes) — tile_sizes is a vector with one entry per loop dimension; a value of 0 means 'do not tile' for that dimension."
+        },
+        {
+          "name": "Loop Interchange",
+          "description": "Reorder the loop nest to ensure the innermost loop iterates over the fastest-varying (contiguous) memory dimension, maximizing spatial locality and hardware prefetch effectiveness.",
+          "rationale": "After tiling or in the original loop nest, the relative loop ordering determines memory access strides. Placing the contiguous dimension innermost ensures sequential memory access, which is critical for streaming bandwidth-bound operations and enables efficient cache line utilization.",
+          "action_template": "LoopInterchange(loop_band, permutation) OR LoopInterchangeMove(loop_id, shift) OR LoopInterchangeSwap(adjacent_pair) — permutation specifies the new ordering of loops within the band."
+        }
+      ]
+    },
+    {
+      "name": "SIMD Exploitation",
+      "description": "Lower the innermost loop iterations to SIMD vector instructions, processing multiple f64 elements per CPU cycle using AVX2 (4 lanes of f64 per 256-bit vector).",
+      "rationale": "Elementwise addition maps directly to SIMD vector add instructions. With AVX2, 4 f64 additions execute in a single instruction, effectively quadrupling the throughput of each memory access relative to scalar execution. Since the operation is bandwidth-bound, wider loads and stores improve utilization of available memory bandwidth.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Vectorization (Sequential Tiling Preprocessing)",
+          "description": "Tile the target loops to vector-width sizes using sequential for-loops as preprocessing, then SIMD-lower the resulting fixed-size inner loops into vector instructions.",
+          "rationale": "Preprocessing the loop nest by tiling to vector sizes ensures the innermost loops have trip counts matching the SIMD width, which is required for clean vectorization without remainder handling. Sequential outer tiles keep the transformation simple and avoid thread-management overhead.",
+          "action_template": "VectorizationSeq(vector_sizes) — vector_sizes specifies the SIMD tile sizes for each loop dimension (0 means 'do not vectorize' that dimension). Preprocessing tiles the loop nest to these sizes using sequential for-loops (tile_using_for), then applies SIMD lowering to the tiled inner loops."
+        },
+        {
+          "name": "Vectorization (Parallel Tiling Preprocessing)",
+          "description": "Tile the target loops to vector-width sizes using parallel forall as preprocessing, distributing the outer tiles across threads, then SIMD-lower the resulting fixed-size inner loops into vector instructions.",
+          "rationale": "Combining vectorization with parallel distribution in a single step yields both SIMD throughput and multi-core utilization. The parallel forall preprocessing distributes outer tile iterations across threads while the inner tiled loops are vectorized, achieving a two-level parallelism (threads + SIMD).",
+          "action_template": "VectorizationPar(vector_sizes) — vector_sizes specifies the SIMD tile sizes for each loop dimension (0 means 'do not vectorize' that dimension). Preprocessing tiles the loop nest to these sizes using parallel forall (tile_using_forall), distributing outer tiles across threads, then applies SIMD lowering to the tiled inner loops."
+        }
+      ]
+    },
+    {
+      "name": "Coarse-Grain Parallelism",
+      "description": "Distribute outer loop iterations across multiple CPU cores to exploit the 28-core, 2-socket NUMA topology for large tensor workloads.",
+      "rationale": "All loops in an elementwise addition are embarrassingly parallel with no cross-iteration dependencies or reductions. For large tensors whose total data footprint spans multiple NUMA domains, multi-threaded execution distributes both compute and memory traffic across sockets, achieving near-linear scaling up to the aggregate memory bandwidth ceiling.",
+      "priority": "medium",
+      "transformations": [
+        {
+          "name": "Parallelization (Tiling-Based)",
+          "description": "Tile outer loop dimensions into coarse chunks and distribute the resulting tiles across threads using forall.",
+          "rationale": "Tiling-based parallelization provides flexible granularity control: tile sizes determine the work quantum per thread, enabling tuning for cache-friendly chunk sizes and balanced load distribution across NUMA nodes.",
+          "action_template": "ParallelizationTile(tile_sizes) — tile_sizes specifies the chunk sizes for outer loop dimensions (0 means 'do not parallelize' that dimension). Outer tiles are distributed across threads using forall."
+        },
+        {
+          "name": "Parallelization (Thread-Count-Based)",
+          "description": "Distribute outer loop iterations directly across a specified number of threads without explicit tiling.",
+          "rationale": "Direct thread-count-based parallelization is simpler and avoids introducing additional tiling structure. It is effective when the iteration counts are large and evenly divisible by the thread count, though it offers less granularity control than tiling-based approaches.",
+          "action_template": "ParallelizationThreads(num_threads) — num_threads specifies the number of threads across which to distribute outer loop iterations. The thread count must be a divisor of the iteration count to avoid remainder-handling issues in subsequent MLIR transformations."
+        }
+      ]
+    }
+  ]
+}

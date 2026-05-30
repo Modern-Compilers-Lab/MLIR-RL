@@ -6,3 +6,5 @@ ACTION_CLASSES: list[type[ActionBase]] = [
 ]
 
 ACTION_DEPENDENCIES: dict[str, list[str]] = {}
+
+SCHEDULE_GRAPH: dict[str, list[list[str]]] = {}

@@ -36,17 +36,20 @@ claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_im
 # Example usage:
 
 # Matmul
-## python llm_action/src/prompts/action_implementation.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_implementation.py --benchmark dataset_matmul)"
+## python llm_action/src/prompts/action_implementation.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_implementation.py --benchmark dataset_matmul --limit 10)"
 
 # Conv
-## python llm_action/src/prompts/action_implementation.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_implementation.py --benchmark dataset_conv2d)"
+## python llm_action/src/prompts/action_implementation.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_implementation.py --benchmark dataset_conv2d --limit 10)"
 ## python llm_action/src/prompts/action_implementation.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_implementation.py --benchmark dataset_conv2d_img2col)"
 
 # Pooling
-## python llm_action/src/prompts/action_implementation.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_implementation.py --benchmark dataset_pooling)"
+## python llm_action/src/prompts/action_implementation.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_implementation.py --benchmark dataset_pooling --limit 10)"
 
 # Add
-## python llm_action/src/prompts/action_implementation.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_implementation.py --benchmark dataset_add)"
+## python llm_action/src/prompts/action_implementation.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_implementation.py --benchmark dataset_add --limit 10)"
 
 # ReLu
-## python llm_action/src/prompts/action_implementation.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_implementation.py --benchmark dataset_relu)"
+## python llm_action/src/prompts/action_implementation.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_implementation.py --benchmark dataset_relu --limit 10)"
+
+# ML
+## python llm_action/src/prompts/action_implementation.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_implementation.py --benchmark dataset_ml --limit 5)"

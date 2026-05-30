@@ -79,7 +79,7 @@ SB3_STDOUT_KEY_MAX_LENGTH = 60
 # State
 ## Max number of loops the observation/action mask can address.
 ## Sized for the largest op family in the dataset: matmul=3, add=4, relu-generic=2/4, pooling_nchw_max=6, conv_2d_nchw_fchw=7.
-L = 7
+L = 7 # 7
 ## Max rows per access table (loads or stores). Required >= max(n_loads, n_stores)
 ## across all op families: matmul/conv/add/pool=2 loads + 1 store, relu=1+1.
 ## So 2 is the actual minimum; 3 leaves one zero row of headroom.
@@ -99,9 +99,11 @@ ARITH_OPS = ["+", "-", "*", "/", "exp"]
 NUM_OP_TYPES = 6
 ## Size of the operation features in the observation vector
 OP_FEATURES_SIZE = NUM_OP_TYPES + L + L + LS * LSD * L + LS * LSD * L + len(ARITH_OPS)
+## Fallback divisor for the "max" loop-bound encoding
+BOUND_NORM_DEFAULT = 4096
 
 # Action
 ## Upper bound on per-loop parameter slots in actions, min(n_loops, MAX_PARAM_SLOTS), so this must be >= L for the policy to address every loop in the largest op family.
 MAX_PARAM_SLOTS = L
 ## Upper bound on vocabulary size per parameter slot
-MAX_VOCAB_SIZE_PER_SLOT = 5
+MAX_VOCAB_SIZE_PER_SLOT = 6

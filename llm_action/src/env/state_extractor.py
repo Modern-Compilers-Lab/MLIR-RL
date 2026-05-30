@@ -40,12 +40,14 @@ def observation_size(total_actions: int, max_steps: int, history_mode: str = "su
 
 def extract_observation(code: str, action_indices: list[tuple[int, bool]], step: int,
                         total_actions: int, max_steps: int,
-                        history_mode: str = "success-encoding") -> np.ndarray:
+                        history_mode: str = "success-encoding",
+                        loop_bound_encoding: str = "log", bound_norm: float = 1.0) -> np.ndarray:
     obs_size = observation_size(total_actions, max_steps, history_mode)
     obs = np.zeros(obs_size, dtype=np.float32)
 
     try:
-        obs[:OP_FEATURES_SIZE] = _extract_op_features(code)
+        obs[:OP_FEATURES_SIZE] = _extract_op_features(
+            code, loop_bound_encoding=loop_bound_encoding, bound_norm=bound_norm)
     except Exception:
         pass
 
@@ -66,7 +68,7 @@ def extract_observation(code: str, action_indices: list[tuple[int, bool]], step:
     obs[-1] = step / max_steps
     return obs
 
-def _extract_op_features(code: str) -> np.ndarray:
+def _extract_op_features(code: str, loop_bound_encoding: str = "log", bound_norm: float = 1.0) -> np.ndarray:
     result = subprocess.run(
         f"{AST_DUMPER_BIN_PATH} -", shell=True,
         input=code.encode(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=AST_DUMPER_TIMEOUT,
@@ -87,7 +89,7 @@ def _extract_op_features(code: str) -> np.ndarray:
             block = b
             break
 
-    return _encode_block(block, code=code)
+    return _encode_block(block, code=code, loop_bound_encoding=loop_bound_encoding, bound_norm=bound_norm)
 
 def _parse_loop_info(code: str) -> tuple[int, list[int]]:
     """Run AST dumper once and return (n_loops, [upper_bound_per_loop]).
@@ -137,7 +139,7 @@ def extract_loop_bounds(code: str) -> list[int]:
     _, bounds = _parse_loop_info(code)
     return bounds
 
-def _encode_block(block: str, code: str = "") -> np.ndarray:
+def _encode_block(block: str, code: str = "", loop_bound_encoding: str = "log", bound_norm: float = 1.0) -> np.ndarray:
     vec = np.zeros(OP_FEATURES_SIZE, dtype=np.float32)
     rest, _ = block.split("#START_TAG")
     op_name, rest = rest.split("#START_VECTORIZABLE")
@@ -161,7 +163,10 @@ def _encode_block(block: str, code: str = "") -> np.ndarray:
     idx_map = {nl[0]: i for i, nl in enumerate(loops)}
 
     for i, nl in enumerate(loops[:L]):
-        vec[offset + i] = math.log2(max(nl[2], 1))
+        if loop_bound_encoding == "max":
+            vec[offset + i] = nl[2] / bound_norm if bound_norm > 0 else 0.0
+        else:  # "log"
+            vec[offset + i] = math.log2(max(nl[2], 1))
     offset += L
 
     for i, nl in enumerate(loops[:L]):

@@ -171,9 +171,9 @@ For each Transformation, set `action_template` to describe one or more plausible
 - name: "Loop Interchange"
   action_template: "LoopInterchange(loop_band, permutation) OR LoopInterchangeMove(loop_id, shift) OR LoopInterchangeSwap(adjacent_pair)"
 - name: "Vectorization"
-  action_template: "Vectorization(target_loop, vector_width) OR Vectorization(loop_band, vector_width)"
+  action_template: "Vectorization(vector_sizes) — SIMD-lower the innermost loop(s), preprocessed by tiling to the vector sizes so the vector widths match the loop bounds. This preprocessing tiling can be done in two ways, and each way must be enumerated as its own separate transformation: sequentially (tile_using_for) and in parallel (tile_using_forall, which also distributes the outer tiles across threads). Always enumerate both as 2 separate vectorization actions — one with sequential-tiling preprocessing, one with parallel-tiling preprocessing."
 - name: "Parallelization"
-    action_template: "Parallelization(tile_sizes) OR Parallelization(num_threads). In case of num_threads, the number of threads have to be a divisor of the iteration count, otherwise subsequent MLIR transformations may fail. In case you identify a significant difference between parallelizing with tiling vs. directly with num_threads, you can include both as separate transformations, but prefer the tiling-based approach as it is more flexible and generally applicable. Prioritize suggesting ro implement 2 parallelization actions (one tiling-based, one num_threads-based)."
+    action_template: "Parallelization(tile_sizes) OR Parallelization(num_threads). In case of num_threads, the number of threads have to be a divisor of the iteration count, otherwise subsequent MLIR transformations may fail. In case you identify a significant difference between parallelizing with tiling vs. directly with num_threads, you can include both as separate transformations. Prioritize suggesting to implement 2 parallelization actions (one tiling-based, one num_threads-based)."
 - name: "Promotion"
   action_template: "Promotion(operands_to_promote) — operands_to_promote is a list of operand
   indices (e.g. [0], [1], [0,1,2]) specifying which operands to copy into contiguous local

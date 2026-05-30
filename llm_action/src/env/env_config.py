@@ -22,12 +22,14 @@ class EnvConfig:
     failed_transform_penalty: float = -1.0
     failed_exec_penalty: float = -5.0
     no_action_penalty: float = -0.1
-    reward_scale: str = "log"
+    reward_scale: str = "log"  # "log", "raw", "delta", "relative"
     reward_mode: str = "final"  # "final", "intermediate", "schedule"
     reward_baseline: str = "mlir"  # "mlir" or "torch"
+    loop_bound_encoding: str = "log"  # "log" (log2 of bound) or "max" (bound / dataset-train max)
     max_speedup_cap: float = 1000.0
     history_mode: str = "success-encoding"  # "include-all", "ignore-failed", "success-encoding"
     enable_dependency_masking: bool = True
+    masking_mode: str = "dependencies"  # "dependencies" (ACTION_DEPENDENCIES denylist) | "schedule_graph" (SCHEDULE_GRAPH allowlist) | "none"
     verbose: bool = True
 
     @classmethod

@@ -16,6 +16,7 @@ from llm_action.src.data.benchmarks import (
     load_benchmark_set,
     save_baselines,
 )
+from llm_action.src.config import BOUND_NORM_DEFAULT
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,7 @@ class Benchmark:
     code: str
     base_exec_time_ms: float
     torch_exec_time_ms: float = -1.0
+    best_speedup_seen: float = 1.0
 
 
 _MATMUL_PATTERN = re.compile(r"matmul_(\d+)_(\d+)_(\d+)$")
@@ -66,6 +68,24 @@ def _parse_op_dims(name: str) -> tuple[str, tuple[int, ...]] | None:
     if m := _RELU_PATTERN.match(name):
         return ("relu", tuple(int(x) for x in m.group(1).split("_")))
     return None
+
+def compute_loop_bound_norm(name: str = "standard") -> float:
+    """Largest loop bound across the *train* split of a benchmark set.
+
+    Used as the divisor for the "max" loop-bound observation encoding. Computed
+    from the train split regardless of the env's own split, so train and eval
+    observations share one frozen scale. For the supported op families the loop
+    bounds are filename-derivable via `_parse_op_dims` (exact for matmul, where
+    the parsed (M, K, N) are the three loop bounds), so this needs only file
+    discovery + name parsing — no executor and no AST-dumper passes.
+    """
+    instances = load_benchmark_set(name, split="train")
+    best = 0
+    for inst in instances:
+        parsed = _parse_op_dims(inst.name)
+        if parsed is not None:
+            best = max(best, max(parsed[1]))
+    return float(best) if best > 0 else float(BOUND_NORM_DEFAULT)
 
 def measure_torch_baseline(op_type: str, dims: tuple[int, ...], executor) -> float:
     """Measure PyTorch execution time for the given op via the env's executor.

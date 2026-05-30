@@ -1,0 +1,64 @@
+{
+  "intents": [
+    {
+      "name": "Data Locality & Cache Reuse",
+      "description": "Restructure the iteration space and data layout of the 3-deep loop nest so that operand working sets fit within L1/L2 cache, maximizing temporal and spatial reuse across all three operands.",
+      "rationale": "The matmul loop nest accesses three dense matrices with significant reuse potential (A reused across K, B reused across I, C accumulated across J). Without blocking, working sets far exceed cache capacity, converting a compute-bound kernel into a memory-bound one. Cache-aware data locality is the single most impactful optimization category for dense linear algebra on CPUs.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Partition the iteration space into multi-dimensional blocks so that the data footprint of each tile fits within a target cache level, enabling temporal reuse of all operands.",
+          "rationale": "Tiling is the foundational transformation for cache locality in loop nests. For matmul, tiling all three dimensions ensures that tiles of A, B, and C simultaneously reside in L1 or L2 cache, converting O(N^3) memory traffic into O(N^3/T) where T is the tile volume.",
+          "action_template": "Tiling(tile_sizes) — tile_sizes is a vector with one entry per loop dimension; 0 means do not tile that dimension. Tiles the loop nest using sequential for-loops."
+        },
+        {
+          "name": "Loop Interchange",
+          "description": "Permute the order of loops in the nest to improve memory access stride patterns and enable more effective vectorization or reduction ordering.",
+          "rationale": "The default loop order may not align with the optimal memory access pattern for the chosen tiling and vectorization strategy. Interchanging loops can convert strided accesses into contiguous (stride-1) accesses, reducing cache misses and enabling efficient SIMD loads/stores.",
+          "action_template": "LoopInterchange(permutation) — permutation is a reordering of loop dimension indices specifying the new loop nesting order."
+        }
+      ]
+    },
+    {
+      "name": "SIMD Compute Throughput",
+      "description": "Exploit AVX2 vector units and instruction-level parallelism to maximize floating-point throughput per core by restructuring inner loops for SIMD execution and reducing loop overhead.",
+      "rationale": "The target CPU supports 256-bit AVX2 with FMA, providing 4-wide f64 SIMD lanes. Without vectorization, only 1 out of 4 potential FLOP slots is used per cycle. The matmul inner loop is a multiply-accumulate pattern that maps directly to FMA instructions, making vectorization essential for achieving peak throughput.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Vectorization (Sequential)",
+          "description": "Tile inner loops to SIMD-width granularity using sequential for-loops, then lower the resulting fixed-trip-count loops to vector operations.",
+          "rationale": "Sequential vectorization is the standard approach: preprocessing tiling creates inner loops with trip counts matching the vector width, which are then lowered to SIMD operations. The outer loops remain sequential, preserving the original loop structure while the innermost computation is vectorized.",
+          "action_template": "VectorizationSequential(vector_sizes) — vector_sizes is a vector with one entry per loop dimension specifying the SIMD width; 1 means scalar (no vectorization) for that dimension. Preprocessing tiles the loop nest using sequential for-loops to create vector-width inner trips, then lowers to vector dialect."
+        },
+        {
+          "name": "Vectorization (Parallel)",
+          "description": "Tile inner loops to SIMD-width granularity using parallel forall-loops, then lower the resulting fixed-trip-count loops to vector operations while distributing outer tiles across threads.",
+          "rationale": "Parallel vectorization combines SIMD lowering with thread-level distribution in a single transformation. The preprocessing uses forall (parallel tiling) instead of sequential for, so outer tile iterations can be distributed across threads. This enables simultaneous SIMD + multi-threading without requiring a separate parallelization pass.",
+          "action_template": "VectorizationParallel(tile_sizes) — tile_sizes is a vector with one entry per loop dimension; parallel dimensions use forall distribution, reduction dimensions use sequential for; 0 means skip. After tiling, the inner loops are lowered to vector operations."
+        }
+      ]
+    },
+    {
+      "name": "Coarse-Grain Parallelism",
+      "description": "Distribute work across the 28 physical cores by partitioning the parallel dimensions of the loop nest into independent chunks that execute concurrently on separate threads.",
+      "rationale": "The target machine has 28 physical cores across 2 NUMA nodes. The matmul loop nest has two parallel dimensions (output rows and columns), providing ample parallelism for most shapes in the benchmark set (dimensions range from 128 to 3072). Effective parallelization can yield up to 28x speedup for compute-bound matmul. Both tiling-based and thread-count-based distribution are included because they interact differently with subsequent transformations and have different shape-dependent tradeoffs.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Parallelization (Tiling)",
+          "description": "Tile the parallel dimensions of the loop nest and distribute the resulting tile iterations across threads using forall, controlling work granularity per thread.",
+          "rationale": "Tiling-based parallelization gives explicit control over the amount of work per thread by choosing tile sizes. This naturally integrates with the tiling hierarchy (outer parallel tiles → inner sequential/vectorized tiles) and allows tuning the balance between parallelism and per-thread locality. Reduction dimensions are automatically excluded from parallel distribution.",
+          "action_template": "ParallelizationTiling(tile_sizes) — tile_sizes is a vector with one entry per loop dimension; 0 means skip; reduction dimensions are automatically zeroed. Tiles parallel dimensions and distributes tile iterations across threads via forall."
+        },
+        {
+          "name": "Parallelization (Threads)",
+          "description": "Directly map a fixed number of threads to the parallel iteration space, distributing loop iterations evenly across threads.",
+          "rationale": "Thread-based parallelization is simpler and avoids the need to choose tile sizes — the runtime distributes iterations across the specified number of threads. It is effective when the iteration count is divisible by the thread count, and particularly useful for shapes where the parallel dimensions align well with the available core count.",
+          "action_template": "ParallelizationThreads(num_threads) — num_threads specifies the number of threads to distribute parallel loop iterations across. Must be a divisor of the parallel iteration count for correct downstream lowering."
+        }
+      ]
+    }
+  ]
+}

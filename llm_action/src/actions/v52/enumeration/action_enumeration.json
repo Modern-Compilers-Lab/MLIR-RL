@@ -1,0 +1,64 @@
+{
+  "intents": [
+    {
+      "name": "SIMD Utilization",
+      "description": "Expose element-wise ReLU computation to SIMD execution by lowering the innermost loop iterations to vector operations, maximizing per-core throughput on AVX2.",
+      "rationale": "The element-wise compare-and-select pattern maps directly to AVX2 vector compare and blend instructions. With f64, each 256-bit vector register holds 4 elements, providing up to 4x throughput per core. Since this operation is memory-bandwidth bound, wider vector loads and stores are the primary lever for improving single-core efficiency.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Vectorization (Sequential Preprocessing)",
+          "description": "Tile the innermost loop(s) to match the target SIMD vector width using sequential tiling, then lower the loop body to vector operations.",
+          "rationale": "Preprocessing via sequential tiling (tile_using_for) ensures innermost loop bounds match the vector width, enabling direct SIMD lowering. This is the simplest vectorization path and does not introduce parallelism, making it composable with independent parallelization actions.",
+          "action_template": "VectorizationSequential(vector_sizes) — Tile innermost loops to vector_sizes using tile_using_for as preprocessing, then vectorize. vector_sizes is a list of sizes (one per loop dimension, 0 means do not tile that dimension) specifying the SIMD width for vectorization."
+        },
+        {
+          "name": "Vectorization (Parallel Preprocessing)",
+          "description": "Tile the innermost loop(s) to match the target SIMD vector width using parallel tiling, distributing outer tiles across threads, then lower the loop body to vector operations.",
+          "rationale": "Preprocessing via parallel tiling (tile_using_forall) simultaneously prepares for vectorization and distributes outer tile iterations across threads. This fuses vectorization and parallelization into a single action, which can be more efficient than composing them separately by avoiding an extra tiling pass.",
+          "action_template": "VectorizationParallel(vector_sizes) — Tile innermost loops to vector_sizes using tile_using_forall as preprocessing (distributing outer tiles across threads), then vectorize. vector_sizes is a list of sizes (one per loop dimension, 0 means do not tile that dimension) specifying the SIMD width for vectorization."
+        }
+      ]
+    },
+    {
+      "name": "Multi-Core Work Distribution",
+      "description": "Distribute the embarrassingly parallel element-wise iterations across multiple CPU cores to utilize the full memory bandwidth and compute capacity of the 28-core machine.",
+      "rationale": "All loop dimensions are parallel with no reductions or cross-iteration dependencies. A single core can saturate only a small fraction of the machine's aggregate memory bandwidth. For large tensors (hundreds of MB to GB in f64), parallelization across cores is essential to approach peak bandwidth. Even for moderate-sized tensors, multi-core execution substantially reduces wall-clock time.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Parallelization (Tiling-based)",
+          "description": "Tile outer loop dimensions and distribute the resulting tiles across threads using forall-style parallelism.",
+          "rationale": "Tiling-based parallelization provides explicit control over tile granularity, allowing the RL agent to balance work per thread against synchronization overhead. Coarser tiles reduce overhead but risk load imbalance; finer tiles improve balance but increase scheduling cost.",
+          "action_template": "ParallelizationTiling(tile_sizes) — Tile the iteration space using tile_using_forall with tile_sizes controlling the chunk size per thread. tile_sizes is a list of sizes (one per loop dimension, 0 means do not tile/parallelize that dimension)."
+        },
+        {
+          "name": "Parallelization (Thread-count-based)",
+          "description": "Directly partition the iteration space among a specified number of threads without explicit tiling.",
+          "rationale": "Thread-count-based parallelization provides a simpler parameterization where the RL agent selects the degree of parallelism directly. The runtime divides the iteration space evenly. The thread count must be a divisor of the relevant loop trip count to avoid remainder-handling issues in downstream MLIR passes.",
+          "action_template": "ParallelizationThreads(num_threads) — Distribute iterations across num_threads threads by partitioning the iteration space. num_threads specifies the number of parallel threads to use."
+        }
+      ]
+    },
+    {
+      "name": "Cache Locality",
+      "description": "Restructure the iteration space to improve data reuse and spatial locality within the CPU cache hierarchy, reducing main-memory traffic for large tensors.",
+      "rationale": "The largest ReLU instances have working sets (input + output) reaching multiple GB in f64, far exceeding per-core L1 (32KB), L2 (256KB), and even shared LLC (~35MB). While element-wise ReLU is a streaming workload, tiling improves hardware prefetcher effectiveness, reduces TLB pressure, and creates cache-resident working sets. Loop interchange can further optimize access patterns within tiles.",
+      "priority": "medium",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Partition the iteration space into fixed-size tiles so that each tile's working set fits within a target cache level (L1 or L2).",
+          "rationale": "Tiling constrains the active data footprint per tile, improving spatial locality and prefetcher behavior. For element-wise ops, the tile's input + output should fit in L1 or L2 for optimal memory pipeline utilization. Tiling also creates well-defined work units that compose naturally with parallelization and vectorization.",
+          "action_template": "Tiling(tile_sizes) — Tile the iteration space using tile_using_for. tile_sizes is a list of sizes (one per loop dimension, 0 means do not tile that dimension) controlling the block size for cache residency."
+        },
+        {
+          "name": "Loop Interchange",
+          "description": "Reorder loop dimensions to optimize the memory access pattern, ensuring unit-stride access on the innermost traversal dimension.",
+          "rationale": "After tiling, the relative order of tile loops and point loops affects spatial locality. Interchange ensures that the innermost loop traverses the contiguous memory dimension, maximizing cache line utilization and minimizing stride-related penalties. For multi-dimensional tensors, interchange can also improve NUMA locality by grouping accesses to the same memory page.",
+          "action_template": "LoopInterchange(loop_band, permutation) OR LoopInterchangeSwap(adjacent_pair) — Reorder loops within a loop band. loop_band identifies the target loop nest, permutation specifies the new loop order. The swap variant exchanges two adjacent loops as a simpler parameterization."
+        }
+      ]
+    }
+  ]
+}
