@@ -1,0 +1,207 @@
+{
+  "run_name": "ppo_20260531_012748_v50_dataset_pooling_graph",
+  "run_dir": "/scratch/kb5213/workspace/MLIR-RL/llm_action/results/rl/ppo_20260531_012748_v50_dataset_pooling_graph",
+  "eval_source": "training-logs",
+  "best_eval_count": 12,
+  "best_timestep": 24000,
+  "evaluated_at": "2026-06-01T17:32:52",
+  "n_benchmarks": 10,
+  "train_config": {
+    "benchmarks_name": "dataset_pooling",
+    "total_timesteps": 125000,
+    "n_steps": 128,
+    "batch_size": 32,
+    "n_epochs": 8,
+    "lr": 0.0003,
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "clip_range": 0.2,
+    "ent_coef": 0.005,
+    "ent_coef_final": 5e-05,
+    "ent_coef_schedule": "linear",
+    "ent_coef_decay_frac": 1.0,
+    "action_head_init": "default",
+    "vf_coef": 0.05,
+    "max_grad_norm": 0.5,
+    "net_arch": [
+      128,
+      128
+    ],
+    "n_envs": 1,
+    "max_steps": 5,
+    "action_version": "v50",
+    "param_mode": "multidiscrete",
+    "executor_type": "dask",
+    "dask_nodes": 1,
+    "history_mode": "success-encoding",
+    "reward_scale": "log",
+    "loop_bound_encoding": "log",
+    "reward_mode": "final",
+    "reward_baseline": "mlir",
+    "checkpoint_freq": 10000,
+    "eval_freq": 2000,
+    "eval_sample_runs": 3,
+    "log_dir": null,
+    "exp_name": "v50_dataset_pooling_graph",
+    "seed": 42,
+    "wandb_project": "mlir-rl",
+    "wandb_entity": null,
+    "resume": null,
+    "enable_dependency_masking": true,
+    "masking_mode": "schedule_graph",
+    "policy_mask_mode": "hard",
+    "verbose": true
+  },
+  "greedy_results": [
+    {
+      "benchmark": "pooling_nchw_max_256_11_113_113_3_56_56",
+      "reward": 1.7085182318510523,
+      "base_time_ms": 85.106203,
+      "torch_time_ms": 10.594743,
+      "opt_time_ms": 5.671092,
+      "speedup": 15.007022104384834,
+      "speedup_to_torch": 1.8682015738767772,
+      "actions": [
+        "TilingParallelization",
+        "Tiling",
+        "Tiling"
+      ],
+      "n_steps": 5
+    },
+    {
+      "benchmark": "pooling_nchw_max_256_192_71_71_3_35_35",
+      "reward": 2.289964075649392,
+      "base_time_ms": 578.849586,
+      "torch_time_ms": 67.068847,
+      "opt_time_ms": 21.56515,
+      "speedup": 26.841899360774214,
+      "speedup_to_torch": 3.1100570596541184,
+      "actions": [
+        "TilingParallelization",
+        "Tiling",
+        "Tiling"
+      ],
+      "n_steps": 5
+    },
+    {
+      "benchmark": "pooling_nchw_max_256_22_57_57_3_28_28",
+      "reward": 2.0357624985205693,
+      "base_time_ms": 43.096489,
+      "torch_time_ms": 6.10421,
+      "opt_time_ms": 2.07027,
+      "speedup": 20.816844662773455,
+      "speedup_to_torch": 2.948509131659156,
+      "actions": [
+        "TilingParallelization",
+        "Tiling",
+        "Tiling"
+      ],
+      "n_steps": 5
+    },
+    {
+      "benchmark": "pooling_nchw_max_256_336_43_43_3_21_21",
+      "reward": 2.2950349546826394,
+      "base_time_ms": 361.132018,
+      "torch_time_ms": 42.005026,
+      "opt_time_ms": 13.38599,
+      "speedup": 26.978357073328162,
+      "speedup_to_torch": 3.1379842656389254,
+      "actions": [
+        "TilingParallelization",
+        "Tiling",
+        "Tiling"
+      ],
+      "n_steps": 5
+    },
+    {
+      "benchmark": "pooling_nchw_max_256_42_167_167_3_83_83",
+      "reward": 2.293302290892059,
+      "base_time_ms": 707.656306,
+      "torch_time_ms": 83.736606,
+      "opt_time_ms": 26.276007,
+      "speedup": 26.931653123703306,
+      "speedup_to_torch": 3.18680863496497,
+      "actions": [
+        "TilingParallelization",
+        "Tiling",
+        "Tiling"
+      ],
+      "n_steps": 5
+    },
+    {
+      "benchmark": "pooling_nchw_max_256_64_114_114_3_56_56",
+      "reward": 2.0574672390024467,
+      "base_time_ms": 503.966772,
+      "torch_time_ms": 57.999227,
+      "opt_time_ms": 23.689765,
+      "speedup": 21.273607906199153,
+      "speedup_to_torch": 2.4482820745583584,
+      "actions": [
+        "TilingParallelization",
+        "Tiling",
+        "Tiling"
+      ],
+      "n_steps": 5
+    },
+    {
+      "benchmark": "pooling_nchw_max_256_64_147_147_3_73_73",
+      "reward": 2.299887072523197,
+      "base_time_ms": 831.024276,
+      "torch_time_ms": 99.455502,
+      "opt_time_ms": 30.654269,
+      "speedup": 27.109577331627122,
+      "speedup_to_torch": 3.2444258253230567,
+      "actions": [
+        "TilingParallelization",
+        "Tiling",
+        "Tiling"
+      ],
+      "n_steps": 5
+    },
+    {
+      "benchmark": "pooling_nchw_max_256_672_23_23_3_11_11",
+      "reward": 2.265424762444652,
+      "base_time_ms": 242.913504,
+      "torch_time_ms": 23.433844,
+      "opt_time_ms": 9.274611,
+      "speedup": 26.19123368085195,
+      "speedup_to_torch": 2.526665970141497,
+      "actions": [
+        "TilingParallelization",
+        "Tiling",
+        "Tiling"
+      ],
+      "n_steps": 5
+    },
+    {
+      "benchmark": "pooling_nchw_max_256_84_85_85_3_42_42",
+      "reward": 2.2762798139138525,
+      "base_time_ms": 361.254416,
+      "torch_time_ms": 42.40016,
+      "opt_time_ms": 13.644038,
+      "speedup": 26.47708955369371,
+      "speedup_to_torch": 3.1075961529863814,
+      "actions": [
+        "TilingParallelization",
+        "Tiling",
+        "Tiling"
+      ],
+      "n_steps": 5
+    },
+    {
+      "benchmark": "pooling_nchw_max_256_88_29_29_3_14_14",
+      "reward": 2.133997578022675,
+      "base_time_ms": 53.992018,
+      "torch_time_ms": 6.075529,
+      "opt_time_ms": 2.350995,
+      "speedup": 22.96560307444295,
+      "speedup_to_torch": 2.584237312286925,
+      "actions": [
+        "TilingParallelization",
+        "Tiling",
+        "Tiling"
+      ],
+      "n_steps": 5
+    }
+  ]
+}

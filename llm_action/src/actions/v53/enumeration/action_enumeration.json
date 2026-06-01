@@ -1,0 +1,76 @@
+{
+  "intents": [
+    {
+      "name": "Data Locality and Cache Optimization",
+      "description": "Restructure computation and data access to maximize reuse within the CPU cache hierarchy (L1d ~32KB, L2 ~256KB, shared L3), minimizing off-chip memory traffic for both compute-intensive and memory-bound loop nests.",
+      "rationale": "The benchmark set spans compute-intensive kernels (matmul with O(I*J*K) FLOPs over 3-deep nests, conv2d with 7-deep nested loops) and memory-bound operations (elementwise add, relu, pooling). For compute-intensive operations, working sets vastly exceed cache capacity: a 512x512x512 matmul has ~6MB working set vs 256KB L2. Tiling, interchange, and promotion together reduce main memory traffic by orders of magnitude. For memory-bound operations, structuring access for cache-line utilization and prefetcher effectiveness improves bandwidth usage.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Partition the iteration space of a loop nest into smaller blocks (tiles) so that the working set of each tile fits within a target cache level, improving temporal and spatial data reuse.",
+          "rationale": "All operations in the benchmark set access multi-dimensional tensors with working sets that can exceed L1/L2 capacity. Tiling is the foundational cache locality transformation: for contraction loop nests (matmul, conv2d), it enables O(n/b) reuse of loaded data; for elementwise operations (add, relu), it structures streaming access into cache-friendly chunks. Without tiling, compute-bound kernels are entirely memory-latency limited.",
+          "action_template": "Tiling(tile_sizes) — tile_sizes is a vector with one entry per loop dimension; a value of 0 means 'do not tile' that dimension. OR Tiling(loop_id, factor) — tile a single specified loop by the given factor."
+        },
+        {
+          "name": "Loop Interchange",
+          "description": "Reorder the loops in a loop nest to change the traversal order of the iteration space, improving memory access stride patterns and enabling better spatial locality.",
+          "rationale": "Loop ordering determines whether memory accesses are stride-1 (cache-friendly) or strided (causing cache misses and TLB thrashing). For multi-dimensional tensor operations with row-major storage, moving the innermost loop to iterate over the last (contiguous) dimension dramatically reduces cache misses. For contraction nests, reduction and parallel loops can be reordered to improve one or more operands' access patterns.",
+          "action_template": "LoopInterchange(loop_band, permutation) — permutation specifies the new loop ordering within the identified loop band. OR LoopInterchangeSwap(adjacent_pair) — swap two adjacent loops in the nest."
+        },
+        {
+          "name": "Promotion",
+          "description": "Copy tiled operand slices into contiguous local (stack-allocated) buffers before computation, eliminating strided memory accesses within the inner tile computation. Requires a bufferization preprocessing step since promotion operates at buffer (memref) level.",
+          "rationale": "After tiling, operand slices may still be accessed with non-unit strides due to the original multi-dimensional tensor layout. Promotion copies these slices into compact contiguous buffers, ensuring the micro-kernel operates on cache-line-aligned, stride-1 data. This is critical for compute-intensive operations (matmul, conv2d) where the innermost loops must sustain high throughput without TLB or cache-line splitting penalties. The copy cost is amortized over the tile's compute.",
+          "action_template": "Promotion(operands_to_promote) — operands_to_promote is a list of operand indices (e.g., [0], [1], [0,1,2]) specifying which operands to copy into contiguous local buffers. This action must include an internal bufferization preprocessing step followed by canonicalization."
+        }
+      ]
+    },
+    {
+      "name": "SIMD Exploitation",
+      "description": "Restructure innermost loops to expose data-level parallelism that maps to AVX2 vector instructions (256-bit registers, 4 FP64 lanes with FMA), including lowering complex loop structures into forms that vectorize cleanly.",
+      "rationale": "The target CPU supports AVX2 with FMA, providing 4-wide FP64 SIMD. Without explicit vectorization, the compiler generates scalar code that utilizes only 1 of 4 available lanes — leaving 75% of peak FP64 throughput unused. All five operation families have innermost dimensions amenable to vectorization, but complex loop structures (e.g., conv2d's 7-deep nest) may first require lowering to simpler contraction forms before vectorization can be applied effectively. For memory-bound operations (add, relu), wider vector loads/stores also improve effective memory bandwidth utilization.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Vectorization with Sequential Tiling",
+          "description": "Tile the innermost loop dimensions to match SIMD vector widths using sequential (for) loops, then lower the tiled inner computation to vector operations. The outer tiles iterate sequentially over the full dimension.",
+          "rationale": "Preprocessing via sequential tiling ensures innermost loop bounds exactly match vector register widths, enabling clean vectorization without scalar remainder code. Sequential outer loops avoid thread synchronization overhead, making this variant appropriate when parallelism is managed separately at outer loop levels or when the operation is small enough that threading overhead would dominate. Composes naturally with explicit outer-level parallelization.",
+          "action_template": "SequentialVectorization(vector_sizes) — vector_sizes specifies the SIMD tile sizes for the innermost dimensions; the preprocessing tiling uses sequential for-loops (tile_using_for) to partition the iteration space before vectorizing the inner tiles."
+        },
+        {
+          "name": "Vectorization with Parallel Tiling",
+          "description": "Tile the innermost loop dimensions to match SIMD vector widths using parallel (forall) loops, distributing the outer tiles across threads, then lower the tiled inner computation to vector operations.",
+          "rationale": "Combines vectorization with thread-level parallelism in a single compound transformation. The parallel outer tiles distribute work across cores while the inner tiles map to SIMD instructions, exploiting both levels of hardware parallelism simultaneously. Particularly effective for large tensors in the benchmark set (batch sizes 128-256, large spatial dimensions) where both SIMD and multi-core parallelism are needed to saturate hardware capabilities.",
+          "action_template": "ParallelVectorization(vector_sizes) — vector_sizes specifies the SIMD tile sizes for the innermost dimensions; the preprocessing tiling uses parallel forall-loops (tile_using_forall) which also distributes outer tiles across threads before vectorizing the inner tiles."
+        },
+        {
+          "name": "Im2col Lowering",
+          "description": "Convert a convolution-style sliding-window loop nest into a contraction-form (matmul-like) loop nest by reorganizing the input data into a column matrix, transforming the operation into a matrix multiplication surrounded by reshape operations.",
+          "rationale": "Convolution loop nests have 7 nested loops with complex window-sliding index arithmetic that resists clean SIMD lowering. Im2col converts this into a 3-loop contraction (effectively a matmul) whose innermost reduction loop maps directly to vector FMA operations. The simpler contraction form vectorizes far more effectively than the original convolution pattern. The cost is increased memory for the reorganized input, but the compute efficiency gain typically dominates for the batch sizes (128-256) in the benchmark set. Subsequent optimizations must target the contraction op, not the surrounding reshapes.",
+          "action_template": "Im2colLowering() — no parameters; converts the convolution operation into a matmul-like contraction with surrounding reshape operations. Subsequent optimizations must target the contraction op, not the surrounding reshapes."
+        }
+      ]
+    },
+    {
+      "name": "Thread-Level Parallelism",
+      "description": "Distribute loop iterations across the 28 physical CPU cores (2 NUMA nodes, 14 cores per socket) to exploit coarse-grain parallelism, achieving near-linear speedup for workloads with sufficient parallel work per thread.",
+      "rationale": "All five operation families have outer parallel dimensions (batch, channel, spatial, or output dimensions) that are embarrassingly parallel. The benchmark set includes shapes with large outer dimensions — batch sizes of 128 and 256, channel counts up to 512 — providing ample parallel work. Single-threaded execution uses only 1 of 28 cores (3.6% of available compute). Utilizing all 28 cores is essential for competitive performance against PyTorch, which aggressively parallelizes via OpenMP and MKL.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Parallelization via Tiling",
+          "description": "Tile outer parallel loops and distribute the resulting tiles across threads using parallel loop constructs (forall), providing flexible control over work granularity independent of thread count.",
+          "rationale": "Tiling-based parallelization decouples the tile size from the number of threads, allowing the RL agent to independently control work granularity per thread. Larger tiles reduce synchronization overhead and improve per-thread cache locality; smaller tiles improve load balance across cores. This approach naturally composes with inner tiling for cache locality, creating a multi-level tiling hierarchy: outer tiles for parallelism, inner tiles for cache.",
+          "action_template": "TilingParallelization(tile_sizes) — tile_sizes specifies the outer tile dimensions for parallel distribution. Tiles are mapped to threads via forall loops."
+        },
+        {
+          "name": "Parallelization via Thread Count",
+          "description": "Directly distribute iterations of a parallel loop across a specified number of threads, evenly partitioning the iteration space.",
+          "rationale": "Direct thread-count-based parallelization is simpler and maps cleanly to the hardware when loop bounds are divisible by the thread count. It avoids the two-level tiling indirection and is natural for operations with regular, large outer dimensions. NUMA-aware thread counts (e.g., 14 per socket or 28 total) can improve memory locality on the dual-socket target. Complementary to tiling-based parallelization — offers a different trade-off in the RL action space.",
+          "action_template": "ThreadParallelization(num_threads) — distribute iterations across num_threads threads. The number of threads should ideally divide the iteration count of the target loop for clean partitioning."
+        }
+      ]
+    }
+  ]
+}

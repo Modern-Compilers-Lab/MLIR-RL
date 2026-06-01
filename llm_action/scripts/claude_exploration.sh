@@ -66,3 +66,4 @@ claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_ex
 # ML
 ## python llm_action/src/prompts/schedule_exploration.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_exploration.py --action-version v39 --benchmark dataset_ml)"
 ## python llm_action/src/prompts/schedule_exploration.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_exploration.py --action-version v45 --benchmark dataset_ml --limit 10)"
+## python llm_action/src/prompts/schedule_exploration.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_exploration.py --action-version v53 --benchmark dataset_ml --limit 10)"

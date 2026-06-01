@@ -1,0 +1,239 @@
+{
+  "run_name": "ppo_20260530_145252_v52_dataset_relu_graph",
+  "run_dir": "/scratch/kb5213/workspace/MLIR-RL/llm_action/results/rl/ppo_20260530_145252_v52_dataset_relu_graph",
+  "eval_source": "training-logs",
+  "best_eval_count": 53,
+  "best_timestep": 106000,
+  "evaluated_at": "2026-06-01T17:36:07",
+  "n_benchmarks": 14,
+  "train_config": {
+    "benchmarks_name": "dataset_relu",
+    "total_timesteps": 125000,
+    "n_steps": 128,
+    "batch_size": 32,
+    "n_epochs": 8,
+    "lr": 0.0003,
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "clip_range": 0.2,
+    "ent_coef": 0.005,
+    "ent_coef_final": 5e-05,
+    "ent_coef_schedule": "linear",
+    "ent_coef_decay_frac": 1.0,
+    "action_head_init": "default",
+    "vf_coef": 0.05,
+    "max_grad_norm": 0.5,
+    "net_arch": [
+      128,
+      128
+    ],
+    "n_envs": 1,
+    "max_steps": 4,
+    "action_version": "v52",
+    "param_mode": "multidiscrete",
+    "executor_type": "dask",
+    "dask_nodes": 1,
+    "history_mode": "success-encoding",
+    "reward_scale": "log",
+    "loop_bound_encoding": "log",
+    "reward_mode": "final",
+    "reward_baseline": "mlir",
+    "checkpoint_freq": 10000,
+    "eval_freq": 2000,
+    "eval_sample_runs": 3,
+    "log_dir": null,
+    "exp_name": "v52_dataset_relu_graph",
+    "seed": 42,
+    "wandb_project": "mlir-rl",
+    "wandb_entity": null,
+    "resume": null,
+    "enable_dependency_masking": true,
+    "masking_mode": "schedule_graph",
+    "policy_mask_mode": "hard",
+    "verbose": true
+  },
+  "greedy_results": [
+    {
+      "benchmark": "relu_256_10",
+      "reward": -3.6602062453669078,
+      "base_time_ms": 0.002105,
+      "torch_time_ms": 0.009451,
+      "opt_time_ms": 0.08182,
+      "speedup": 0.025727206062087508,
+      "speedup_to_torch": 0.1155096553409924,
+      "actions": [
+        "VectorizationParallel"
+      ],
+      "n_steps": 2
+    },
+    {
+      "benchmark": "relu_256_100",
+      "reward": -1.6026291723407557,
+      "base_time_ms": 0.017655,
+      "torch_time_ms": 0.028632,
+      "opt_time_ms": 0.087676,
+      "speedup": 0.20136639445230164,
+      "speedup_to_torch": 0.326565992974132,
+      "actions": [
+        "VectorizationParallel"
+      ],
+      "n_steps": 2
+    },
+    {
+      "benchmark": "relu_256_1000",
+      "reward": 0.19848943011780895,
+      "base_time_ms": 0.1901,
+      "torch_time_ms": 0.104026,
+      "opt_time_ms": 0.155876,
+      "speedup": 1.2195591367497243,
+      "speedup_to_torch": 0.6673638019964587,
+      "actions": [
+        "VectorizationParallel"
+      ],
+      "n_steps": 2
+    },
+    {
+      "benchmark": "relu_256_14_14_672",
+      "reward": 1.8066049505295225,
+      "base_time_ms": 43.537621,
+      "torch_time_ms": 8.3123,
+      "opt_time_ms": 7.149343,
+      "speedup": 6.089737336703527,
+      "speedup_to_torch": 1.1626662757682769,
+      "actions": [
+        "VectorizationParallel"
+      ],
+      "n_steps": 2
+    },
+    {
+      "benchmark": "relu_256_14_14_88",
+      "reward": 1.654086742787708,
+      "base_time_ms": 7.105316,
+      "torch_time_ms": 1.050609,
+      "opt_time_ms": 1.35901,
+      "speedup": 5.2283029558281395,
+      "speedup_to_torch": 0.7730693666713269,
+      "actions": [
+        "VectorizationParallel"
+      ],
+      "n_steps": 2
+    },
+    {
+      "benchmark": "relu_256_2048",
+      "reward": 0.5402612000988699,
+      "base_time_ms": 0.439004,
+      "torch_time_ms": 0.103976,
+      "opt_time_ms": 0.255762,
+      "speedup": 1.7164551418897256,
+      "speedup_to_torch": 0.406534199763843,
+      "actions": [
+        "VectorizationParallel"
+      ],
+      "n_steps": 2
+    },
+    {
+      "benchmark": "relu_256_23_23_336",
+      "reward": 1.7778498190449086,
+      "base_time_ms": 58.28524,
+      "torch_time_ms": 10.547464,
+      "opt_time_ms": 9.850272,
+      "speedup": 5.91711985212185,
+      "speedup_to_torch": 1.0707789592003143,
+      "actions": [
+        "VectorizationParallel"
+      ],
+      "n_steps": 2
+    },
+    {
+      "benchmark": "relu_256_29_29_22",
+      "reward": 1.3282662382900379,
+      "base_time_ms": 5.109449,
+      "torch_time_ms": 1.196952,
+      "opt_time_ms": 1.353678,
+      "speedup": 3.774493638812184,
+      "speedup_to_torch": 0.8842220971309278,
+      "actions": [
+        "VectorizationParallel"
+      ],
+      "n_steps": 2
+    },
+    {
+      "benchmark": "relu_256_36_36_192",
+      "reward": 1.7345739132245939,
+      "base_time_ms": 80.72202,
+      "torch_time_ms": 15.13593,
+      "opt_time_ms": 14.245449,
+      "speedup": 5.666512863160719,
+      "speedup_to_torch": 1.0625098584116233,
+      "actions": [
+        "VectorizationParallel"
+      ],
+      "n_steps": 2
+    },
+    {
+      "benchmark": "relu_256_43_43_84",
+      "reward": 1.7789518398383246,
+      "base_time_ms": 50.283482,
+      "torch_time_ms": 9.463982,
+      "opt_time_ms": 8.488606,
+      "speedup": 5.923644235578845,
+      "speedup_to_torch": 1.1149041432715807,
+      "actions": [
+        "VectorizationParallel"
+      ],
+      "n_steps": 2
+    },
+    {
+      "benchmark": "relu_256_512",
+      "reward": -0.23206856316126223,
+      "base_time_ms": 0.097513,
+      "torch_time_ms": 0.102261,
+      "opt_time_ms": 0.122984,
+      "speedup": 0.7928917582774996,
+      "speedup_to_torch": 0.8314984062967541,
+      "actions": [
+        "VectorizationParallel"
+      ],
+      "n_steps": 2
+    },
+    {
+      "benchmark": "relu_256_57_57_64",
+      "reward": 1.7534414916929764,
+      "base_time_ms": 67.975261,
+      "torch_time_ms": 12.79659,
+      "opt_time_ms": 11.771747,
+      "speedup": 5.774441210807538,
+      "speedup_to_torch": 1.0870595502944467,
+      "actions": [
+        "VectorizationParallel"
+      ],
+      "n_steps": 2
+    },
+    {
+      "benchmark": "relu_256_74_74_64",
+      "reward": 1.7277695088376477,
+      "base_time_ms": 114.711327,
+      "torch_time_ms": 20.78636,
+      "opt_time_ms": 20.381941,
+      "speedup": 5.6280865006919605,
+      "speedup_to_torch": 1.019842025840424,
+      "actions": [
+        "VectorizationParallel"
+      ],
+      "n_steps": 2
+    },
+    {
+      "benchmark": "relu_256_85_85_42",
+      "reward": 1.7398085246139656,
+      "base_time_ms": 98.995613,
+      "torch_time_ms": 18.31299,
+      "opt_time_ms": 17.379077,
+      "speedup": 5.696252626074447,
+      "speedup_to_torch": 1.0537377790546645,
+      "actions": [
+        "VectorizationParallel"
+      ],
+      "n_steps": 2
+    }
+  ]
+}

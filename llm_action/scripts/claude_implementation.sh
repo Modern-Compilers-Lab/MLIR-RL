@@ -52,4 +52,4 @@ claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_im
 ## python llm_action/src/prompts/action_implementation.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_implementation.py --benchmark dataset_relu --limit 10)"
 
 # ML
-## python llm_action/src/prompts/action_implementation.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_implementation.py --benchmark dataset_ml --limit 5)"
+## python llm_action/src/prompts/action_implementation.py & claude --dangerously-skip-permissions "$(python llm_action/src/prompts/claude_implementation.py --benchmark dataset_ml --limit 10)"
