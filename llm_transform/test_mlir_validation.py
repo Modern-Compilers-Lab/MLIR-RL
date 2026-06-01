@@ -485,17 +485,14 @@ def main():
             failed += 1
             continue
 
-        if ok is None:
-            tag = _c(YELLOW + ';' + BOLD, "[UNKW]")
+        any_detected = any(detections.values())
+        test_passed = (ok and not any_detected) or (not ok and any_detected)
+        if test_passed:
+            tag = _c(GREEN + ';' + BOLD, "[PASS]")
+            passed += 1
         else:
-            any_detected = any(detections.values())
-            test_passed = (ok and not any_detected) or (not ok and any_detected)
-            if test_passed:
-                tag = _c(GREEN + ';' + BOLD, "[PASS]")
-                passed += 1
-            else:
-                tag = _c(RED + ';' + BOLD, "[FAIL]")
-                failed += 1
+            tag = _c(RED + ';' + BOLD, "[FAIL]")
+            failed += 1
         print(tag, path.name)
 
         outputs_str = _c(GREEN, "match") if ok else _c(RED, "differ")
