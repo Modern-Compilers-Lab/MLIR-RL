@@ -7,6 +7,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/Interfaces/CopyOpInterface.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Tools/Plugins/PassPlugin.h"
@@ -462,10 +463,67 @@ private:
     row[column] += scale;
   }
 
-  static Value getRootMemRef(Value memref) {
-    while (auto viewOp = memref.getDefiningOp<ViewLikeOpInterface>())
-      memref = viewOp.getViewSource();
-    return memref;
+  /// Builds a map from every memref Value that aliases, or holds a copy of, a
+  /// function argument to that argument's number.
+  ///
+  /// Rather than walking up from a loaded memref to its root, this propagates
+  /// *forward* from the function arguments: starting at each memref argument,
+  /// it follows ViewLikeOpInterface ops (subview/cast/...) and CopyOpInterface
+  /// ops (memref.copy) as undirected edges between buffers. This captures the
+  /// staging patterns transformations introduce in both directions:
+  ///
+  ///   * packing/padding copies the argument *into* a local buffer
+  ///     (`memref.copy %arg0, %subview` where %subview views a fresh alloc), so
+  ///     the loads later issued against that alloc must resolve to %arg0;
+  ///   * output write-back computes into a local alloc and copies it *into* the
+  ///     result argument (`memref.copy %alloc, %arg2`), so the stores against
+  ///     the alloc must resolve to %arg2.
+  ///
+  /// Because a copy makes its source and target hold equal data, both
+  /// endpoints are treated as equivalent; view ops alias the same storage, so
+  /// source and result are equivalent too. Any affine access on a buffer in an
+  /// argument's set is attributed to that argument.
+  DenseMap<Value, unsigned> buildArgEquivalenceMap(func::FuncOp func) const {
+    DenseMap<Value, unsigned> argOf;
+
+    for (BlockArgument arg : func.getArguments()) {
+      if (!isa<MemRefType>(arg.getType()))
+        continue;
+      unsigned argNumber = arg.getArgNumber();
+
+      SmallVector<Value, 8> worklist{arg};
+      while (!worklist.empty()) {
+        Value v = worklist.pop_back_val();
+        auto it = argOf.find(v);
+        if (it != argOf.end()) {
+          if (it->second != argNumber)
+            log("  buffer is reachable from multiple arguments (", it->second,
+                " and ", argNumber, "); keeping the first");
+          continue;
+        }
+        argOf[v] = argNumber;
+        log("  buffer ", v, " is equivalent to argument ", argNumber);
+
+        // A view-like producer aliases the storage it views.
+        if (auto viewOp = v.getDefiningOp<ViewLikeOpInterface>())
+          worklist.push_back(viewOp.getViewSource());
+
+        // Consumers: view results alias `v`, and either endpoint of a copy
+        // holds the same data as the other.
+        for (Operation *user : v.getUsers()) {
+          if (auto viewOp = dyn_cast<ViewLikeOpInterface>(user)) {
+            if (viewOp.getViewSource() == v)
+              for (Value result : viewOp->getResults())
+                if (isa<MemRefType>(result.getType()))
+                  worklist.push_back(result);
+          } else if (auto copyOp = dyn_cast<CopyOpInterface>(user)) {
+            worklist.push_back(copyOp.getSource());
+            worklist.push_back(copyOp.getTarget());
+          }
+        }
+      }
+    }
+    return argOf;
   }
 
   static std::optional<StringRef> getEquivalenceTag(Location loc) {
@@ -492,6 +550,7 @@ private:
 
   AccessMap collectStableMemoryAccesses(func::FuncOp func) const {
     AccessMap accessMap;
+    DenseMap<Value, unsigned> argOf = buildArgEquivalenceMap(func);
 
     func.walk([&](Operation *op) {
       Value memref;
@@ -502,18 +561,13 @@ private:
       else
         return;
 
-      Value root = getRootMemRef(memref);
-      auto blockArg = dyn_cast<BlockArgument>(root);
-      if (!blockArg) {
+      auto it = argOf.find(memref);
+      if (it == argOf.end()) {
         log("  ignoring ", op->getName().getStringRef(),
-            ": memref does not resolve to a function argument");
+            ": memref is not equivalent to any function argument");
         return;
       }
-      if (blockArg.getOwner() != &func.getBody().front()) {
-        log("  ignoring ", op->getName().getStringRef(),
-            ": memref argument is not owned by the function entry block");
-        return;
-      }
+      unsigned argNumber = it->second;
 
       std::string eqTag = "";
       if (std::optional<StringRef> tag = getEquivalenceTag(op->getLoc())) {
@@ -523,7 +577,7 @@ private:
       MemRefAccess access(op);
       StableAccess stableAccess{access,
                                 op,
-                                blockArg.getArgNumber(),
+                                argNumber,
                                 access.isStore(),
                                 access.getRank(),
                                 buildSchedule(op),
@@ -568,11 +622,22 @@ private:
     return ordinal;
   }
 
+  /// Streams a single log argument. `Value` (and its subclasses) are printed in
+  /// their compact operand form (e.g. `%3`) rather than their full definition.
+  template <typename T>
+  static void streamArg(raw_ostream &os, T &&arg) {
+    if constexpr (std::is_convertible_v<std::decay_t<T>, Value>) {
+      Value(std::forward<T>(arg)).printAsOperand(os, OpPrintingFlags());
+    } else {
+      os << std::forward<T>(arg);
+    }
+  }
+
   template <typename... Args>
   bool fail(Args &&...args) const {
     if (debugStream) {
       (*debugStream) << "[array-dataflow-equivalence] ";
-      ((*debugStream) << ... << std::forward<Args>(args));
+      (streamArg(*debugStream, std::forward<Args>(args)), ...);
       (*debugStream) << "\n";
     }
     return false;
@@ -584,7 +649,7 @@ private:
     if (!debugStream)
       return;
     (*debugStream) << "[array-dataflow-equivalence] ";
-    ((*debugStream) << ... << std::forward<Args>(args));
+    (streamArg(*debugStream, std::forward<Args>(args)), ...);
     (*debugStream) << "\n";
   }
 

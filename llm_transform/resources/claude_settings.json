@@ -3,10 +3,11 @@
     "allow": [
       "mcp__llm-transform__*",
       "WebSearch",
-      "WebFetch",
-      "Workflow"
+      "WebFetch"
     ],
     "deny": [
+      "Write",
+      "Bash",
       "Read(./tmp/**)",
       "Glob(./tmp/**)",
       "Grep(./tmp/**)",
@@ -15,10 +16,6 @@
       "Grep(./tests/**)"
     ]
   },
-  "enabledMcpjsonServers": [
-    "llm-transform"
-  ],
-  "defaultMode": "dontAsk",
   "autoMemoryEnabled": false,
   "hooks": {
     "PreToolUse": [

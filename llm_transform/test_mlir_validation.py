@@ -134,7 +134,7 @@ def load_equivalence_plugins() -> bool:
     return ok
 
 
-PLUGIN_LOADED = load_legality_plugin()
+LEGALITY_LOADED = load_legality_plugin()
 EQUIVALENCE_LOADED = load_equivalence_plugins()
 
 
@@ -282,14 +282,14 @@ def run_legality_plugin(module: Module) -> str:
 
     Returns the captured stderr output from the plugin
     """
-    if not PLUGIN_LOADED:
+    if not LEGALITY_LOADED:
         return ''
     module_clone: Module = module.operation.clone()
     with capture_stderr_fd() as cap:
         try:
             apply_pipeline_to_module(module_clone, LEGALITY_PASS_PIPELINE)
         except Exception as exc:
-            cap.append(f"[plugin exception] {exc}")
+            cap.append(f"[legality exception] {exc}")
     return "\n".join(cap).strip()
 
 
