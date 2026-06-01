@@ -22,9 +22,9 @@ ACTION_DEPENDENCIES: dict[str, list[str]] = {
 
 SCHEDULE_GRAPH: dict[str, list[list[str]]] = {
     "matmul": [
-        # ["VectorizationParallel"],
+        ["VectorizationParallel"],
         ["ParallelizationThreads", "VectorizationSequential"],
-        # ["ParallelizationTiling", "VectorizationSequential"],
+        ["ParallelizationTiling", "VectorizationSequential"],
         ["ParallelizationTiling", "Tiling", "VectorizationSequential"],
         ["ParallelizationTiling", "LoopInterchange", "VectorizationParallel"],
     ],
