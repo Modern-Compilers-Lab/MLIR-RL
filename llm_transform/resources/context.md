@@ -29,7 +29,7 @@ llm_transform/               # Python package (installed via `pip install -e .`)
     plot_performance.py          # Plot speedup over time per CODE_ID for an experiment
     plot_performance_compare.py  # Compare speedup across experiments
     c/
-      dependence/                # Polyhedral legality check tool (C++/MLIR)
+      equivalence/               # Array-dataflow equivalence verifier (C++/MLIR)
 pyproject.toml               # Package metadata; install with `pip install -e .`
 logs/
   best/                      # Best configurations per instance (auto-saved by run_schedule)
@@ -47,7 +47,7 @@ scripts/
   claude.sh                  # Slurm job script: runs Claude sessions with logging
   execute.sh                 # Slurm job script: runs base, optimized, and PyTorch
 tests/
-  validation/                # MLIR test cases for legality validation (not for LLM use)
+  validation/                # MLIR test cases for equivalence validation (not for LLM use)
 test_mlir_validation.py      # Validation test harness (not for LLM use)
 tmp/                         # Temporary files (not for LLM use)
 ```

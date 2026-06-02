@@ -15,9 +15,9 @@ from string import Template
 from llm_transform.utils.instance_filter import parse_instance_filter
 
 PROMPT_DIR = Path(__file__).resolve().parents[2] / "resources" / "prompt"
-PROMPT_FILE = PROMPT_DIR / "prompt.txt"
-SCOPE_ALL = PROMPT_DIR / "scope_all.txt"
-SCOPE_SUBSET = PROMPT_DIR / "scope_subset.txt"
+PROMPT_FILE = PROMPT_DIR / "prompt.md"
+SCOPE_ALL = PROMPT_DIR / "scope_all.md"
+SCOPE_SUBSET = PROMPT_DIR / "scope_subset.md"
 
 
 def _build_scope() -> str:

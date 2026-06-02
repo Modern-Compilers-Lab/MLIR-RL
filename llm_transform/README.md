@@ -8,7 +8,7 @@ This project lets a Claude Code agent iteratively rewrite **MLIR transform sched
 speedup = PyTorch_time / MLIR_time
 ```
 
-with a target of ≥ 2× (i.e. at least twice as fast as PyTorch). Claude interacts with the pipeline through an MCP server (`llm_transform/mcp_server.py`) that exposes two tools, `run_schedule` (compile + execute + log) and `lower_schedule` (compile only, dump IR for inspection). See [CLAUDE.md](CLAUDE.md) for the full technical overview.
+with a target of ≥ 2× (i.e. at least twice as fast as PyTorch). Claude interacts with the pipeline through an MCP server (`llm_transform/mcp_server.py`) that exposes two tools, `run_schedule` (compile + execute + log) and `lower_schedule` (compile only, dump IR for inspection). See [resources/context.md](resources/context.md) for the full technical overview.
 
 ---
 
@@ -35,17 +35,17 @@ pip install -e .
 
 You will also need [Claude Code](https://docs.claude.com/en/docs/claude-code) installed and authenticated (`claude login`).
 
-## 2. Building the legality check pass
+## 2. Building the equivalence verifier
 
-The polyhedral legality check is a custom MLIR pass built as a shared library plugin. Build it once after installing the conda environment:
+The **array-dataflow equivalence verifier** is a set of custom MLIR passes, built as shared library plugins, that prove a transform schedule preserves a kernel's semantics. Build them once after installing the conda environment:
 
 ```bash
 conda activate main
-cd llm_transform/tools/c/dependence
+cd llm_transform/tools/c/equivalence
 make
 ```
 
-This produces `llm_transform/tools/c/dependence/build/lib/libPolyhedralLegalityCheck.so`, which is loaded by the validation harness and the MCP server. To rebuild from scratch use `make clean && make`.
+This produces the plugins under `llm_transform/tools/c/equivalence/build/lib/` (`libEquivalenceVerifier.so`, `libTagLinalgOps.so`, `libRaiseSCFToAffine.so`), which are loaded by the validation harness. To rebuild from scratch use `make clean && make`. See the verifier's [README](llm_transform/tools/c/equivalence/README.md) for installation details and the different ways to run it.
 
 ## 3. Inputs
 
@@ -53,7 +53,7 @@ The system optimizes the MLIR files placed under [data/](data/). Each subdirecto
 
 To optimize a new kernel:
 
-1. Add `data/<name>/<instance>.mlir` with the target ops tagged `{tag = "<tag>"}` (see [CLAUDE.md](CLAUDE.md)) and an entry in `data/<name>/sizes.json`.
+1. Add `data/<name>/<instance>.mlir` with the target ops tagged `{tag = "<tag>"}` (see [resources/context.md](resources/context.md)) and an entry in `data/<name>/sizes.json`.
 2. If `<name>` isn't an already existing benchmark, add a matching PyTorch reference in [llm_transform/torch_exec.py](llm_transform/torch_exec.py) (an `<name>_op` / `<name>_inputs` pair plus a `case` in `main`) and an expected-output `case` in `transform_and_run` in [llm_transform/utils/execution.py](llm_transform/utils/execution.py).
 
 To create a new instance of an existing benchmark, use [llm_transform/tools/create_instance.py](llm_transform/tools/create_instance.py). It generates the `.mlir` file and updates `sizes.json` automatically:
@@ -142,7 +142,7 @@ Both scripts read from `logs/stats/` by default and save PNGs into the correspon
 
 ## 7. Running the validation tests
 
-The validation harness checks that the polyhedral legality pass correctly flags illegal transform schedules. Test cases live in [tests/validation/](tests/validation/) — each file contains a kernel paired with a transform schedule that is either dependence-preserving or dependence-violating.
+The validation harness checks that the equivalence verifier correctly flags illegal transform schedules. Test cases live in [tests/validation/](tests/validation/) — each file contains a kernel paired with a transform schedule that is either dependence-preserving or dependence-violating.
 
 Run the full suite from the project root:
 
@@ -156,7 +156,7 @@ Useful flags:
 - `-v` / `--verbose` — print captured stderr for each test.
 - `--filter <substr>` — run only tests whose filename matches the substring (e.g. `--filter tiling`).
 
-The harness requires the legality pass shared library from [step 2](#2-building-the-legality-check-pass).
+The harness requires the equivalence verifier shared libraries from [step 2](#2-building-the-equivalence-verifier).
 
 ## 8. Manual single-run execution
 
@@ -172,7 +172,7 @@ Pass `--id <name>_<instance>` (or `-i`) plus any flags accepted by `llm_transfor
 
 ## 9. Project layout
 
-A condensed view (full layout in [CLAUDE.md](CLAUDE.md)):
+A condensed view (full layout in [resources/context.md](resources/context.md)):
 
 ```txt
 data/                     # Benchmarks: <name>/<instance>.mlir + sizes.json
@@ -186,11 +186,11 @@ llm_transform/            # Python package (installed via `pip install -e .`)
   utils/                  # Compilation + execution pipeline
   tools/
     plot_performance*.py  # Plotting scripts
-    c/dependence/         # Polyhedral legality check pass (C++/MLIR)
+    c/equivalence/        # Array-dataflow equivalence verifier (C++/MLIR)
 pyproject.toml            # Package metadata
 scripts/
   claude.sh               # Slurm: launch a Claude optimization session
   execute.sh              # Slurm: evaluate one configuration
-tests/validation/         # MLIR test cases for the legality check
+tests/validation/         # MLIR test cases for the equivalence check
 logs/                     # Experiment outputs (see section 5)
 ```

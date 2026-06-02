@@ -73,7 +73,7 @@ log_tokens() {
 
 # Render the prompt; scope is derived from $INSTANCE_FILTER.
 CLAUDE_PROMPT=$(python -m llm_transform.tools.build_prompt)
-CONTINUE_PROMPT=$(cat resources/prompt/continue.txt)
+CONTINUE_PROMPT=$(cat resources/prompt/continue.md)
 CLAUDE_SETTINGS="resources/claude_settings.json"
 CLAUDE_MCP=".mcp.json"
 

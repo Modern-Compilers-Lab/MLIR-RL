@@ -8,10 +8,8 @@ For each MLIR file in `tests/validation/`:
   3. Bufferize and lower both to a shared library.
   4. Generate random inputs, run both with matching copies, and compare
      the (in-place mutated) outputs.
-  5. Run up to three independent detectors and watch their stderr:
+  5. Run up to two independent detectors and watch their stderr:
        - mlir         : stderr emitted while applying the schedule and lowering.
-       - legality     : the PolyhedralLegalityCheck plugin on the transformed
-                        module.
        - equivalence  : the array-dataflow EquivalenceVerifier comparing the
                         original and transformed kernels (requires the
                         TagLinalgOps pass to run on both first).
@@ -49,12 +47,6 @@ FAINT = "2"
 PARENT_DIR = Path(__file__).parent
 TESTS_DIR = PARENT_DIR / "tests" / "validation"
 PASSES_FILE = TESTS_DIR / "lowering_passes.txt"
-LEGALITY_PLUGIN = (
-    PARENT_DIR /
-    "llm_transform" / "tools" / "c" / "dependence" /
-    "build" / "lib" / "libPolyhedralLegalityCheck.so"
-)
-LEGALITY_PASS_PIPELINE = "builtin.module(convert-linalg-to-affine-loops,func.func(fold-memref-alias-ops,affine-raise-from-memref,check-polyhedral-legality))"
 
 EQUIVALENCE_DIR = (
     PARENT_DIR / "llm_transform" / "tools" / "c" / "equivalence" / "build" / "lib"
@@ -71,37 +63,18 @@ TAG_LINALG_PIPELINE = "builtin.module(func.func(tag-linalg-ops-for-equivalence))
 # normalize those to `affine.for` (scf-forall-to-for + raise-scf-to-affine)
 # *before* lowering the linalg body, otherwise convert-linalg-to-affine-loops
 # would build inner affine loops bounded by SCF induction variables — not a
-# legal affine quantity. The tail mirrors the legality plugin's preprocessing.
+# legal affine quantity. The tail folds memref aliases and raises the loads and
+# stores back to affine form so the verifier can analyze them.
 EQUIVALENCE_LOWER_PIPELINE = "builtin.module(func.func(scf-forall-to-for,raise-scf-to-affine),convert-linalg-to-affine-loops,func.func(fold-memref-alias-ops,affine-raise-from-memref))"
 # Compare the `original` and `transformed` functions placed in a single module.
 EQUIVALENCE_CHECK_PIPELINE = "builtin.module(check-array-dataflow-equivalence{original-func=original transformed-func=transformed})"
 
-ALL_TOOLS = ("mlir", "legality", "equivalence")
-TOOL_LABELS = {"mlir": "MLIR", "legality": "Legality", "equivalence": "Equivalence"}
+ALL_TOOLS = ("mlir", "equivalence")
+TOOL_LABELS = {"mlir": "MLIR", "equivalence": "Equivalence"}
 
 def _prefix_tool_name(message: str, tool: str) -> str:
     prefix = f"[{TOOL_LABELS[tool]}] "
     return "\n".join(prefix + line for line in message.splitlines())
-
-
-def load_legality_plugin() -> bool:
-    """Dlopen the PolyhedralLegalityCheck plugin so its pass self-registers.
-
-    Returns True on success. If the .so is missing, prints a hint and returns
-    False so the plugin-detection column is reported as n/a.
-    """
-    path = Path(os.environ.get("LEGALITY_PLUGIN", LEGALITY_PLUGIN))
-    if not path.exists():
-        print(
-            f"[warn] legality plugin not found at {path}; "
-            f"build it with `make -C llm_transform/tools/c/dependence "
-            f"PREFIX=$(python -c 'import sys;print(sys.prefix)')` "
-            f"or set LEGALITY_PLUGIN=/path/to/libPolyhedralLegalityCheck.so",
-            file=sys.stderr,
-        )
-        return False
-    ctypes.CDLL(str(path), mode=ctypes.RTLD_GLOBAL)
-    return True
 
 
 def load_equivalence_plugins() -> bool:
@@ -134,7 +107,6 @@ def load_equivalence_plugins() -> bool:
     return ok
 
 
-LEGALITY_LOADED = load_legality_plugin()
 EQUIVALENCE_LOADED = load_equivalence_plugins()
 
 
@@ -277,22 +249,6 @@ def build_execution_engine(module: Module) -> ExecutionEngine:
     )
 
 
-def run_legality_plugin(module: Module) -> str:
-    """Apply the PolyhedralLegalityCheck pass to `code`.
-
-    Returns the captured stderr output from the plugin
-    """
-    if not LEGALITY_LOADED:
-        return ''
-    module_clone: Module = module.operation.clone()
-    with capture_stderr_fd() as cap:
-        try:
-            apply_pipeline_to_module(module_clone, LEGALITY_PASS_PIPELINE)
-        except Exception as exc:
-            cap.append(f"[legality exception] {exc}")
-    return "\n".join(cap).strip()
-
-
 def _append_func_as(dest: Module, src: Module, new_name: str):
     """Clone the first func.func from `src` into `dest`, renamed to `new_name`.
 
@@ -410,14 +366,6 @@ def run_test(path: Path, active_tools: set[str]) -> tuple[bool | None, dict[str,
         detections["mlir"] = bool(mlir_stderr)
         if mlir_stderr:
             messages.append(mlir_stderr)
-
-    # Independent detector: the PolyhedralLegalityCheck pass on the transformed
-    # module, orthogonal to MLIR's own stderr-based detection during lowering.
-    if "legality" in active_tools:
-        legality_stderr = run_legality_plugin(trans_module)
-        detections["legality"] = bool(legality_stderr)
-        if legality_stderr:
-            messages.append(legality_stderr)
 
     # Independent detector: the array-dataflow EquivalenceVerifier comparing the
     # original kernel against the transformed one (rebuilt from source so it can
