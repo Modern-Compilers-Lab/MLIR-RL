@@ -112,7 +112,11 @@ python -m llm_action.src.rl.train_ppo "$@"
 # ReLu Dataset
 ## sbatch llm_action/scripts/train.sh --action-version v37 --benchmarks-name dataset_relu --exp-name v37_dataset_relu --ent-coef 0.01 --ent-coef-final 0.0001
 ## sbatch llm_action/scripts/train.sh --action-version v52 --benchmarks-name dataset_relu --exp-name v52_dataset_relu_free --masking-mode none --max-steps 4
+## sbatch llm_action/scripts/train.sh --action-version v52 --benchmarks-name dataset_relu --exp-name v52_dataset_relu_free_ent01 --masking-mode none --max-steps 4 --ent-coef 0.01 --ent-coef-final 0.0001
+## sbatch llm_action/scripts/train.sh --action-version v52 --benchmarks-name dataset_relu --exp-name v52_dataset_relu_free_ent0025 --masking-mode none --max-steps 4 --ent-coef 0.0025 --ent-coef-final 0.000025
 ## sbatch llm_action/scripts/train.sh --action-version v52 --benchmarks-name dataset_relu --exp-name v52_dataset_relu_graph --masking-mode schedule_graph --max-steps 4
+## sbatch llm_action/scripts/train.sh --action-version v52 --benchmarks-name dataset_relu --exp-name v52_dataset_relu_graph_ent01 --masking-mode schedule_graph --max-steps 4 --ent-coef 0.01 --ent-coef-final 0.0001
+## sbatch llm_action/scripts/train.sh --action-version v52 --benchmarks-name dataset_relu --exp-name v52_dataset_relu_graph_ent0025 --masking-mode schedule_graph --max-steps 4 --ent-coef 0.0025 --ent-coef-final 0.000025
 
 # ML Dataset
 ## sbatch llm_action/scripts/train.sh --action-version v45 --benchmarks-name dataset_ml --exp-name v45_dataset_ml_free --max-steps 5 --masking-mode none
