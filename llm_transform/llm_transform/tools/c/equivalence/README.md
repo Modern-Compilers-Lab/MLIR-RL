@@ -22,100 +22,85 @@ The build produces three self-registering pass plugins (`.so`):
 
 ## Installation
 
-The plugins link against the MLIR/LLVM shipped in the project conda env, so
-activate it (or pass `PREFIX`) first, then run `make`:
+Activate the conda env and run `make`:
 
 ```bash
-# from this directory, with the conda env active
-make                       # uses $CONDA_PREFIX
-
-# or point PREFIX at any MLIR install prefix explicitly
-make PREFIX=/path/to/env
-
-# or derive the prefix from the active Python
-make PREFIX=$(python -c 'import sys; print(sys.prefix)')
-
-make clean                 # remove build artifacts
+conda activate main
+make
 ```
 
-Outputs land in `build/lib/`. `make` runs `mlir-tblgen` to emit
-`build/include/Passes.h.inc` (pass declarations from `Passes.td`), then builds
-each `.so`. Each plugin carries its own `mlirGetPassPluginInfo` entry point and
-self-registers its pass on `dlopen`, so its pass name resolves in both
-`mlir-opt` and the Python `PassManager`.
+This produces three plugins in `build/lib/`:
+
+- `build/lib/libEquivalenceVerifier.so`
+- `build/lib/libTagLinalgOps.so`
+- `build/lib/libRaiseSCFToAffine.so`
 
 ## Usage
 
-The verifier expects a single module containing two functions named `original`
-and `transformed`, both lowered to the **affine + memref** form. The pass
-options are:
+Use `verify_equivalence.py`. It takes one MLIR file containing a kernel plus its
+transform schedule — exactly the shape of the files in
+[`tests/validation/`](../../../../tests/validation): one `func.func` followed by a
+`module attributes {transform.with_named_sequence}`:
 
-- `original-func=<name>` — name of the original function (default `original`)
-- `transformed-func=<name>` — name of the transformed function (default `transformed`)
-- `verbose` — emit a step-by-step trace of the check to stdout
+```mlir
+// The kernel (taken as the "original").
+func.func @kernel(%arg0: memref<...>, ...) {
+  // ... linalg ops, tagged with {tag = "..."} so the schedule can match them ...
+  return
+}
 
-A non-empty stderr / non-zero exit means a dependence was **not** preserved.
+// The transform schedule, applied to a copy to produce the "transformed".
+module attributes {transform.with_named_sequence} {
+  transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {
+    // ... transform.structured.* ops matching the tagged kernel ops ...
+    transform.yield
+  }
+}
+```
 
-### 1. From the command line (`mlir-opt`)
-
-Load the plugins and run the pass on an already-lowered module:
+The script applies the schedule, prepares the IR, runs the verifier, and prints
+the verdict:
 
 ```bash
-mlir-opt prepared.mlir \
-  --load-pass-plugin=build/lib/libEquivalenceVerifier.so \
-  --pass-pipeline='builtin.module(check-array-dataflow-equivalence{original-func=original transformed-func=transformed verbose})'
+conda activate main
+python verify_equivalence.py path/to/kernel_and_schedule.mlir
 ```
 
-To go from a `linalg` kernel to the form the verifier consumes, tag and lower
-first (load all three plugins). The canonical lowering pipeline is:
+It prints one of:
 
-```text
-builtin.module(
-  func.func(scf-forall-to-for, raise-scf-to-affine),
-  convert-linalg-to-affine-loops,
-  func.func(fold-memref-alias-ops, affine-raise-from-memref))
+- `valid` — the transform preserves the original array dataflow (exit 0)
+- `invalid` — a dependence is not preserved; the transform is illegal (exit 1)
+- `error` — the transform schedule itself failed to apply or lower (exit 2)
+
+Add `-v` / `--verbose` to also print the verifier's trace and diagnostics:
+
+```bash
+python verify_equivalence.py path/to/kernel_and_schedule.mlir --verbose
 ```
 
-Tag both functions with `builtin.module(func.func(tag-linalg-ops-for-equivalence))`
-on the still-`linalg` form *before* applying this lowering.
+## Running the pass without the script
 
-### 2. From Python (ctypes + MLIR bindings)
+If you want to drive the passes yourself, the script does the following in a
+single Python process:
 
-`dlopen` each plugin with `RTLD_GLOBAL` so its pass self-registers, then drive
-the pipelines through the Python bindings:
+1. **Load the plugins.** `dlopen` each `.so` with `RTLD_GLOBAL` so its pass
+   self-registers and resolves by name in `apply_pipeline_to_module`.
+2. **Tag, before transforming.** Run `tag-linalg-ops-for-equivalence` on the
+   kernel that has linalg operations, then clone it to create the transform
+   module (don't use textual cloning since name loc information will be lost).
+3. **Transform.** Apply the schedule to the cloned copy.
+4. **Lower both** to affine + memref: bufferize, then
+   `builtin.module(func.func(scf-forall-to-for,raise-scf-to-affine),convert-linalg-to-affine-loops,func.func(fold-memref-alias-ops,affine-raise-from-memref))`.
+5. **Combine** the two functions into one module, renamed `original` and
+   `transformed`.
+6. **Check.** Run `check-array-dataflow-equivalence{original-func=original
+   transformed-func=transformed}` (add `verbose` for a trace). A non-empty
+   stderr / pass failure means a dependence was not preserved.
 
-```python
-import ctypes
-from pathlib import Path
-
-LIB = Path("build/lib")
-for so in ("libTagLinalgOps.so", "libRaiseSCFToAffine.so", "libEquivalenceVerifier.so"):
-    ctypes.CDLL(str(LIB / so), mode=ctypes.RTLD_GLOBAL)
-
-# Now `tag-linalg-ops-for-equivalence`, `raise-scf-to-affine`, and
-# `check-array-dataflow-equivalence` resolve in PassManager.parse / the
-# apply_pipeline_to_module helpers in llm_transform.utils.transformation.
-```
-
-Sketch of the full flow (see `run_equivalence_verifier` in
-`test_mlir_validation.py` for a complete, working example):
-
-1. Parse the kernel and tag its linalg ops (`tag-linalg-ops-for-equivalence`).
-2. Clone it: keep one copy as `original`, apply the transform schedule to the other to get `transformed`.
-3. Bufferize and lower both with the affine + memref pipeline above.
-4. Place both functions in one module, renamed `original` and `transformed`.
-5. Run `check-array-dataflow-equivalence`; non-empty stderr means a violation.
-
-### 3. Via the validation harness
-
-`test_mlir_validation.py` (repo root) wires all of this up as one of two
-detectors (`mlir`, `equivalence`). It loads the plugins, splits
-each `tests/validation/*.mlir` into kernel + schedule, runs both variants, and
-compares the equivalence verdict against the ground-truth executed outputs.
-Restrict to this detector with `--tool equivalence`.
+See [`verify_equivalence.py`](verify_equivalence.py) for the exact pipeline
+strings and helper calls.
 
 ## Notes
 
-- The two functions must have matching signatures; the verifier walks linalg ops in pre-order, so both must be tagged in the same order for `eq_id_<n>` tags to line up.
-- Only function-argument memrefs are checked. A transform that is correct purely through scratch buffers it allocates and frees is treated as a no-op on the stable boundary.
-- If a plugin `.so` is missing, rebuild with `make` (see Installation); the harness prints a build hint and reports the column as `n/a`.
+- The two functions must have matching signatures.
+- Only function-argument memrefs, their aliases, and any buffers copied to/from them are checked.

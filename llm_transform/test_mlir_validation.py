@@ -11,8 +11,9 @@ For each MLIR file in `tests/validation/`:
   5. Run up to two independent detectors and watch their stderr:
        - mlir         : stderr emitted while applying the schedule and lowering.
        - equivalence  : the array-dataflow EquivalenceVerifier comparing the
-                        original and transformed kernels (requires the
-                        TagLinalgOps pass to run on both first).
+                        original and transformed kernels, run via the standalone
+                        `llm_transform/tools/c/equivalence/verify_equivalence.py`
+                        script on the test file.
      The (in-place mutated) outputs are the ground truth: if they differ the
      transform is illegal and at least one active detector must flag it; if
      they match no active detector may flag it. `--tool` restricts evaluation
@@ -23,6 +24,7 @@ import argparse
 import contextlib
 import ctypes
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -48,26 +50,9 @@ PARENT_DIR = Path(__file__).parent
 TESTS_DIR = PARENT_DIR / "tests" / "validation"
 PASSES_FILE = TESTS_DIR / "lowering_passes.txt"
 
-EQUIVALENCE_DIR = (
-    PARENT_DIR / "llm_transform" / "tools" / "c" / "equivalence" / "build" / "lib"
+EQUIVALENCE_SCRIPT = (
+    PARENT_DIR / "llm_transform" / "tools" / "c" / "equivalence" / "verify_equivalence.py"
 )
-TAG_LINALG_PLUGIN = EQUIVALENCE_DIR / "libTagLinalgOps.so"
-EQUIVALENCE_PLUGIN = EQUIVALENCE_DIR / "libEquivalenceVerifier.so"
-RAISE_SCF_PLUGIN = EQUIVALENCE_DIR / "libRaiseSCFToAffine.so"
-
-# Tag every linalg op (on the still-linalg form) with a stable `eq_id_<n>` so
-# the verifier can line up an original access with its transformed counterpart.
-TAG_LINALG_PIPELINE = "builtin.module(func.func(tag-linalg-ops-for-equivalence))"
-# Lower a tagged kernel to the affine + memref form the verifier consumes.
-# Tiling via the transform dialect emits `scf.forall`/`scf.for` tile loops; we
-# normalize those to `affine.for` (scf-forall-to-for + raise-scf-to-affine)
-# *before* lowering the linalg body, otherwise convert-linalg-to-affine-loops
-# would build inner affine loops bounded by SCF induction variables — not a
-# legal affine quantity. The tail folds memref aliases and raises the loads and
-# stores back to affine form so the verifier can analyze them.
-EQUIVALENCE_LOWER_PIPELINE = "builtin.module(func.func(scf-forall-to-for,raise-scf-to-affine),convert-linalg-to-affine-loops,func.func(fold-memref-alias-ops,affine-raise-from-memref))"
-# Compare the `original` and `transformed` functions placed in a single module.
-EQUIVALENCE_CHECK_PIPELINE = "builtin.module(check-array-dataflow-equivalence{original-func=original transformed-func=transformed})"
 
 ALL_TOOLS = ("mlir", "equivalence")
 TOOL_LABELS = {"mlir": "MLIR", "equivalence": "Equivalence"}
@@ -77,39 +62,6 @@ def _prefix_tool_name(message: str, tool: str) -> str:
     return "\n".join(prefix + line for line in message.splitlines())
 
 
-def load_equivalence_plugins() -> bool:
-    """Dlopen the TagLinalgOps, RaiseSCFToAffine and EquivalenceVerifier plugins
-    so their passes self-register.
-
-    All of `tag-linalg-ops-for-equivalence`, `raise-scf-to-affine` and
-    `check-array-dataflow-equivalence` are needed; returns True only if every .so
-    loads. If any is missing, prints a build hint and returns False so the
-    equivalence column is n/a.
-    """
-    ok = True
-    for env, default, pass_name in (
-        ("TAG_LINALG_PLUGIN", TAG_LINALG_PLUGIN, "tag-linalg-ops-for-equivalence"),
-        ("RAISE_SCF_PLUGIN", RAISE_SCF_PLUGIN, "raise-scf-to-affine"),
-        ("EQUIVALENCE_PLUGIN", EQUIVALENCE_PLUGIN, "check-array-dataflow-equivalence"),
-    ):
-        path = Path(os.environ.get(env, default))
-        if not path.exists():
-            print(
-                f"[warn] {pass_name} plugin not found at {path}; "
-                f"build it with `make -C llm_transform/tools/c/equivalence "
-                f"PREFIX=$(python -c 'import sys;print(sys.prefix)')` "
-                f"or set {env}=/path/to/plugin.so",
-                file=sys.stderr,
-            )
-            ok = False
-            continue
-        ctypes.CDLL(str(path), mode=ctypes.RTLD_GLOBAL)
-    return ok
-
-
-EQUIVALENCE_LOADED = load_equivalence_plugins()
-
-
 from mlir.ir import (
     Context,
     F32Type,
@@ -117,17 +69,14 @@ from mlir.ir import (
     IntegerType,
     MemRefType,
     Module,
-    StringAttr,
     UnitAttr,
 )
 from mlir.dialects.func import FuncOp
 from mlir.execution_engine import ExecutionEngine
 from mlir.runtime import get_ranked_memref_descriptor
 from llm_transform.utils.transformation import (
-    apply_pipeline_to_module,
     apply_pipeline_to_module_with_opt,
     bufferize_module,
-    transform_module,
     transform_module_with_opt,
 )
 
@@ -249,63 +198,29 @@ def build_execution_engine(module: Module) -> ExecutionEngine:
     )
 
 
-def _append_func_as(dest: Module, src: Module, new_name: str):
-    """Clone the first func.func from `src` into `dest`, renamed to `new_name`.
+def run_equivalence_verifier(test_path: Path, verbose: bool) -> tuple[bool, str]:
+    """Run the standalone `verify_equivalence.py` script on a kernel+schedule file.
 
-    `src` and `dest` must share a context. The verifier expects both functions in
-    a single module under the names `original` and `transformed`; renaming also
-    avoids the symbol collision that would otherwise occur (both kernels carry the
-    same original name).
+    The script prints its verdict — `valid` or `invalid` — on stdout and exits 0;
+    a non-zero exit means the script itself malfunctioned (plugins not built,
+    malformed input, lowering failure). `check=True` turns that into a
+    CalledProcessError that surfaces as a harness error rather than a verdict.
+
+    Returns (detected, diagnostics): `detected` is True when the verdict is
+    `invalid`; `diagnostics` is the verifier's verbose stderr (empty unless
+    `verbose`).
     """
-    for op in src.body.operations:
-        if isinstance(op, FuncOp):
-            clone = op.operation.clone()
-            clone.attributes["sym_name"] = StringAttr.get(new_name, dest.context)
-            dest.body.append(clone)
-            return
-    raise ValueError("no func.func found to combine for equivalence check")
-
-
-def run_equivalence_verifier(kernel_code: str, transform_sched: str) -> str:
-    """Prove array-dataflow equivalence of the original and transformed kernels.
-
-    Builds two affine functions from `kernel_code` — one untouched (`original`),
-    one with `transform_sched` applied (`transformed`) — tagging the linalg ops of
-    each with stable `eq_id_<n>` ids before lowering so the verifier can match an
-    original access against its transformed counterpart. Returns the captured
-    stderr from `check-array-dataflow-equivalence` (non-empty means a violation or
-    a failed match was reported).
-    """
-    if not EQUIVALENCE_LOADED:
-        return ''
-
-    with Context() as ctx:
-        ctx.load_all_available_dialects()
-        # Build both functions to the tagged affine form. Any diagnostics from
-        # the transform/bufferize/lowering belong to MLIR's column, not the
-        # verifier, so swallow them here.
-        with capture_stderr_fd():
-            original = Module.parse(kernel_code)
-            apply_pipeline_to_module(original, TAG_LINALG_PIPELINE)
-            transformed = original.operation.clone()
-
-            bufferize_module(original)
-            apply_pipeline_to_module(original, EQUIVALENCE_LOWER_PIPELINE)
-
-            transform_module(transformed, transform_sched)
-            bufferize_module(transformed)
-            apply_pipeline_to_module(transformed, EQUIVALENCE_LOWER_PIPELINE)
-
-            combined = Module.parse("module {}")
-            _append_func_as(combined, original, "original")
-            _append_func_as(combined, transformed, "transformed")
-
-    with capture_stderr_fd() as cap:
-        try:
-            apply_pipeline_to_module(combined, EQUIVALENCE_CHECK_PIPELINE)
-        except Exception as exc:
-            cap.append(f"[equivalence exception] {exc}")
-    return "\n".join(cap).strip()
+    cmd = [sys.executable, str(EQUIVALENCE_SCRIPT), str(test_path)]
+    if verbose:
+        cmd.append("--verbose")
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    except subprocess.CalledProcessError as exc:
+        message = "equivalence verifier failed"
+        if verbose:
+            message += f": {exc.stderr.strip()}"
+        raise RuntimeError(message) from exc
+    return result.stdout.strip() == "invalid", result.stderr.strip()
 
 
 def run_kernel(engine: ExecutionEngine, func_name: str, arrs):
@@ -317,13 +232,13 @@ def run_kernel(engine: ExecutionEngine, func_name: str, arrs):
     engine.invoke(func_name, *args)
 
 
-def run_test(path: Path, active_tools: set[str]) -> tuple[bool | None, dict[str, bool], str]:
+def run_test(path: Path, active_tools: set[str], verbose: bool = False) -> tuple[bool | None, dict[str, bool], str]:
     """Run the test and the requested detectors.
 
     Returns (outputs_equal, detections, message) where `detections` maps each
     active tool name to whether it flagged the transform, and `outputs_equal` is
     the ground-truth comparison of the executed kernels (None if the transform
-    itself failed to apply).
+    itself failed to apply). `verbose` forwards detector diagnostics into `message`.
     """
 
     # Read the code and split the kernel from the transform schedule
@@ -368,11 +283,11 @@ def run_test(path: Path, active_tools: set[str]) -> tuple[bool | None, dict[str,
             messages.append(mlir_stderr)
 
     # Independent detector: the array-dataflow EquivalenceVerifier comparing the
-    # original kernel against the transformed one (rebuilt from source so it can
-    # be tagged on the still-linalg form before lowering to affine).
+    # original kernel against the transformed one, run via the standalone
+    # `verify_equivalence.py` script on the test file itself.
     if "equivalence" in active_tools:
-        equivalence_stderr = run_equivalence_verifier(kernel_code, transform_sched)
-        detections["equivalence"] = bool(equivalence_stderr)
+        detected, equivalence_stderr = run_equivalence_verifier(path, verbose)
+        detections["equivalence"] = detected
         if equivalence_stderr:
             messages.append(equivalence_stderr)
 
@@ -425,11 +340,12 @@ def main():
 
     passed = failed = 0
     for path in tests:
-        print(f"{_c(CYAN, '[RUN ]')} {path.name}", flush=True)
+        print(f"\n{_c(CYAN, '[RUN ]')} {path.name}", flush=True)
         try:
-            ok, detections, message = run_test(path, active_tools)
+            ok, detections, message = run_test(path, active_tools, args.verbose)
         except Exception as exc:
-            print(f"{_c(RED + ';' + BOLD, '[FAIL]')} {path.name}: harness error: {exc}")
+            print(f"{_c(RED + ';' + BOLD, '[FAIL]')} {path.name}")
+            print(f"    - Error during test execution: {exc}")
             failed += 1
             continue
 
