@@ -314,6 +314,23 @@ def run_test(path: Path, active_tools: set[str], verbose: bool = False) -> tuple
     return equal, detections, "\n\n".join(messages)
 
 
+def is_expected_failure(path: Path) -> bool:
+    """Whether the test declares itself an expected failure via an `// XFAIL`
+    comment.
+
+    A level-3 demonstrator is illegal *and* undetectable: the transform applies
+    and miscompiles, but neither detector flags it (or the verifier cannot even
+    run on the resulting IR). The harness's normal pass condition is therefore
+    intentionally not met, so the file marks itself `// XFAIL` and that failure
+    is reported as expected rather than counted against the suite.
+    """
+    for line in path.read_text().splitlines():
+        stripped = line.strip()
+        if stripped.startswith("//") and "XFAIL" in stripped:
+            return True
+    return False
+
+
 def main():
     ap = argparse.ArgumentParser(description="Run MLIR dependence-violation validation tests.")
     ap.add_argument("-v", "--verbose", action="store_true", help="Print captured detector stderr for each test.")
@@ -338,28 +355,42 @@ def main():
         print(f"No .mlir tests found in {TESTS_DIR}", file=sys.stderr)
         sys.exit(2)
 
-    passed = failed = 0
+    passed = failed = xfailed = xpassed = 0
     for path in tests:
         print(f"\n{_c(CYAN, '[RUN ]')} {path.name}", flush=True)
+        xfail = is_expected_failure(path)
         try:
             ok, detections, message = run_test(path, active_tools, args.verbose)
         except Exception as exc:
-            print(f"{_c(RED + ';' + BOLD, '[FAIL]')} {path.name}")
+            # A crash / refusal during execution is a non-pass; honor XFAIL.
+            if xfail:
+                print(f"{_c(YELLOW + ';' + BOLD, '[XFAIL]')} {path.name} (expected failure)")
+                xfailed += 1
+            else:
+                print(f"{_c(RED + ';' + BOLD, '[FAIL]')} {path.name}")
+                failed += 1
             print(f"    - Error during test execution: {exc}")
-            failed += 1
             continue
 
         any_detected = any(detections.values())
         test_passed = (ok and not any_detected) or (not ok and any_detected)
-        if test_passed:
+        if test_passed and not xfail:
             tag = _c(GREEN + ';' + BOLD, "[PASS]")
             passed += 1
+        elif test_passed and xfail:
+            # Marked XFAIL but it passed: the demonstrator no longer demonstrates
+            # (e.g. a detector improved). Flag it so the marker gets revisited.
+            tag = _c(RED + ';' + BOLD, "[XPASS]")
+            xpassed += 1
+        elif not test_passed and xfail:
+            tag = _c(YELLOW + ';' + BOLD, "[XFAIL]")
+            xfailed += 1
         else:
             tag = _c(RED + ';' + BOLD, "[FAIL]")
             failed += 1
         print(tag, path.name)
 
-        outputs_str = _c(GREEN, "match") if ok else _c(RED, "differ")
+        outputs_str = _c(GREEN, "match") if ok else _c(RED, "differ") if ok is not None else _c(FAINT, "none")
         print("    - Outputs:", outputs_str)
         for tool in ALL_TOOLS:
             if tool not in detections:
@@ -371,12 +402,16 @@ def main():
             prefix = "      | "
             print(_c(YELLOW, prefix + message.replace("\n", "\n" + prefix)))
 
-    if failed == 0:
-        summary = _c(GREEN + ';' + BOLD, f"{passed}/{passed + failed} passed, {failed} failed")
-    else:
-        summary = _c(RED + ';' + BOLD, f"{passed}/{passed + failed} passed, {failed} failed")
+    total = passed + failed + xfailed + xpassed
+    clean = failed == 0 and xpassed == 0
+    parts = [f"{passed}/{total} passed", f"{failed} failed"]
+    if xfailed:
+        parts.append(f"{xfailed} expectedly failed")
+    if xpassed:
+        parts.append(f"{xpassed} unexpectedly passed")
+    summary = _c((GREEN if clean else RED) + ';' + BOLD, ", ".join(parts))
     print(f"\n{summary}")
-    sys.exit(0 if failed == 0 else 1)
+    sys.exit(0 if clean else 1)
 
 
 if __name__ == "__main__":

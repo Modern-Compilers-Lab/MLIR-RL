@@ -733,7 +733,10 @@ struct ArrayDataflowEquivalencePass
       return;
     }
 
-    raw_ostream *debug = verbose ? &llvm::outs() : nullptr;
+    // Emit the verbose trace on stderr (unbuffered), not stdout: stdout must
+    // carry only the verdict, and llvm::outs() is buffered so its trace can
+    // flush past the wrapper's fd capture and corrupt the verdict line.
+    raw_ostream *debug = verbose ? &llvm::errs() : nullptr;
     if (!EquivalenceVerifier::verify(original, transformed, debug)) {
       module.emitError() << "array dataflow equivalence check failed between @"
                          << original.getSymName() << " and @"

@@ -1,3 +1,4 @@
+// XFAIL: level-3 — illegal but undetectable (outputs differ; both detectors silent).
 // `transform.structured.pad` with a NON-NEUTRAL padding value.
 // Category D1 (wrong values, not wrong order): every detector is SILENT, yet the
 // result is wrong.

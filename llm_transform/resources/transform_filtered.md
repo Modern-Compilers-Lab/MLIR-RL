@@ -1,8 +1,71 @@
 # MLIR Transform Dialect — Selected Operations
 
-Documentation extracted from `Transform.md`.
+Documentation of the whitelisted transform-dialect operations that the LLM is allowed to use.
+
+Each operation is annotated with a **Safety** classification describing how a potential semantic violation would be caught:
+
+- **0** — Fully safe — no semantic violation possible.
+- **1** — Possible violation, but detectable by MLIR.
+- **2** — Possible violation, detectable only by the EquivalenceVerifier.
+
+## Table of Contents
+
+- [`transform.sequence` (transform::SequenceOp)](#transformsequence-transformsequenceop)
+- [`transform.alternatives` (transform::AlternativesOp)](#transformalternatives-transformalternativesop)
+- [`transform.yield` (transform::YieldOp)](#transformyield-transformyieldop)
+- [`transform.structured.match` (transform::MatchOp)](#transformstructuredmatch-transformmatchop)
+- [`transform.get_producer_of_operand` (transform::GetProducerOfOperand)](#transformget_producer_of_operand-transformgetproducerofoperand)
+- [`transform.get_consumers_of_result` (transform::GetConsumersOfResult)](#transformget_consumers_of_result-transformgetconsumersofresult)
+- [`transform.get_parent_op` (transform::GetParentOp)](#transformget_parent_op-transformgetparentop)
+- [`transform.structured.tile_using_for` (transform::TileUsingForOp)](#transformstructuredtile_using_for-transformtileusingforop)
+- [`transform.structured.tile_using_forall` (transform::TileUsingForallOp)](#transformstructuredtile_using_forall-transformtileusingforallop)
+- [`transform.structured.tile_reduction_using_for` (transform::TileReductionUsingForOp)](#transformstructuredtile_reduction_using_for-transformtilereductionusingforop)
+- [`transform.structured.tile_reduction_using_forall` (transform::TileReductionUsingForallOp)](#transformstructuredtile_reduction_using_forall-transformtilereductionusingforallop)
+- [`transform.structured.fuse` (transform::FuseOp)](#transformstructuredfuse-transformfuseop)
+- [`transform.structured.fuse_into_containing_op` (transform::FuseIntoContainingOp)](#transformstructuredfuse_into_containing_op-transformfuseintocontainingop)
+- [`transform.structured.interchange` (transform::InterchangeOp)](#transformstructuredinterchange-transforminterchangeop)
+- [`transform.structured.split` (transform::SplitOp)](#transformstructuredsplit-transformsplitop)
+- [`transform.structured.split_reduction` (transform::SplitReductionOp)](#transformstructuredsplit_reduction-transformsplitreductionop)
+- [`transform.structured.multitile_sizes` (transform::MultiTileSizesOp)](#transformstructuredmultitile_sizes-transformmultitilesizesop)
+- [`transform.structured.pack` (transform::PackOp)](#transformstructuredpack-transformpackop)
+- [`transform.structured.pack_greedily` (transform::PackGreedilyOp)](#transformstructuredpack_greedily-transformpackgreedilyop)
+- [`transform.structured.pack_transpose` (transform::PackTransposeOp)](#transformstructuredpack_transpose-transformpacktransposeop)
+- [`transform.structured.hoist_pad` (transform::HoistPadOp)](#transformstructuredhoist_pad-transformhoistpadop)
+- [`transform.structured.hoist_pad.build_packing_loop_nest` (transform::HoistPadBuildPackingLoopNestOp)](#transformstructuredhoist_padbuild_packing_loop_nest-transformhoistpadbuildpackingloopnestop)
+- [`transform.structured.promote` (transform::PromoteOp)](#transformstructuredpromote-transformpromoteop)
+- [`transform.loop.unroll` (transform::LoopUnrollOp)](#transformloopunroll-transformloopunrollop)
+- [`transform.loop.unroll_and_jam` (transform::LoopUnrollAndJamOp)](#transformloopunroll_and_jam-transformloopunrollandjamop)
+- [`transform.loop.peel` (transform::LoopPeelOp)](#transformlooppeel-transformlooppeelop)
+- [`transform.loop.coalesce` (transform::LoopCoalesceOp)](#transformloopcoalesce-transformloopcoalesceop)
+- [`transform.loop.fuse_sibling` (transform::LoopFuseSiblingOp)](#transformloopfuse_sibling-transformloopfusesiblingop)
+- [`transform.loop.hoist_loop_invariant_subsets` (transform::HoistLoopInvariantSubsetsOp)](#transformloophoist_loop_invariant_subsets-transformhoistloopinvariantsubsetsop)
+- [`transform.structured.vectorize` (transform::VectorizeOp)](#transformstructuredvectorize-transformvectorizeop)
+- [`transform.structured.vectorize_children_and_apply_patterns` (transform::VectorizeChildrenAndApplyPatternsOp)](#transformstructuredvectorize_children_and_apply_patterns-transformvectorizechildrenandapplypatternsop)
+- [`transform.structured.hoist_redundant_vector_transfers` (transform::HoistRedundantVectorTransfersOp)](#transformstructuredhoist_redundant_vector_transfers-transformhoistredundantvectortransfersop)
+- [`transform.structured.hoist_redundant_vector_broadcasts` (transform::HoistRedundantVectorBroadcastsOp)](#transformstructuredhoist_redundant_vector_broadcasts-transformhoistredundantvectorbroadcastsop)
+- [`transform.memref.erase_dead_alloc_and_stores` (transform::MemRefEraseDeadAllocAndStoresOp)](#transformmemreferase_dead_alloc_and_stores-transformmemreferasedeadallocandstoresop)
+- [`transform.memref.make_loop_independent` (transform::MemRefMakeLoopIndependentOp)](#transformmemrefmake_loop_independent-transformmemrefmakeloopindependentop)
+- [`transform.apply_patterns` (transform::ApplyPatternsOp)](#transformapply_patterns-transformapplypatternsop)
+- [`transform.apply_cse` (transform::ApplyCommonSubexpressionEliminationOp)](#transformapply_cse-transformapplycommonsubexpressioneliminationop)
+- [`transform.apply_dce` (transform::ApplyDeadCodeEliminationOp)](#transformapply_dce-transformapplydeadcodeeliminationop)
+- [`transform.apply_licm` (transform::ApplyLoopInvariantCodeMotionOp)](#transformapply_licm-transformapplyloopinvariantcodemotionop)
+- [`transform.affine.simplify_min_max_affine_ops` (transform::SimplifyMinMaxAffineOpsOp)](#transformaffinesimplify_min_max_affine_ops-transformsimplifyminmaxaffineopsop)
+- [`transform.apply_patterns.linalg.tiling_canonicalization` (transform::ApplyTilingCanonicalizationPatternsOp)](#transformapply_patternslinalgtiling_canonicalization-transformapplytilingcanonicalizationpatternsop)
+- [`transform.apply_patterns.linalg.fold_unit_extent_dims_via_slices` (transform::ApplyFoldUnitExtentDimsViaSlicesPatternsOp)](#transformapply_patternslinalgfold_unit_extent_dims_via_slices-transformapplyfoldunitextentdimsviaslicespatternsop)
+- [`transform.apply_patterns.linalg.fold_unit_extent_dims_via_reshapes` (transform::ApplyFoldUnitExtentDimsViaReshapesPatternsOp)](#transformapply_patternslinalgfold_unit_extent_dims_via_reshapes-transformapplyfoldunitextentdimsviareshapespatternsop)
+- [`transform.apply_patterns.scf.for_loop_canonicalization` (transform::ApplyForLoopCanonicalizationPatternsOp)](#transformapply_patternsscffor_loop_canonicalization-transformapplyforloopcanonicalizationpatternsop)
+- [`transform.apply_patterns.vector.reduction_to_contract` (transform::ApplyVectorReductionToContractPatternsOp)](#transformapply_patternsvectorreduction_to_contract-transformapplyvectorreductiontocontractpatternsop)
+- [`transform.apply_patterns.vector.transfer_permutation_patterns` (transform::ApplyTransferPermutationPatternsOp)](#transformapply_patternsvectortransfer_permutation_patterns-transformapplytransferpermutationpatternsop)
+- [`transform.apply_patterns.vector.lower_contraction` (transform::ApplyLowerContractionPatternsOp)](#transformapply_patternsvectorlower_contraction-transformapplylowercontractionpatternsop)
+- [`transform.apply_patterns.vector.lower_outerproduct` (transform::ApplyLowerOuterProductPatternsOp)](#transformapply_patternsvectorlower_outerproduct-transformapplylowerouterproductpatternsop)
+- [`transform.apply_patterns.vector.lower_transfer` (transform::ApplyLowerTransferPatternsOp)](#transformapply_patternsvectorlower_transfer-transformapplylowertransferpatternsop)
+- [`transform.apply_patterns.vector.lower_transpose` (transform::ApplyLowerTransposePatternsOp)](#transformapply_patternsvectorlower_transpose-transformapplylowertransposepatternsop)
+- [`transform.apply_patterns.vector.lower_shape_cast` (transform::ApplyLowerShapeCastPatternsOp)](#transformapply_patternsvectorlower_shape_cast-transformapplylowershapecastpatternsop)
+- [`transform.apply_patterns.vector.sink_ops` (transform::ApplySinkVectorPatternsOp)](#transformapply_patternsvectorsink_ops-transformapplysinkvectorpatternsop)
 
 ## `transform.sequence` (transform::SequenceOp)
+
+> **Safety (0):** Fully safe — no semantic violation possible.
 
 _Contains a sequence of other transform ops to apply_
 
@@ -85,6 +148,8 @@ Interfaces: `MatchOpInterface`, `MemoryEffectOpInterface`, `OpAsmOpInterface`, `
 | `results` | variadic of TransformHandleTypeInterface instance |
 
 ## `transform.alternatives` (transform::AlternativesOp)
+
+> **Safety (0):** Fully safe — no semantic violation possible.
 
 _Attempts sequences of transforms until one succeeds_
 
@@ -170,6 +235,8 @@ Interfaces: `MemoryEffectOpInterface`, `RegionBranchOpInterface`, `TransformOpIn
 
 ## `transform.yield` (transform::YieldOp)
 
+> **Safety (0):** Fully safe — no semantic violation possible.
+
 _Yields operation handles from a transform IR region_
 
 Syntax:
@@ -193,6 +260,8 @@ Interfaces: `MemoryEffectOpInterface`
 | `operands` | variadic of any transform handle or parameter |
 
 ## `transform.structured.match` (transform::MatchOp)
+
+> **Safety (0):** Fully safe — no semantic violation possible.
 
 Syntax:
 
@@ -267,6 +336,8 @@ Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
 
 ## `transform.get_producer_of_operand` (transform::GetProducerOfOperand)
 
+> **Safety (0):** Fully safe — no semantic violation possible.
+
 _Get handle to the producer of this operation's operand number_
 
 Syntax:
@@ -306,6 +377,8 @@ Interfaces: `MatchOpInterface`, `MemoryEffectsOpInterface`, `TransformOpInterfac
 | `producer` | TransformHandleTypeInterface instance |
 
 ## `transform.get_consumers_of_result` (transform::GetConsumersOfResult)
+
+> **Safety (0):** Fully safe — no semantic violation possible.
 
 _Get handle to the consumers of this operation's result number_
 
@@ -347,6 +420,8 @@ Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
 | `consumers` | TransformHandleTypeInterface instance |
 
 ## `transform.get_parent_op` (transform::GetParentOp)
+
+> **Safety (0):** Fully safe — no semantic violation possible.
 
 _Gets handles to the closest parent ops_
 
@@ -408,6 +483,8 @@ Interfaces: `MatchOpInterface`, `MemoryEffectsOpInterface`, `TransformOpInterfac
 | `parent` | TransformHandleTypeInterface instance |
 
 ## `transform.structured.tile_using_for` (transform::TileUsingForOp)
+
+> **Safety (2):** Possible violation, detectable only by the EquivalenceVerifier.
 
 Syntax:
 
@@ -486,6 +563,8 @@ Interfaces: `MemoryEffectOpInterface`, `TransformOpInterface`
 | `loops` | variadic of TransformHandleTypeInterface instance |
 
 ## `transform.structured.tile_using_forall` (transform::TileUsingForallOp)
+
+> **Safety (1):** Possible violation, but detectable by MLIR.
 
 Syntax:
 
@@ -592,6 +671,8 @@ Interfaces: `MemoryEffectOpInterface`, `TransformOpInterface`
 | `forall_op` | TransformHandleTypeInterface instance |
 
 ## `transform.structured.tile_reduction_using_for` (transform::TileReductionUsingForOp)
+
+> **Safety (0):** Fully safe — no semantic violation possible.
 
 Syntax:
 
@@ -703,6 +784,8 @@ Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
 
 ## `transform.structured.tile_reduction_using_forall` (transform::TileReductionUsingForallOp)
 
+> **Safety (0):** Fully safe — no semantic violation possible.
+
 Syntax:
 
 ```
@@ -811,6 +894,8 @@ Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
 
 ## `transform.structured.fuse` (transform::FuseOp)
 
+> **Safety (0):** Fully safe — no semantic violation possible.
+
 Syntax:
 
 ```
@@ -852,6 +937,8 @@ Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
 | `loops` | variadic of TransformHandleTypeInterface instance |
 
 ## `transform.structured.fuse_into_containing_op` (transform::FuseIntoContainingOp)
+
+> **Safety (0):** Fully safe — no semantic violation possible.
 
 _Fuse a producer into a containing operation._
 
@@ -913,6 +1000,8 @@ Interfaces: `MemoryEffectOpInterface`, `TransformOpInterface`
 
 ## `transform.structured.interchange` (transform::InterchangeOp)
 
+> **Safety (2):** Possible violation, detectable only by the EquivalenceVerifier.
+
 Syntax:
 
 ```
@@ -958,6 +1047,8 @@ Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
 | `transformed` | TransformHandleTypeInterface instance |
 
 ## `transform.structured.split` (transform::SplitOp)
+
+> **Safety (2):** Possible violation, detectable only by the EquivalenceVerifier.
 
 Splits the given `target` op into two or more complementary
 parts, which combined cover the entire iteration domain of the original op.
@@ -1020,6 +1111,8 @@ Interfaces: `MemoryEffectOpInterface`, `TransformOpInterface`
 | `split_list` | TransformHandleTypeInterface instance |
 
 ## `transform.structured.split_reduction` (transform::SplitReductionOp)
+
+> **Safety (0):** Fully safe — no semantic violation possible.
 
 Syntax:
 
@@ -1192,6 +1285,8 @@ Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
 
 ## `transform.structured.multitile_sizes` (transform::MultiTileSizesOp)
 
+> **Safety (0):** Fully safe — no semantic violation possible.
+
 Syntax:
 
 ```
@@ -1281,6 +1376,8 @@ Interfaces: `MemoryEffectOpInterface`, `TransformOpInterface`
 | `split_point` | transform any param type or any handle type |
 
 ## `transform.structured.pack` (transform::PackOp)
+
+> **Safety (0):** Fully safe — no semantic violation possible.
 
 Syntax:
 
@@ -1375,6 +1472,8 @@ Interfaces: `MemoryEffectOpInterface`, `TransformOpInterface`
 | `packed_op` | TransformHandleTypeInterface instance |
 
 ## `transform.structured.pack_greedily` (transform::PackGreedilyOp)
+
+> **Safety (0):** Fully safe — no semantic violation possible.
 
 Syntax:
 
@@ -1473,6 +1572,8 @@ Interfaces: `MemoryEffectOpInterface`, `TransformOpInterface`
 
 ## `transform.structured.pack_transpose` (transform::PackTransposeOp)
 
+> **Safety (0):** Fully safe — no semantic violation possible.
+
 Syntax:
 
 ```
@@ -1546,75 +1647,9 @@ Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
 | `pack_op` | TransformHandleTypeInterface instance |
 | `un_pack_op` | TransformHandleTypeInterface instance |
 
-## `transform.structured.pad` (transform::PadOp)
-
-Syntax:
-
-```
-operation ::= `transform.structured.pad` $target
-              (`pad_to_multiple_of` custom<DynamicIndexList>($pad_to_multiple_of, $static_pad_to_multiple_of)^)?
-              (`use_prescribed_tensor_shapes` $use_prescribed_tensor_shapes^)?
-              attr-dict
-              `:` functional-type(operands, results)
-```
-
-Pads the operations pointed to by the target handle using the options
-provides as operation attributes. The operation returns a handle to the
-padded operation and to the padding operation ("tensor.pad").
-
-To preserve tensor SSA use-def chains, the unpadded result is copied back to
-the original destination tensor of the targeted op. The op that copies back
-the result can be customized with `copy_back_op`:
-
-* "bufferization.materialize_in_destination" (default)
-* "linalg.copy"
-* "none" (no copy back)
-
-### Return modes
-
-This operation ignores non-Linalg ops and drops them in the return.
-This operation may produce a definite failure if the padding fails for any
-reason.
-
-If all the operations referred to by the `target` handle pad
-properly, the transform succeeds. Otherwise the transform produces a
-silenceable failure.
-The return handle points to only the subset of successfully produced
-padded operations, which can be empty.
-
-Traits: `FunctionalStyleTransformOpTrait`, `ReportTrackingListenerFailuresOpTrait`
-
-Interfaces: `MemoryEffectOpInterface`, `TransformOpInterface`
-
-### Attributes:
-
-<table>
-<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
-<tr><td><code>padding_values</code></td><td>::mlir::ArrayAttr</td><td>array attribute</td></tr>
-<tr><td><code>padding_dimensions</code></td><td>::mlir::ArrayAttr</td><td>64-bit integer array attribute</td></tr>
-<tr><td><code>static_pad_to_multiple_of</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
-<tr><td><code>nofold_flags</code></td><td>::mlir::ArrayAttr</td><td>64-bit integer array attribute</td></tr>
-<tr><td><code>transpose_paddings</code></td><td>::mlir::ArrayAttr</td><td>array of arrays of i64</td></tr>
-<tr><td><code>copy_back_op</code></td><td>::mlir::StringAttr</td><td>string attribute</td></tr>
-<tr><td><code>use_prescribed_tensor_shapes</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
-</table>
-
-### Operands:
-
-| Operand | Description |
-| :-----: | ----------- |
-| `target` | TransformHandleTypeInterface instance |
-| `pad_to_multiple_of` | variadic of transform any param type or any handle type |
-
-### Results:
-
-| Result | Description |
-| :----: | ----------- |
-| `padded` | TransformHandleTypeInterface instance |
-| `pad` | TransformHandleTypeInterface instance |
-| `copy` | TransformHandleTypeInterface instance |
-
 ## `transform.structured.hoist_pad` (transform::HoistPadOp)
+
+> **Safety (0):** Fully safe — no semantic violation possible.
 
 Syntax:
 
@@ -1670,6 +1705,8 @@ Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
 
 ## `transform.structured.hoist_pad.build_packing_loop_nest` (transform::HoistPadBuildPackingLoopNestOp)
 
+> **Safety (0):** Fully safe — no semantic violation possible.
+
 Syntax:
 
 ```
@@ -1719,7 +1756,66 @@ Interfaces: `MemoryEffectOpInterface`, `TransformOpInterface`
 | :----: | ----------- |
 | `packing_loop` | TransformHandleTypeInterface instance |
 
+## `transform.structured.promote` (transform::PromoteOp)
+
+> **Safety (0):** Fully safe — no semantic violation possible.
+
+Syntax:
+
+```
+operation ::= `transform.structured.promote` $target attr-dict `:`
+              custom<SemiFunctionType>(type($target), type($transformed), "false")
+```
+
+Promotes the specified operands of the target into a separate memory buffer.
+
+At this point, this transform does not allow customizing alloc/dealloc
+functions nor the behavior on copy in/out operations.
+
+### Return modes
+
+This operation applies to a single Linalg op that satisfies the
+`promoteSubviewsPrecondition`, otherwise it fails.
+
+If the operations referred to by the `target` handle promote
+properly, the transform succeeds.
+
+When successful, the return handle points to the $target operation that
+was modified inplace.
+
+Traits: `FunctionalStyleTransformOpTrait`, `ReportTrackingListenerFailuresOpTrait`, `TransformEachOpTrait`
+
+Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
+
+### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>operands_to_promote</code></td><td>::mlir::ArrayAttr</td><td>64-bit integer array attribute</td></tr>
+<tr><td><code>use_full_tile_buffers</code></td><td>::mlir::ArrayAttr</td><td>1-bit boolean array attribute</td></tr>
+<tr><td><code>use_full_tiles_by_default</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
+<tr><td><code>use_original_subview_size</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
+<tr><td><code>use_alloca</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
+<tr><td><code>memory_space</code></td><td>::mlir::Attribute</td><td>any attribute</td></tr>
+<tr><td><code>mapping</code></td><td>::mlir::ArrayAttr</td><td>Device Mapping array attribute</td></tr>
+<tr><td><code>alignment</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
+</table>
+
+### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `target` | TransformHandleTypeInterface instance |
+
+### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `transformed` | TransformHandleTypeInterface instance |
+
 ## `transform.loop.unroll` (transform::LoopUnrollOp)
+
+> **Safety (0):** Fully safe — no semantic violation possible.
 
 _Unrolls the given loop with the given unroll factor_
 
@@ -1762,6 +1858,8 @@ Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
 
 ## `transform.loop.unroll_and_jam` (transform::LoopUnrollAndJamOp)
 
+> **Safety (2):** Possible violation, detectable only by the EquivalenceVerifier.
+
 _Unrolls and jam the given loop with the given unroll factor_
 
 Syntax:
@@ -1801,61 +1899,9 @@ Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
 | :-----: | ----------- |
 | `target` | TransformHandleTypeInterface instance |
 
-## `transform.loop.pipeline` (transform::LoopPipelineOp)
-
-_Applies software pipelining to the loop_
-
-Syntax:
-
-```
-operation ::= `transform.loop.pipeline` $target attr-dict `:` functional-type(operands, results)
-```
-
-Transforms the given loops one by one to achieve software pipelining for
-each of them. That is, performs some amount of reads from memory before the
-loop rather than inside the loop, the same amount of writes into memory
-after the loop, and updates each iteration to read the data for a following
-iteration rather than the current one.
-
-The amount is specified by the attributes.
-
-The values read and about to be stored are transferred as loop iteration
-arguments. Currently supports memref and vector transfer operations as
-memory reads/writes.
-
-### Return modes
-
-This operation ignores non-scf::For ops and drops them in the return.
-If all the operations referred to by the `target` PDLOperation pipeline
-properly, the transform succeeds. Otherwise the transform produces a
-silenceable failure.  The return handle points to only the subset of
-successfully produced pipelined loops, which can be empty.
-
-Traits: `FunctionalStyleTransformOpTrait`, `TransformEachOpTrait`
-
-Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
-
-### Attributes:
-
-<table>
-<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
-<tr><td><code>iteration_interval</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
-<tr><td><code>read_latency</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
-</table>
-
-### Operands:
-
-| Operand | Description |
-| :-----: | ----------- |
-| `target` | Transform IR handle to scf.for operations |
-
-### Results:
-
-| Result | Description |
-| :----: | ----------- |
-| `transformed` | TransformHandleTypeInterface instance |
-
 ## `transform.loop.peel` (transform::LoopPeelOp)
+
+> **Safety (0):** Fully safe — no semantic violation possible.
 
 _Peels the first or last iteration of the loop_
 
@@ -1922,6 +1968,8 @@ Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
 
 ## `transform.loop.coalesce` (transform::LoopCoalesceOp)
 
+> **Safety (0):** Fully safe — no semantic violation possible.
+
 _Coalesces the perfect loop nest enclosed by a given loop_
 
 Syntax:
@@ -1955,6 +2003,8 @@ Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
 | `transformed` | TransformHandleTypeInterface instance |
 
 ## `transform.loop.fuse_sibling` (transform::LoopFuseSiblingOp)
+
+> **Safety (2):** Possible violation, detectable only by the EquivalenceVerifier.
 
 _Fuse a loop into another loop, assuming the fusion is legal._
 
@@ -2000,6 +2050,8 @@ Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
 | `fused_loop` | TransformHandleTypeInterface instance |
 
 ## `transform.loop.hoist_loop_invariant_subsets` (transform::HoistLoopInvariantSubsetsOp)
+
+> **Safety (0):** Fully safe — no semantic violation possible.
 
 _Hoist loop invariant subset ops_
 
@@ -2060,6 +2112,8 @@ Interfaces: `MemoryEffectOpInterface`, `TransformOpInterface`
 
 ## `transform.structured.vectorize` (transform::VectorizeOp)
 
+> **Safety (0):** Fully safe — no semantic violation possible.
+
 Syntax:
 
 ```
@@ -2084,6 +2138,8 @@ target Linalg ops ("regular vectorization"). More specifically:
 transform.structured.vectorize %target vector_sizes [1, 4] : !transform.any_op
 
 ## `transform.structured.vectorize_children_and_apply_patterns` (transform::VectorizeChildrenAndApplyPatternsOp)
+
+> **Safety (0):** Fully safe — no semantic violation possible.
 
 Syntax:
 
@@ -2155,6 +2211,8 @@ Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
 
 ## `transform.structured.hoist_redundant_vector_transfers` (transform::HoistRedundantVectorTransfersOp)
 
+> **Safety (0):** Fully safe — no semantic violation possible.
+
 Syntax:
 
 ```
@@ -2203,6 +2261,8 @@ Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
 
 ## `transform.structured.hoist_redundant_vector_broadcasts` (transform::HoistRedundantVectorBroadcastsOp)
 
+> **Safety (0):** Fully safe — no semantic violation possible.
+
 Syntax:
 
 ```
@@ -2233,79 +2293,9 @@ Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
 | :----: | ----------- |
 | `transformed` | TransformHandleTypeInterface instance |
 
-## `transform.bufferization.buffer_loop_hoisting` (transform::BufferLoopHoistingOp)
-
-Syntax:
-
-```
-operation ::= `transform.bufferization.buffer_loop_hoisting` $target attr-dict `:` type($target)
-```
-
-Hoist buffer allocations ("memref.alloc" and "memref.alloca") from loops
-within the targeted op. This transform assumes that there are no buffer
-deallocation ops in the IR.
-
-This transform reads the `target` handle and modifies the payload.
-
-Traits: `TransformEachOpTrait`
-
-Interfaces: `MemoryEffectOpInterface`, `TransformOpInterface`
-
-### Operands:
-
-| Operand | Description |
-| :-----: | ----------- |
-| `target` | TransformHandleTypeInterface instance |
-
-## `transform.memref.multibuffer` (transform::MemRefMultiBufferOp)
-
-_Multibuffers an allocation_
-
-Syntax:
-
-```
-operation ::= `transform.memref.multibuffer` $target attr-dict `:` functional-type(operands, results)
-```
-
-Transformation to do multi-buffering/array expansion to remove
-dependencies on the temporary allocation between consecutive loop
-iterations. This transform expands the size of an allocation by
-a given multiplicative factor and fixes up any users of the
-multibuffered allocation.
-If skip analysis is not set the transformation will only apply
-if it can prove that there is no data being carried across loop
-iterations.
-
-### Return modes
-
-This operation returns the new allocation if multi-buffering
-succeeds, and failure otherwise.
-
-Traits: `FunctionalStyleTransformOpTrait`
-
-Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
-
-### Attributes:
-
-<table>
-<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
-<tr><td><code>factor</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute whose value is positive</td></tr>
-<tr><td><code>skip_analysis</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
-</table>
-
-### Operands:
-
-| Operand | Description |
-| :-----: | ----------- |
-| `target` | Transform IR handle to memref.alloc operations |
-
-### Results:
-
-| Result | Description |
-| :----: | ----------- |
-| `transformed` | TransformHandleTypeInterface instance |
-
 ## `transform.memref.erase_dead_alloc_and_stores` (transform::MemRefEraseDeadAllocAndStoresOp)
+
+> **Safety (0):** Fully safe — no semantic violation possible.
 
 Syntax:
 
@@ -2336,6 +2326,8 @@ Interfaces: `MemoryEffectOpInterface`, `TransformOpInterface`
 | `target` | TransformHandleTypeInterface instance |
 
 ## `transform.memref.make_loop_independent` (transform::MemRefMakeLoopIndependentOp)
+
+> **Safety (0):** Fully safe — no semantic violation possible.
 
 Syntax:
 
@@ -2389,6 +2381,8 @@ Interfaces: `MemoryEffectsOpInterface`, `TransformOpInterface`
 | `transformed` | TransformHandleTypeInterface instance |
 
 ## `transform.apply_patterns` (transform::ApplyPatternsOp)
+
+> **Safety (0):** Fully safe — no semantic violation possible.
 
 _Greedily applies patterns to the body of the targeted op_
 
@@ -2446,6 +2440,8 @@ Interfaces: `MemoryEffectOpInterface`, `RegionKindInterface`, `TransformOpInterf
 
 ## `transform.apply_cse` (transform::ApplyCommonSubexpressionEliminationOp)
 
+> **Safety (0):** Fully safe — no semantic violation possible.
+
 _Eliminate common subexpressions in the body of the target op_
 
 Syntax:
@@ -2474,6 +2470,8 @@ Interfaces: `MemoryEffectOpInterface`, `TransformOpInterface`
 | `target` | TransformHandleTypeInterface instance |
 
 ## `transform.apply_dce` (transform::ApplyDeadCodeEliminationOp)
+
+> **Safety (0):** Fully safe — no semantic violation possible.
 
 _Eliminate dead operations in the body of the target op_
 
@@ -2505,6 +2503,8 @@ Interfaces: `MemoryEffectOpInterface`, `TransformOpInterface`
 
 ## `transform.apply_licm` (transform::ApplyLoopInvariantCodeMotionOp)
 
+> **Safety (0):** Fully safe — no semantic violation possible.
+
 _Move loop-invariant code out of a loop-like op_
 
 Syntax:
@@ -2532,60 +2532,9 @@ Interfaces: `MemoryEffectOpInterface`, `TransformOpInterface`
 | :-----: | ----------- |
 | `target` | TransformHandleTypeInterface instance |
 
-## `transform.affine.simplify_bounded_affine_ops` (transform::SimplifyBoundedAffineOpsOp)
-
-Syntax:
-
-```
-operation ::= `transform.affine.simplify_bounded_affine_ops` $target `with` `[` ($bounded_values^ `:` type($bounded_values))? `]`
-              `within` $lower_bounds `and` $upper_bounds attr-dict
-              `:` type($target)
-```
-
-Simplify the targeted affine.min / affine.max ops given the supplied
-lower and upper bounds for values that may be used as target op operands.
-
-Example:
-```
-%0 = transform.structured.match ops{["affine.min", "affine.max"]} in %arg1
-%1 = transform.structured.match ops{["gpu.lane_id"]} in %arg1
-transform.affine.simplify_bounded_affine_ops %0 with [%1] within [0] and [32]
-
-// Multiple bounds can be specified.
-transform.affine.simplify_bounded_affine_ops %0 with [%1, %2] within [0, 5] and [32, 50]
-```
-
-Bounded op handles (`%1` and `%2) must be mapped to ops that have a single
-result of index type. The sets of target ops and bounded ops must not
-overlap.
-
-### Return modes
-
-Target ops must be affine.min or affine.max ops. This transform consumes the
-target handle and does not produce any handle. It reads the bounded op
-handles.
-
-TODO: Support affine.apply targets.
-TODO: Allow mixed PDL_Operation/int64_t for lower_bounds and upper_bounds.
-
-Interfaces: `MemoryEffectOpInterface`, `TransformOpInterface`
-
-### Attributes:
-
-<table>
-<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
-<tr><td><code>lower_bounds</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
-<tr><td><code>upper_bounds</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
-</table>
-
-### Operands:
-
-| Operand | Description |
-| :-----: | ----------- |
-| `target` | TransformHandleTypeInterface instance |
-| `bounded_values` | variadic of TransformHandleTypeInterface instance |
-
 ## `transform.affine.simplify_min_max_affine_ops` (transform::SimplifyMinMaxAffineOpsOp)
+
+> **Safety (0):** Fully safe — no semantic violation possible.
 
 Syntax:
 
@@ -2621,6 +2570,8 @@ Interfaces: `MemoryEffectOpInterface`, `TransformOpInterface`
 
 ## `transform.apply_patterns.linalg.tiling_canonicalization` (transform::ApplyTilingCanonicalizationPatternsOp)
 
+> **Safety (0):** Fully safe — no semantic violation possible.
+
 Syntax:
 
 ```
@@ -2632,6 +2583,8 @@ Collects canonicalization patterns relevant to apply after tiling patterns.
 Interfaces: `PatternDescriptorOpInterface`
 
 ## `transform.apply_patterns.linalg.fold_unit_extent_dims_via_slices` (transform::ApplyFoldUnitExtentDimsViaSlicesPatternsOp)
+
+> **Safety (0):** Fully safe — no semantic violation possible.
 
 Syntax:
 
@@ -2646,6 +2599,8 @@ Interfaces: `PatternDescriptorOpInterface`
 
 ## `transform.apply_patterns.linalg.fold_unit_extent_dims_via_reshapes` (transform::ApplyFoldUnitExtentDimsViaReshapesPatternsOp)
 
+> **Safety (0):** Fully safe — no semantic violation possible.
+
 Syntax:
 
 ```
@@ -2658,6 +2613,8 @@ linalg ops on tensors via reassociative reshape ops.
 Interfaces: `PatternDescriptorOpInterface`
 
 ## `transform.apply_patterns.scf.for_loop_canonicalization` (transform::ApplyForLoopCanonicalizationPatternsOp)
+
+> **Safety (0):** Fully safe — no semantic violation possible.
 
 Syntax:
 
@@ -2672,6 +2629,8 @@ loop bounds and loop steps are canonicalized.
 Interfaces: `PatternDescriptorOpInterface`
 
 ## `transform.apply_patterns.vector.reduction_to_contract` (transform::ApplyVectorReductionToContractPatternsOp)
+
+> **Safety (0):** Fully safe — no semantic violation possible.
 
 Syntax:
 
@@ -2694,6 +2653,8 @@ vector.contract.
 Interfaces: `PatternDescriptorOpInterface`
 
 ## `transform.apply_patterns.vector.transfer_permutation_patterns` (transform::ApplyTransferPermutationPatternsOp)
+
+> **Safety (0):** Fully safe — no semantic violation possible.
 
 Syntax:
 
@@ -2718,6 +2679,8 @@ Interfaces: `PatternDescriptorOpInterface`
 
 ## `transform.apply_patterns.vector.lower_contraction` (transform::ApplyLowerContractionPatternsOp)
 
+> **Safety (0):** Fully safe — no semantic violation possible.
+
 Syntax:
 
 ```
@@ -2741,6 +2704,8 @@ Interfaces: `PatternDescriptorOpInterface`
 
 ## `transform.apply_patterns.vector.lower_outerproduct` (transform::ApplyLowerOuterProductPatternsOp)
 
+> **Safety (0):** Fully safe — no semantic violation possible.
+
 Syntax:
 
 ```
@@ -2756,6 +2721,8 @@ process of lowering to e.g. LLVM or NVVM.
 Interfaces: `PatternDescriptorOpInterface`
 
 ## `transform.apply_patterns.vector.lower_transfer` (transform::ApplyLowerTransferPatternsOp)
+
+> **Safety (0):** Fully safe — no semantic violation possible.
 
 Syntax:
 
@@ -2779,6 +2746,8 @@ Interfaces: `PatternDescriptorOpInterface`
 </table>
 
 ## `transform.apply_patterns.vector.lower_transpose` (transform::ApplyLowerTransposePatternsOp)
+
+> **Safety (0):** Fully safe — no semantic violation possible.
 
 Syntax:
 
@@ -2808,6 +2777,8 @@ Interfaces: `PatternDescriptorOpInterface`
 
 ## `transform.apply_patterns.vector.lower_shape_cast` (transform::ApplyLowerShapeCastPatternsOp)
 
+> **Safety (0):** Fully safe — no semantic violation possible.
+
 Syntax:
 
 ```
@@ -2823,6 +2794,8 @@ process of lowering to e.g. LLVM or NVVM.
 Interfaces: `PatternDescriptorOpInterface`
 
 ## `transform.apply_patterns.vector.sink_ops` (transform::ApplySinkVectorPatternsOp)
+
+> **Safety (0):** Fully safe — no semantic violation possible.
 
 Syntax:
 

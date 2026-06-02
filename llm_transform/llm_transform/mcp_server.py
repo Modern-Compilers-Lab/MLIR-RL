@@ -17,6 +17,9 @@ _SESSION_DIR = Path(os.environ["EXPERIMENT_DIR"]) if "EXPERIMENT_DIR" in os.envi
 _LOG_FILE = _SESSION_DIR / "claude_optimization.log"
 _BEST_DIR = _SESSION_DIR / "best"
 _BEST_STATE_FILE = _BEST_DIR / "state.json"
+_TRANSFORM_DOCS_FILE = PARENT_DIR / "resources" / "transform_filtered.md"
+
+_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*\S)\s*$")
 
 mcp = FastMCP("llm-transform")
 
@@ -108,6 +111,76 @@ def _log_result(
         return msg
 
     return f"Speedup: {speedup_str} — Current best for {id}: {best_state[id]:.4f}x"
+
+
+def _doc_headings(lines: list[str]) -> list[tuple[int, int, str | None]]:
+    """Return ``(line_index, level, op_name_or_None)`` for every heading.
+
+    The op name is the first backtick-stripped token of a heading whose text
+    starts with ``transform.`` (e.g. ``## `transform.structured.fuse` (...)``);
+    other headings such as ``## Table of Contents`` yield ``None``.
+    """
+    headings: list[tuple[int, int, str | None]] = []
+    for i, line in enumerate(lines):
+        m = _HEADING_RE.match(line)
+        if m:
+            text = m.group(2).replace("`", "").strip()
+            first = text.split()[0] if text else ""
+            op = first if first.startswith("transform.") else None
+            headings.append((i, len(m.group(1)), op))
+    return headings
+
+
+def _extract_operation_doc(markdown: str, operation: str) -> str | None:
+    """Return the markdown section documenting ``operation``, or ``None``.
+
+    A section runs from its operation heading until the next heading of equal
+    or shallower level, so nested sub-sections stay attached.
+    """
+    lines = markdown.splitlines()
+    headings = _doc_headings(lines)
+    for idx, (start, level, op) in enumerate(headings):
+        if op != operation:
+            continue
+        end = len(lines)
+        for j in range(idx + 1, len(headings)):
+            if headings[j][1] <= level:
+                end = headings[j][0]
+                break
+        return "\n".join(lines[start:end]).strip()
+    return None
+
+
+@mcp.tool()
+def get_transform_doc(operation: str) -> str:
+    """
+    Return the markdown documentation for a single whitelisted transform-dialect operation.
+
+    Use this to look up the exact syntax, operands, attributes, and results of a transform
+    operation before using it in a transformation schedule. Only the whitelisted operations
+    documented in resources/transform_filtered.md are available.
+
+    Args:
+        operation (str): The transform operation name, e.g. "transform.structured.tile_using_for".
+            A leading "transform." is added if omitted, and surrounding backticks are ignored.
+
+    Returns:
+        str: The markdown section documenting the operation (heading, safety classification, syntax,
+            operands, attributes, and results).
+    """
+    operation = operation.strip().strip("`")
+    if not operation.startswith("transform."):
+        operation = "transform." + operation
+
+    markdown = _TRANSFORM_DOCS_FILE.read_text(encoding="utf-8")
+    doc = _extract_operation_doc(markdown, operation)
+    if doc is None:
+        available = sorted({op for _, _, op in _doc_headings(markdown.splitlines()) if op})
+        raise ValueError(
+            f"No documentation found for '{operation}'. "
+            f"Available operations: {', '.join(available)}"
+        )
+    return doc
 
 
 @mcp.tool()
