@@ -8,7 +8,7 @@ This project lets a Claude Code agent iteratively rewrite **MLIR transform sched
 speedup = PyTorch_time / MLIR_time
 ```
 
-with a target of ≥ 2× (i.e. at least twice as fast as PyTorch). Claude interacts with the pipeline through an MCP server (`llm_transform/mcp_server.py`) that exposes two tools, `run_schedule` (compile + execute + log) and `lower_schedule` (compile only, dump IR for inspection). See [resources/context.md](resources/context.md) for the full technical overview.
+with a target of ≥ 2× (i.e. at least twice as fast as PyTorch). Claude interacts with the pipeline through an MCP server (`llm_transform/mcp_server.py`) that exposes three tools: `run_schedule` (compile + execute + log), `lower_schedule` (compile only, dump IR for inspection), and `get_transform_doc` (look up the documentation for a whitelisted transform op). See [resources/context.md](resources/context.md) for the full technical overview.
 
 ---
 
@@ -181,7 +181,7 @@ resources/
   base_passes.txt         # Default MLIR lowering pipeline
   conda/                  # Conda environment definitions
 llm_transform/            # Python package (installed via `pip install -e .`)
-  mcp_server.py           # MCP tools: run_schedule, lower_schedule
+  mcp_server.py           # MCP tools: run_schedule, lower_schedule, get_transform_doc
   torch_exec.py           # PyTorch reference execution
   utils/                  # Compilation + execution pipeline
   tools/

@@ -11,6 +11,7 @@ from fastmcp import FastMCP
 
 from llm_transform.utils.instance_filter import parse_instance_filter
 from llm_transform.utils.transformation import transform_and_lower
+from llm_transform.utils.whitelist import verify_schedule
 
 PARENT_DIR = Path(__file__).parents[1]
 _SESSION_DIR = Path(os.environ["EXPERIMENT_DIR"]) if "EXPERIMENT_DIR" in os.environ else PARENT_DIR / "logs"
@@ -220,6 +221,7 @@ def run_schedule(
         raise ValueError("MLIR passes cannot be empty")
     if not summary.strip():
         raise ValueError("Summary cannot be empty")
+    verify_schedule(transform_schedule)
     _check_id_in_scope(id)
 
     tmp_dir = PARENT_DIR / "tmp"
@@ -329,6 +331,7 @@ def lower_schedule(
         raise ValueError("Transform schedule cannot be empty")
     if not mlir_passes.strip():
         raise ValueError("MLIR passes cannot be empty")
+    verify_schedule(transform_schedule)
     _check_id_in_scope(id)
 
     return transform_and_lower(id, transform_schedule, mlir_passes, llvm_passes, llvm_flags, llc_flags, bufferize_first, _SESSION_DIR)

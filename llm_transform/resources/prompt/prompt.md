@@ -42,7 +42,7 @@ Intel Xeon E5-2680 v4 (Broadwell)
 
 ## Workflow
 1. **Research:** Read `sizes.json` and `.mlir` of in-scope instances. Then search the web aggressively for state-of-the-art optimization strategies from leading production compilers (IREE, TVM, Halide, Triton) and target-specific architectural idioms for x86 Broadwell.
-2. **Discover Transformations:** Exhaustively discover EVERY transform operation available in the MLIR transform dialect [Transform.md](resources/Transform.md). Do not limit yourself to the obvious ones: enumerate all existing transformations and take every single one of them into consideration as you build your transform schedules.
+2. **Discover Transformations:** Exhaustively discover EVERY whitelisted transform operation listed in [resources/whitelist.txt](resources/whitelist.txt). Do not limit yourself to the obvious ones: enumerate all whitelisted transformations and take every single one of them into consideration as you build your transform schedules. Use `get_transform_doc` to look up the exact syntax, operands, attributes, and results of any operation before using it. You are restricted to the whitelisted operations only — a schedule containing any other operation is rejected before it runs.
 3. **Baseline:** Call `run_schedule` with base schedule/passes to record baseline speedup.
 4. **Iterate:** Generate configs -> Test via `run_schedule` -> Inspect IR/assembly via `lower_schedule`.
 5. **Stall Pivot:** If 5+ attempts fail to improve, stop and re-evaluate. Check assembly for execution structural flaws, microarchitectural spills, unaligned data streams, or redundant memory references. Switch to a completely different scheduling, lowering paradigm or pass sequence structure.

@@ -20,7 +20,7 @@ resources/
   prompt/                    # Prompt template + scope snippets for Claude optimization (not for LLM use)
   conda/                     # Conda environments needed for running the system
 llm_transform/               # Python package (installed via `pip install -e .`)
-  mcp_server.py              # MCP server exposing the two tools below
+  mcp_server.py              # MCP server exposing the three tools below
   torch_exec.py              # PyTorch reference execution for comparison
   utils/
     transformation.py        # Core: apply schedule, bufferize, lower, compile
@@ -86,7 +86,7 @@ The code is in **tensor** semantics. Bufferization (tensor to memref) is handled
 
 ## MCP Tools
 
-Two tools are available:
+Three tools are available:
 
 ### `run_schedule`
 
@@ -111,6 +111,15 @@ Same parameters as `run_schedule` (except `summary`). Returns a dictionary with 
 - `llvm` — path to the LLVM IR file (`logs/gen/<id>/llvm.ll`)
 - `llvm_opt` — path to the optimized LLVM IR file (`logs/gen/<id>/llvm_opt.ll`)
 - `asm` — path to the generated assembly file (`logs/gen/<id>/asm.s`)
+
+### `get_transform_doc`
+
+Look up the documentation for a single transform-dialect operation: its syntax, operands, attributes, and results. Use it to check exactly how an operation is written before adding it to a schedule.
+
+Parameter:
+- `operation` (required) — the transform op name, e.g. `"transform.structured.tile_using_for"` (a leading `transform.` is added if omitted)
+
+Returns the markdown documentation for that operation. Only the whitelisted operations are available; requesting an unknown op raises an error listing the allowed operations.
 
 ## Tool Restrictions
 
@@ -144,3 +153,5 @@ module attributes {transform.with_named_sequence} {
     }
 }
 ```
+
+Only the whitelisted transform operations may be used; a schedule that uses any other operation is rejected before it is applied. Use `get_transform_doc` to look up the exact documentation for a given operation.
