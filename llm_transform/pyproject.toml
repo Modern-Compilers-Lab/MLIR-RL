@@ -1,11 +1,26 @@
 [project]
 name = "llm_transform"
 version = "0.1.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
+dependencies = [
+    "matplotlib",
+    "fastmcp",
+    "MonkeyType",
+    "torch",
+]
+
+[tool.poetry]
+packages = [{ include = "llm_transform" }]
+
+[tool.poetry.dependencies]
+# source override for a dep already declared in [project]
+torch = { source = "pytorch-cpu" }
+
+[[tool.poetry.source]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+priority = "explicit"
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[tool.hatch.build.targets.wheel]
-packages = ["llm_transform"]
+requires = ["poetry-core>=2.0"]
+build-backend = "poetry.core.masonry.api"

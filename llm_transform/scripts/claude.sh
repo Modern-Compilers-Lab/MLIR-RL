@@ -4,7 +4,6 @@
 
 #SBATCH -J claude
 #SBATCH -p compute
-#SBATCH -q c2
 #SBATCH -c 8
 #SBATCH --mem=32G
 #SBATCH -t 7-00
@@ -16,12 +15,17 @@
 module load miniconda-nobashrc 2> /dev/null
 eval "$(conda shell.bash hook)"
 
-# Activate any environments if required
-conda activate main
-
 # Execute the code
 FULL_SCRIPT_PATH=$(scontrol show job "$SLURM_JOB_ID" | awk -F= '/Command=/{print $2}' | cut -d' ' -f1)
 cd "$(dirname "$(dirname "$(realpath "$FULL_SCRIPT_PATH")")")"
+
+# Load the conda environment name (MAIN_ENV) and activate
+if [ ! -f scripts/env.local.sh ]; then
+    echo "Error: scripts/env.local.sh not found. Copy scripts/env.local.sh.example to scripts/env.local.sh and set MAIN_ENV." >&2
+    exit 1
+fi
+source scripts/env.local.sh
+conda activate "$MAIN_ENV"
 
 # Optional: subset of benchmarks/instances to optimize (names or full IDs).
 # Example: sbatch scripts/claude.sh matmul_2 conv_2d

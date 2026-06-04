@@ -22,11 +22,11 @@ The build produces three self-registering pass plugins (`.so`):
 
 ## Installation
 
-Activate the conda env and run `make`:
+The top-level `scripts/setup.sh` builds these plugins as part of project setup. To rebuild them by hand after editing the passes, run `make` with the environment active (the `# <environment activation>` step is defined in the [top-level README](../../../../README.md#1-installation)):
 
 ```bash
-conda activate main
-make
+# <environment activation>
+make                # or: make clean && make
 ```
 
 This produces three plugins in `build/lib/`:
@@ -62,7 +62,7 @@ The script applies the schedule, prepares the IR, runs the verifier, and prints
 the verdict:
 
 ```bash
-conda activate main
+# <environment activation>
 python verify_equivalence.py path/to/kernel_and_schedule.mlir
 ```
 
@@ -75,6 +75,7 @@ It prints one of:
 Add `-v` / `--verbose` to also print the verifier's trace and diagnostics:
 
 ```bash
+# <environment activation>
 python verify_equivalence.py path/to/kernel_and_schedule.mlir --verbose
 ```
 

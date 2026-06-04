@@ -20,9 +20,6 @@
 module load miniconda-nobashrc 2> /dev/null
 eval "$(conda shell.bash hook)"
 
-# Activate any environments if required
-conda activate main
-
 # Environment variables
 export OMP_NUM_THREADS=$(nproc)
 export OMP_PROC_BIND=close
@@ -36,6 +33,14 @@ export KMP_BLOCKTIME=infinite
 set -eo pipefail
 FULL_SCRIPT_PATH=$(scontrol show job "$SLURM_JOB_ID" | awk -F= '/Command=/{print $2}' | cut -d' ' -f1)
 cd "$(dirname "$(dirname "$(realpath "$FULL_SCRIPT_PATH")")")"
+
+# Load the conda environment name (MAIN_ENV) and activate
+if [ ! -f scripts/env.local.sh ]; then
+    echo "Error: scripts/env.local.sh not found. Copy scripts/env.local.sh.example to scripts/env.local.sh and set MAIN_ENV." >&2
+    exit 1
+fi
+source scripts/env.local.sh
+conda activate "$MAIN_ENV"
 
 orig_args=("$@")
 while [[ "$#" -gt 0 ]]; do
@@ -79,7 +84,6 @@ rm -f "$ERR_FILE"
 echo "Execution time (ns): $TIME_OPT"
 
 echo "PyTorch:"
-conda activate torch-cpu
 TIME_TORCH=$(python -m llm_transform.torch_exec $CODE_ID) 2>"$ERR_FILE"
 EXIT_CODE=$?
 if [ $EXIT_CODE -ne 0 ]; then

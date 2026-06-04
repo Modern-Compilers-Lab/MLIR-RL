@@ -43,8 +43,8 @@ def load_plugins():
             ctypes.CDLL(str(path), mode=ctypes.RTLD_GLOBAL)
         except OSError as exc:
             raise RuntimeError(
-                f"could not load plugin {path}: {exc}; build it with "
-                f"`conda activate main && make` in {HERE}"
+                f"could not load plugin {path}: {exc}; "
+                "follow documentation to build it"
             ) from exc
 
 
