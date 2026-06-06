@@ -63,3 +63,5 @@ python -m llm_action.src.rl.evaluate_ppo "$@"
 ## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260522_210639_v37_dataset_relu --mode training-logs
 ## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260530_145246_v52_dataset_relu_free --mode training-logs
 ## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260530_145252_v52_dataset_relu_graph --mode training-logs
+## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260603_024434_v52_dataset_relu_free --mode training-logs
+## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260603_024449_v52_dataset_relu_graph --mode training-logs

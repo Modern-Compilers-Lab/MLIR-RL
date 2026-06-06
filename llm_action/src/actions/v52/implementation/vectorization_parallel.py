@@ -23,7 +23,7 @@ class VectorizationParallel(ActionBase):
     Preprocessing uses tile_using_forall (parallel tiling distributing outer tiles across threads).
     """
 
-    VOCAB = [1, 2, 4, 8]
+    VOCAB = [1, 4, 8, 16, 32, 64]
     unique_execution = True  # Consumes the linalg op; one-shot lowering
 
     @classmethod

@@ -15,7 +15,7 @@ class ParallelVectorization(ActionBase):
 
     unique_execution: bool = True  # introduces forall + generalization; one-shot
 
-    VOCAB = [0, 2, 4, 8, 16, 32]  # 0 = do not tile that dimension
+    VOCAB = [0, 4, 8, 16, 32, 64]  # 0 = do not tile that dimension
 
     @classmethod
     def parameters(cls) -> dict:

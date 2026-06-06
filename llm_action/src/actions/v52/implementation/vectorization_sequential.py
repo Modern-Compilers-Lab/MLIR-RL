@@ -23,7 +23,7 @@ class VectorizationSequential(ActionBase):
     Preprocessing uses tile_using_for (sequential tiling).
     """
 
-    VOCAB = [1, 2, 4, 8]
+    VOCAB = [1, 4, 8, 16, 32, 64]
     unique_execution = True  # Consumes the linalg op; second application has no valid target
 
     @classmethod

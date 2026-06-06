@@ -15,7 +15,7 @@ class SequentialVectorization(ActionBase):
 
     unique_execution: bool = True  # generalization consumes the named op; one-shot
 
-    VOCAB = [1, 2, 4, 8, 16, 32]  # SIMD-friendly tile sizes
+    VOCAB = [1, 4, 8, 16, 32, 64]  # SIMD-friendly tile sizes
 
     @classmethod
     def parameters(cls) -> dict:

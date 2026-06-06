@@ -18,7 +18,7 @@ def tiling_tool(code: str, parameters: dict) -> tuple[bool, str, bool]:
 
     Args:
         code (str): The MLIR code.
-        parameters (dict): Parameters for the action. Keys: "tile_sizes" (list[int]) — per-loop tile sizes; 0 means do not tile. Values from [0, 2, 4, 8, 16, 32].
+        parameters (dict): Parameters for the action. Keys: "tile_sizes" (list[int]) — per-loop tile sizes; 0 means do not tile. Values from [0, 4, 8, 16, 32, 64].
 
     Returns:
         tuple[bool, str, bool]: (precondition, transformed code, postcondition)
@@ -58,7 +58,7 @@ def promotion_tool(code: str, parameters: dict) -> tuple[bool, str, bool]:
 
     Args:
         code (str): The MLIR code.
-        parameters (dict): Parameters for the action. Keys: "tile_sizes" (list[int]) — per-loop tile sizes for prerequisite tiling; 0 = skip. Values from [0, 2, 4, 8, 16, 32]. "operands_to_promote" (list[int]) — operand indices to promote (e.g. [0, 1, 2]).
+        parameters (dict): Parameters for the action. Keys: "tile_sizes" (list[int]) — per-loop tile sizes for prerequisite tiling; 0 = skip. Values from [0, 4, 8, 16, 32, 64]. "operands_to_promote" (list[int]) — operand indices to promote (e.g. [0, 1, 2]).
 
     Returns:
         tuple[bool, str, bool]: (precondition, transformed code, postcondition)
@@ -78,7 +78,7 @@ def sequential_vectorization_tool(code: str, parameters: dict) -> tuple[bool, st
 
     Args:
         code (str): The MLIR code.
-        parameters (dict): Parameters for the action. Keys: "vector_sizes" (list[int]) — per-dimension tile sizes for SIMD-width tiling; all dims are tiled. Values from [1, 2, 4, 8, 16, 32].
+        parameters (dict): Parameters for the action. Keys: "vector_sizes" (list[int]) — per-dimension tile sizes for SIMD-width tiling; all dims are tiled. Values from [1, 4, 8, 16, 32, 64].
 
     Returns:
         tuple[bool, str, bool]: (precondition, transformed code, postcondition)
@@ -98,7 +98,7 @@ def parallel_vectorization_tool(code: str, parameters: dict) -> tuple[bool, str,
 
     Args:
         code (str): The MLIR code.
-        parameters (dict): Parameters for the action. Keys: "vector_sizes" (list[int]) — per-dimension tile sizes for forall distribution; 0 = skip. Values from [0, 2, 4, 8, 16, 32].
+        parameters (dict): Parameters for the action. Keys: "vector_sizes" (list[int]) — per-dimension tile sizes for forall distribution; 0 = skip. Values from [0, 4, 8, 16, 32, 64].
 
     Returns:
         tuple[bool, str, bool]: (precondition, transformed code, postcondition)
@@ -118,7 +118,7 @@ def tiling_parallelization_tool(code: str, parameters: dict) -> tuple[bool, str,
 
     Args:
         code (str): The MLIR code.
-        parameters (dict): Parameters for the action. Keys: "tile_sizes" (list[int]) — per-parallel-dimension tile sizes for forall distribution; 0 = skip. Values from [0, 2, 4, 8, 16, 32].
+        parameters (dict): Parameters for the action. Keys: "tile_sizes" (list[int]) — per-parallel-dimension tile sizes for forall distribution; 0 = skip. Values from [0, 4, 8, 16, 32, 64].
 
     Returns:
         tuple[bool, str, bool]: (precondition, transformed code, postcondition)

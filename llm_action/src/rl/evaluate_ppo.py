@@ -27,6 +27,9 @@ ENV_CONFIG_KEYS = [
 
 STAT_KEYS = ["min", "q25", "median", "q75", "max"]
 
+# Kernels to skip during evaluation (excluded from CSVs, results.json, and live runs).
+EXCLUDED_KERNELS = {"relu_256_10"}
+
 PER_KERNEL_METRICS = ["speedup", "exec_time_ms", "speedup_to_torch"]
 
 SUMMARY_AGGS = {
@@ -178,10 +181,11 @@ def main():
     if args.mode == "training-logs":
         best = _best_eval(run_dir)
         per_kernel = [{"kernel": r["benchmark"], "category": _category(r["benchmark"]), "greedy": r}
-                      for r in best["greedy_results"]]
+                      for r in best["greedy_results"]
+                      if r["benchmark"] not in EXCLUDED_KERNELS]
         _write_single_outputs(out_dir, args, run_dir, train_config, best, per_kernel)
         logging.info(f"Done. Pulled best eval #{best['eval_count']} (ts={best['timestep']}, "
-                     f"mean speedup={np.mean([r['speedup'] for r in best['greedy_results']]):.2f}x) "
+                     f"mean speedup={np.mean([r['greedy']['speedup'] for r in per_kernel]):.2f}x) "
                      f"-> {out_dir}")
         return
 
@@ -219,6 +223,9 @@ def main():
 
         per_kernel = []        # rows for per_kernel.csv / results.json
         for idx in range(n_benchmarks):
+            if benchmarks[idx].name in EXCLUDED_KERNELS:
+                logging.info(f"[{idx + 1}/{n_benchmarks}] {benchmarks[idx].name}: excluded, skipping")
+                continue
             greedy_runs = [run_episode(model, env, idx, deterministic=True)
                            for _ in range(args.eval_greedy_runs)]
             stats = _kernel_stats(greedy_runs)
@@ -305,7 +312,7 @@ def _write_single_outputs(out_dir, args, run_dir, train_config, best, per_kernel
         "evaluated_at": datetime.now().isoformat(timespec="seconds"),
         "n_benchmarks": len(per_kernel),
         "train_config": train_config,
-        "greedy_results": best["greedy_results"],
+        "greedy_results": [r["greedy"] for r in per_kernel],
     }
     (out_dir / "results.json").write_text(json.dumps(payload, indent=2))
 

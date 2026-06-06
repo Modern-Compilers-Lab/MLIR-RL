@@ -57,7 +57,7 @@ def vectorization_sequential_tool(code: str, parameters: dict) -> tuple[bool, st
 
     Args:
         code (str): The MLIR code.
-        parameters (dict): Parameters for the action. Keys: "vector_sizes" (list[int]) — SIMD width per loop dim. Values from [1, 2, 4, 8].
+        parameters (dict): Parameters for the action. Keys: "vector_sizes" (list[int]) — SIMD width per loop dim. Values from [1, 4, 8, 16, 32, 64].
 
     Returns:
         tuple[bool, str, bool]: (precondition, transformed code, postcondition)
@@ -77,7 +77,7 @@ def vectorization_parallel_tool(code: str, parameters: dict) -> tuple[bool, str,
 
     Args:
         code (str): The MLIR code.
-        parameters (dict): Parameters for the action. Keys: "vector_sizes" (list[int]) — SIMD width per loop dim. Values from [1, 2, 4, 8].
+        parameters (dict): Parameters for the action. Keys: "vector_sizes" (list[int]) — SIMD width per loop dim. Values from [1, 4, 8, 16, 32, 64].
 
     Returns:
         tuple[bool, str, bool]: (precondition, transformed code, postcondition)
@@ -117,7 +117,7 @@ def parallelization_threads_tool(code: str, parameters: dict) -> tuple[bool, str
 
     Args:
         code (str): The MLIR code.
-        parameters (dict): Parameters for the action. Keys: "num_threads" (int) — number of threads. Values from [2, 4, 8, 16, 32, 64].
+        parameters (dict): Parameters for the action. Keys: "num_threads" (int) — number of threads. Values from [2, 4, 8, 16, 32].
 
     Returns:
         tuple[bool, str, bool]: (precondition, transformed code, postcondition)

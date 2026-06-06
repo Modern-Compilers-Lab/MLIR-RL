@@ -15,7 +15,7 @@ class Promotion(ActionBase):
 
     unique_execution: bool = True  # can promote at different tile levels
 
-    TILE_VOCAB = [0, 2, 4, 8, 16, 32]  # tile sizes; 0 = do not tile
+    TILE_VOCAB = [0, 4, 8, 16, 32, 64]  # tile sizes; 0 = do not tile
 
     # Operand combinations to promote
     OPERAND_OPTIONS = [

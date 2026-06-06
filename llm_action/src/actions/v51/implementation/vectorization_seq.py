@@ -14,7 +14,7 @@ class VectorizationSeq(ActionBase):
 
     unique_execution: bool = True  # lowering transform — linalg op consumed
 
-    VOCAB = [1, 2, 4]
+    VOCAB = [1, 4, 8, 16, 32, 64]
 
     @classmethod
     def parameters(cls) -> dict:

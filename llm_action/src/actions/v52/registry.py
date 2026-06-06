@@ -36,6 +36,7 @@ ACTION_DEPENDENCIES: dict[str, list[str]] = {
 
 SCHEDULE_GRAPH: dict[str, list[list[str]]] = {
     "relu": [
+        ["ParallelizationThreads"],
         ["VectorizationParallel"],
         ["ParallelizationThreads", "VectorizationParallel"],
         ["Tiling", "VectorizationParallel"],

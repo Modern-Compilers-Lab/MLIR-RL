@@ -14,7 +14,7 @@ class TilingParallelization(ActionBase):
 
     unique_execution: bool = True  # introduces scf.forall; second application has no valid target
 
-    VOCAB = [0, 2, 4, 8, 16, 32]  # 0 = do not tile/parallelize that dimension
+    VOCAB = [0, 4, 8, 16, 32, 64]  # 0 = do not tile/parallelize that dimension
 
     @classmethod
     def parameters(cls) -> dict:

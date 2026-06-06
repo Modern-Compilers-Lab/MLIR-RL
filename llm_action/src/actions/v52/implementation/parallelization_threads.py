@@ -31,7 +31,7 @@ class ParallelizationThreads(ActionBase):
     Tags the tiled linalg op.
     """
 
-    THREAD_OPTIONS = [2, 4, 8, 16, 32, 64]
+    THREAD_OPTIONS = [2, 4, 8, 16, 32]
     unique_execution = True  # Introducing scf.forall changes the loop kind; one-shot parallelization
 
     @classmethod

@@ -57,7 +57,7 @@ def vectorization_seq_tool(code: str, parameters: dict) -> tuple[bool, str, bool
 
     Args:
         code (str): The MLIR code.
-        parameters (dict): Parameters for the action. Keys: vector_sizes (list[int]). Values per slot: [1, 2, 4].
+        parameters (dict): Parameters for the action. Keys: vector_sizes (list[int]). Values per slot: [1, 4, 8, 16, 32, 64].
 
     Returns:
         tuple[bool, str, bool]: (precondition, transformed code, postcondition)
@@ -77,7 +77,7 @@ def vectorization_par_tool(code: str, parameters: dict) -> tuple[bool, str, bool
 
     Args:
         code (str): The MLIR code.
-        parameters (dict): Parameters for the action. Keys: vector_sizes (list[int]). Values per slot: [1, 2, 4].
+        parameters (dict): Parameters for the action. Keys: vector_sizes (list[int]). Values per slot: [1, 4, 8, 16, 32, 64].
 
     Returns:
         tuple[bool, str, bool]: (precondition, transformed code, postcondition)
