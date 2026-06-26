@@ -19,13 +19,7 @@ from llm_action.src.config import L, MAX_ACTION_EXECUTIONS
 logger = logging.getLogger(__name__)
 
 class MLIROptEnv(gym.Env):
-    """MLIR optimization environment with configurable parametrization.
-
-    param_mode:
-      "multidiscrete" : single policy outputs [action, slot_0..slot_6]
-      "two_policy"    : Discrete action space, internal param model picks params
-      "llm"           : Discrete action space, LLM generates params
-    """
+    """MLIR optimization environment with configurable parametrization."""
 
     metadata = {"render_modes": ["human"]}
 
@@ -258,7 +252,6 @@ class MLIROptEnv(gym.Env):
         self._used_action_counts[action_idx] = self._used_action_counts.get(action_idx, 0) + 1
 
         # Update loop count and bounds in case the action changed the op structure
-        # (e.g., Image2Col converts 7-loop conv2d to 4-loop generic)
         self._n_loops, self._loop_bounds = _parse_loop_info(self._current_code)
 
         # If the tag was consumed (e.g., Vectorization), auto-terminate

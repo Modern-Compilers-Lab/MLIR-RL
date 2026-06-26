@@ -23,9 +23,7 @@ assert len(OP_TYPE_LIST) == NUM_OP_TYPES, (
 
 _RELU_BODY_SIGNATURE = ("arith.cmpf ugt", "arith.select")
 
-# Match `linalg.<name>` whose attribute brace carries `tag = "operation_0"`.
-# Used to identify the family of the tagged op directly from the MLIR source,
-# uniformly across all op types (matmul, conv, pool, add, generic/relu).
+# Match `linalg.<name>` whose attribute brace carries `tag = "operation_0" (matmul, conv, pool, add, generic/relu).
 _TAGGED_OP_RE = re.compile(
     r'linalg\.([\w_]+)[^{]*\{[^}]*tag\s*=\s*"operation_0"',
     re.DOTALL,

@@ -1,0 +1,70 @@
+{
+  "intents": [
+    {
+      "name": "Cache Locality and Data Reuse",
+      "description": "Restructure the loop nest iteration space and data layout to maximize temporal and spatial reuse within the L1/L2 cache hierarchy, minimizing costly main-memory and L3 traffic.",
+      "rationale": "Matrix multiplication is compute-bound with high data reuse potential (each input element is reused proportionally to one output dimension). Without blocking, working sets of even moderate matrices (256x256 f64 = 512KB) overflow L2, causing performance to collapse to memory bandwidth. Tiling, interchange, and promotion together enable near-optimal cache utilization.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Tiling",
+          "description": "Partition the iteration space into smaller blocks so that the working set of each tile fits within a target cache level (L1 or L2).",
+          "rationale": "Tiling is the foundational transformation for matmul and loop-nest performance on CPUs. It converts O(n) cache misses per element into O(1) by ensuring data is reused while still cache-resident. For the 3-deep matmul loop nest, tiling all three dimensions creates a blocked computation where tiles of both input matrices and the output tile coexist in cache.",
+          "action_template": "Tiling(tile_sizes) — tile_sizes is a vector with one entry per loop dimension; a value of 0 means 'do not tile' that dimension. Layer 2 determines which dimensions to tile and the tile size values."
+        },
+        {
+          "name": "Loop Interchange",
+          "description": "Permute the order of loops in a loop band to improve memory access patterns (stride-1 access on innermost loop) and enable downstream vectorization.",
+          "rationale": "After tiling, the relative order of the intra-tile loops determines which dimension is traversed innermost. Choosing the loop that accesses contiguous memory (matching the row-major layout of tensors) as the innermost loop maximizes spatial locality and enables efficient SIMD vectorization. Interchange is also useful pre-tiling to establish a favorable base loop order.",
+          "action_template": "LoopInterchange(loop_band, permutation) OR LoopInterchangeSwap(adjacent_pair) — permutation is a reordering of loop indices within the band. Layer 2 determines the loop band target and legal permutations."
+        },
+        {
+          "name": "Promotion",
+          "description": "Copy tiled operand slices into contiguous temporary buffers to eliminate strided memory access within tiles.",
+          "rationale": "When a tile is a subview of a larger matrix, rows of the tile are separated by the full matrix stride, causing poor cache line utilization and TLB pressure. Promotion packs tile data into a dense contiguous buffer, converting strided access to sequential access. This is especially impactful for large matrices where the stride far exceeds tile width. Requires bufferization as an internal preprocessing step: tile → bufferize → promote → canonicalize.",
+          "action_template": "Promotion(operands_to_promote) — operands_to_promote is a list of operand indices (e.g. [0], [1], [0,1,2]) specifying which operands to copy into contiguous local buffers. Promotion requires buffer (memref) form, so this action must include an internal bufferization preprocessing step."
+        }
+      ]
+    },
+    {
+      "name": "SIMD Vectorization",
+      "description": "Lower innermost loop iterations to SIMD vector instructions (AVX2+FMA) to exploit data-level parallelism within each core.",
+      "rationale": "The target CPU can execute 2 FMA operations per cycle on 256-bit AVX2 vectors (4 f64 elements per vector). Without vectorization, peak throughput is reduced by 4x (the vector width). Vectorization requires a preprocessing tiling step to create inner loops whose trip counts match the SIMD width, then lowers those loops to vector operations.",
+      "priority": "high",
+      "transformations": [
+        {
+          "name": "Sequential Vectorization",
+          "description": "Tile target loops sequentially (tile_using_for) to create inner loops matching vector widths, then lower those inner loops to SIMD vector operations.",
+          "rationale": "This is the standard single-threaded vectorization path. The preprocessing tiling creates a tight inner loop with a trip count equal to the vector size (e.g., 4 for f64 on AVX2), which is then lowered to vector instructions. Outer tiled loops remain sequential scalar loops. Applicable to all shapes regardless of parallelism potential.",
+          "action_template": "SequentialVectorization(vector_sizes) — vector_sizes specifies the SIMD tile sizes for the innermost loop dimensions. Preprocessing tiles the operation using tile_using_for to create inner loops matching these sizes, then vectorizes. Layer 2 determines the vector_sizes values based on data type and target SIMD width."
+        },
+        {
+          "name": "Parallel Vectorization",
+          "description": "Tile target loops in parallel (tile_using_forall) distributing outer tiles across threads, then lower the inner loops to SIMD vector operations.",
+          "rationale": "Combines thread-level parallelism with SIMD vectorization in a single action. The preprocessing tiling uses tile_using_forall to distribute outer tile iterations across available threads while creating inner loops sized for vectorization. This is effective for large loop nests where both multi-core utilization and SIMD exploitation are needed simultaneously.",
+          "action_template": "ParallelVectorization(vector_sizes) — vector_sizes specifies the SIMD tile sizes for the innermost loop dimensions. Preprocessing tiles the operation using tile_using_forall to distribute outer tiles across threads and create inner loops matching vector sizes, then vectorizes. Layer 2 determines vector_sizes values."
+        }
+      ]
+    },
+    {
+      "name": "Thread-Level Parallelism",
+      "description": "Distribute coarse-grained work across the 28 physical cores to utilize the full multi-core capacity of the target CPU.",
+      "rationale": "For medium-to-large matmul shapes, a single core leaves 27 cores idle. Distributing parallel loop dimensions across cores provides near-linear speedup. However, for small shapes (e.g., 128x128x128), parallelization overhead may negate the benefit, making this shape-dependent. Also, the Parallel Vectorization action already provides one path to multi-threading, so this intent covers the case where parallelism is applied independently of vectorization.",
+      "priority": "medium",
+      "transformations": [
+        {
+          "name": "Tiling-Based Parallelization",
+          "description": "Tile an outer parallel loop dimension and distribute the resulting tiles across threads using forall-style parallel execution.",
+          "rationale": "Tiling-based parallelization gives fine control over work granularity per thread. The tile size determines how much work each thread receives and can be tuned for load balance and cache behavior. This is preferred when the parallel dimension is not evenly divisible by the thread count or when controlling per-thread working set size matters.",
+          "action_template": "TilingBasedParallelization(tile_sizes) — tile_sizes is a vector with one entry per loop dimension; non-zero entries for parallel dimensions are distributed across threads via tile_using_forall. Layer 2 determines tile sizes and which dimensions to parallelize."
+        },
+        {
+          "name": "Thread-Count Parallelization",
+          "description": "Directly partition the iteration space of a parallel loop among a specified number of threads.",
+          "rationale": "Thread-count parallelization is a simpler model where the number of threads is specified directly and the iteration space is divided evenly. This is straightforward when the iteration count is a known multiple of the thread count, avoiding tile-size tuning. It maps naturally to the hardware core count (e.g., 28 threads for 28 cores).",
+          "action_template": "ThreadCountParallelization(num_threads) — num_threads specifies the number of parallel threads to distribute work across. The iteration count of the target parallel loop must be divisible by num_threads. Layer 2 determines legal num_threads values."
+        }
+      ]
+    }
+  ]
+}

@@ -1,18 +1,11 @@
 # MLIR-RL — `llm_action/` Contribution Documentation
 
 > **Purpose of this document.** This is a single, self-contained reference for the `llm_action/`
-> contribution, written to support the **Design and Implementation** chapter of the master's
-> thesis. It has two parts:
+> contribution.
 >
-> - **Part A — Technical Reference Dossier**: an exhaustive, citation-ready description of every
+> - **Technical Reference Dossier**: an exhaustive, citation-ready description of every
 >   component, its data flow, and the files that implement it. Use it to look up *facts* while
 >   writing (paths, interfaces, defaults, exact behaviours).
-> - **Part B — Proposed "Design and Implementation" Chapter Outline**: a section tree with
->   per-section narrative guidance (purpose, what to cover, which Part A material and figures to
->   draw on, and the claim to land). Use it as the *scaffold* for the prose.
->
-> Diagrams throughout are ASCII sketches meant to *inspire* the manuscript's real figures, not to
-> be pasted verbatim. Each is tagged `[Figure X]` and re-listed in the closing figure map.
 
 ---
 
@@ -36,7 +29,7 @@ end-to-end, turning a months-long manual engineering task into an automated, rep
 
 ---
 
-# PART A — Technical Reference Dossier
+# Technical Reference Dossier
 
 ## A1. System overview & problem framing
 
@@ -743,134 +736,3 @@ schedule is lowered identically.
 | MCP | `src/mcp/{mcp_server,mcp_server_minimal,utils}.py`; `docs/MCP.md`, `docs/MCP_MINIMAL.md` | Agent grounding: transform/execute/baseline/docs. |
 | Lowering pipeline | `src/utils/transformation.py` | `run_transform_code`, default bufferize/lower + LLVM passes. |
 | Global config | `src/config.py` | Constants (`L=7`, `OP_FEATURES_SIZE=137`, `MAX_PARAM_SLOTS=7`, `N_CORES=28`, timeouts, paths). |
-
----
-
-# PART B — Proposed "Design and Implementation" Chapter Outline
-
-> **How to read Part B.** Each subsection lists: **Purpose** (what the section achieves for the
-> reader), **Cover** (the content, in research register), **Draws on** (Part A sections + figures),
-> and **Claim** (the argument to land). Numbering is indicative (assume this is Chapter 3); adapt to
-> the university template. The recommended narrative arc is summarized at the end.
-
-### 3.1 Motivation and problem statement
-- **Purpose:** establish *why* this work exists before any machinery is introduced.
-- **Cover:** RL for compiler optimization in one paragraph; then the real bottleneck — manual
-  action-space design is expensive, brittle, and slow (legality, composition, parameterization).
-  Frame the three sub-pains (time-consuming engineering, error-prone Transform-dialect work, painful
-  experimentation across kernel families).
-- **Draws on:** A1.1.
-- **Claim:** *the action space, not the policy, is the limiting factor — and it can be automated.*
-
-### 3.2 Design overview and principles
-- **Purpose:** give the reader the whole picture on one page before drilling in.
-- **Cover:** the three integrated worlds (Compiler / LLM Agent / RL) and the closed loop; the five
-  design principles (action≠script, separation of concerns, composability-first, RL-friendliness,
-  generalizability); the target assumptions (Broadwell/AVX2/28-core) as design context.
-- **Draws on:** A1.2–A1.4; **Figure 1**.
-- **Claim:** *the contribution is a single integrated system whose principles make the parts fit.*
-
-### 3.3 Agentic foundation
-- **Purpose:** justify the agent and explain how it is grounded in the compiler.
-- **Cover:** choice of Claude as the coding agent (motivate with coding-benchmark standing and the
-  agentic Claude Code CLI execution model); the role of versioned methodology prompts; **the
-  MLIR-Torch MCP** as the grounding layer that lets the agent *transform, execute, and benchmark*
-  MLIR and PyTorch (tools, SLURM execution, full vs minimal server, documentation retrieval to
-  prevent hallucinated dialect usage).
-- **Draws on:** A6 (and A2's invocation pattern); **Figure 9**.
-- **Claim:** *a strong coding agent, grounded in real compiler feedback, can do compiler engineering.*
-
-### 3.4 The automatic action-generation pipeline
-- **Purpose:** the core contribution — present the three layers and the separation of concerns.
-- **Cover:** open with the separation-of-concerns thesis (what / how / does-it-compose). Then one
-  subsection per layer, each stating motivation, agent role, process, **inputs and outputs**, and
-  LLM/MCP usage:
-  - **3.4.1 Layer 1 — Enumeration** (A2.1): abstract intents → macro actions + `action_template`;
-    granularity rule; metadata output.
-  - **3.4.2 Layer 2 — Implementation** (A2.2): one transformation → one executable `ActionBase`
-    action; the 5-step MCP self-validation; the tagging, multiplicity, and safety contracts.
-  - **3.4.3 Layer 3 — Schedule Exploration** (A2.3): phased composability discovery; shapes-not-
-    parameters scoping; parallel sub-agents; the `SCHEDULE_GRAPH` / `ACTION_DEPENDENCIES` outputs.
-  - **3.4.4 The action contract as the unifying interface** (A3): `ActionBase`, lifecycle, tagging
-    categories, the Tiling worked example.
-- **Draws on:** A2, A3; **Figures 2 and 3**; the v48 example (A3.6 / A4.4).
-- **Claim:** *separation of concerns is what makes automated action synthesis robust and auditable.*
-
-### 3.5 From generated actions to an RL action space
-- **Purpose:** show the seamless hand-off from pipeline output to a learnable action space.
-- **Cover:** the registry loading a version; the **MultiDiscrete** mapping (selector + per-action
-  parameter slots, slot map, `decode_params`); legality masking — `valid_param_mask` (divisibility),
-  the dependency denylist, and the schedule-graph allowlist; why this is RL-friendly (discrete macro,
-  parameterized micro, maskable).
-- **Draws on:** A3.4, A4.3, A4.4; **Figures 5 and 6**.
-- **Claim:** *the generated contract maps directly onto a hierarchical, maskable RL action space — no
-  manual glue.*
-
-### 3.6 RL formulation
-- **Purpose:** define the MDP precisely.
-- **Cover:** state/observation (loop-nest features + action history + progress; flat-vector, MLP, no
-  GNN — and why); action (as in 3.5); reward design (final / intermediate / schedule; log/raw/delta/
-  relative scales; MLIR vs PyTorch baseline; penalties; tag-consumption termination); **free vs graph
-  schedule modes** and their sample-efficiency trade-off.
-- **Draws on:** A4.2, A4.5, A4.4; **Figures 4 and 7**.
-- **Claim:** *the MDP is shaped so that empirical schedule knowledge (Layer 3) becomes a learning
-  prior, improving sample efficiency.*
-
-### 3.7 Learning algorithm
-- **Purpose:** justify and describe the optimizer.
-- **Cover:** why PPO (clipped surrogate stability, on-policy sample reuse for an expensive env,
-  multi-categorical support, natural fit with masking); the `MaskablePPO` + `ActionMasker`
-  realization; actor-critic MLP, GAE, entropy annealing; the training loop with the compiler in the
-  loop; the curated hyperparameters; dual-mode evaluation and logging.
-- **Draws on:** A5; **Figure 8**.
-- **Claim:** *MaskablePPO is the right algorithm for a masked, MultiDiscrete, expensive-step
-  environment.*
-
-### 3.8 Implementation details and configuration
-- **Purpose:** the engineering substrate, kept brief and reference-like.
-- **Cover:** execution backends (local/dask/slurm) and the fixed lowering pipeline; benchmark
-  families and tagging; the `v<x>` versioning discipline; reproducibility (config.json, seeds,
-  checkpoints).
-- **Draws on:** A4.6, A6.3, A7.
-- **Claim:** *the system is reproducible and built to iterate fast across families and action sets.*
-
-### 3.9 Synthesis: closing the loop
-- **Purpose:** tie the chapter together and bridge to Evaluation.
-- **Cover:** restate the loop — agent-*generated* actions, empirically *validated* schedules,
-  RL-*consumed* action space, all grounded in *measured* speedups; note what this enables that manual
-  design did not (rapid per-family action sets, auditable contracts); forward-reference the
-  Evaluation chapter (speedups vs MLIR baseline and PyTorch).
-- **Draws on:** A1.2, A7; **Figure 1** (reprise).
-- **Claim:** *the contribution is an end-to-end, automated, reproducible replacement for manual
-  compiler RL action-space engineering.*
-
----
-
-## Recommended narrative arc (the story spine)
-
-> **Pain → Idea → Agent → Pipeline → Action space → MDP → Learner → Loop.**
->
-> "Compiler RL is bottlenecked by its action space (3.1). We integrate three worlds to automate it
-> (3.2). A strong coding agent, grounded in the compiler via MCP, does the engineering (3.3). It runs
-> a three-layer pipeline — enumerate, implement, explore — separated by concern (3.4). The generated,
-> contract-bearing actions map directly onto a maskable MultiDiscrete RL action space (3.5), inside a
-> carefully shaped MDP (3.6), optimized by MaskablePPO (3.7), on a reproducible substrate (3.8),
-> closing a fully automated loop (3.9)."
-
-Keep the *agentic synthesis* (3.3–3.4) as the chapter's centre of gravity — it is the novel
-contribution; the RL machinery (3.5–3.7), while substantial, is the *consumer* of that contribution
-and should be framed as "the action space the agent built, made learnable."
-
-## Figure map (proposed thesis figures → Part A diagrams)
-
-| Thesis figure | Part A source | Shows |
-|---|---|---|
-| End-to-end system architecture | Figure 1 (A1.2) | Compiler ⟷ LLM Agent ⟷ RL closed loop. |
-| Three-layer pipeline with artifacts | Figure 2 (A2) | Enumeration → Implementation → Exploration + outputs. |
-| Action contract lifecycle | Figure 3 (A3.1) | precondition → preprocess → implement → postcondition. |
-| RL MDP & observation vector | Figure 4 (A4.2) | state/action/reward + the 137-d feature breakdown. |
-| MultiDiscrete action space | Figure 5 (A4.3) | selector + per-action parameter slots. |
-| Denylist vs allowlist (v48) | Figure 6 (A4.4) | `ACTION_DEPENDENCIES` graph & `SCHEDULE_GRAPH` tree. |
-| Free vs graph schedule | Figure 7 (A4.4) | exploration breadth vs sample efficiency. |
-| PPO training loop | Figure 8 (A5.2) | rollout → GAE → clipped update, compiler-in-the-loop. |
-| MCP as the bridge | Figure 9 (A6) | tool catalog and grounding role. |

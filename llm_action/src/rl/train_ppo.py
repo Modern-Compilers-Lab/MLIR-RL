@@ -404,16 +404,6 @@ class MLIRMetricsCallback(BaseCallback):
         wandb.log({**metrics, **train_metrics})
 
 class EntCoefScheduleCallback(BaseCallback):
-    """Anneal `model.ent_coef` from `initial` to `final` over `total_episodes`.
-
-    Progress is measured in completed episodes (counted via the SB3 Monitor
-    `info["episode"]` signal, matching the pattern used by MLIRMetricsCallback),
-    so the schedule is consistent across runs with different per-episode step
-    counts. The value is committed to `model.ent_coef` at every rollout-start;
-    PPO reads the attribute fresh inside each minibatch update, so the new
-    value applies to the next gradient update without subclassing the algo.
-    Logs `train/ent_coef` (forwarded to W&B by the existing pipeline).
-    """
     def __init__(self, initial: float, final: float, total_episodes: int,
                  schedule: str = "linear", verbose: int = 0):
         super().__init__(verbose)
@@ -571,8 +561,6 @@ def main():
         model = MaskablePPO.load(args.resume, env=train_env)
         logging.info(f"Loaded model from {args.resume}")
     else:
-        # "hard" = stock MaskablePPO (masks behavior AND objective). "behavior-only" masks
-        # only the executed action; log_prob/entropy use the unmasked distribution.
         if args.policy_mask_mode == "behavior-only":
             from llm_action.src.rl.behavior_masking import BehaviorMaskedActorCriticPolicy
             policy_class = BehaviorMaskedActorCriticPolicy

@@ -11,9 +11,6 @@ class ActionRegistry:
     total_actions: int
     name_to_idx: dict[str, int]
     blocks: dict[int, frozenset[int]] = field(default_factory=dict)
-    # Per-family allowlist of schedule paths (action-name skeletons resolved to indices).
-    # family -> tuple of paths, each path a tuple of action indices. Consumed by the
-    # "schedule_graph" masking mode; empty when the version defines no SCHEDULE_GRAPH.
     schedule_paths: dict[str, tuple[tuple[int, ...], ...]] = field(default_factory=dict)
 
 def load_action_registry(version: str) -> ActionRegistry:

@@ -36,32 +36,31 @@ export DASK_NODES=${DASK_NODES:-1}
 python -m llm_action.src.rl.evaluate_ppo "$@"
 
 # Matmul
-## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260520_170930_v32_dataset_matmul --mode training-logs
-## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260529_191729_v48_dataset_matmul_free --mode training-logs
-## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260530_032102_v48_dataset_matmul_free_interm --mode training-logs
-## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260529_191812_v48_dataset_matmul_graph --mode training-logs
-## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260530_032115_v48_dataset_matmul_graph_interm --mode training-logs
+## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260529_191729_v48_dataset_matmul_free
+## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260530_032102_v48_dataset_matmul_free_interm
+## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260529_191812_v48_dataset_matmul_graph
+## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260530_032115_v48_dataset_matmul_graph_interm
 
 # Conv2d
-## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260520_193712_v33_dataset_conv2d --mode training-logs
-## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260529_191949_v49_dataset_conv2d_free --mode training-logs
-## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260530_050304_v49_dataset_conv2d_free_interm --mode training-logs
-## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260530_042634_v49_dataset_conv2d_graph --mode training-logs
-## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260530_050311_v49_dataset_conv2d_graph_interm --mode training-logs
+## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260520_193712_v33_dataset_conv2d
+## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260529_191949_v49_dataset_conv2d_free
+## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260530_050304_v49_dataset_conv2d_free_interm
+## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260530_042634_v49_dataset_conv2d_graph
+## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260530_050311_v49_dataset_conv2d_graph_interm
 
 # Pooling
-## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260520_201653_v34_dataset_pooling --mode training-logs
-## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260531_012742_v50_dataset_pooling_free --mode training-logs
-## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260531_012748_v50_dataset_pooling_graph --mode training-logs
+## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260520_201653_v34_dataset_pooling
+## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260531_012742_v50_dataset_pooling_free
+## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260531_012748_v50_dataset_pooling_graph
 
 # Add
-## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260522_201059_v35_dataset_add --mode training-logs
-## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260530_145351_v51_dataset_add_free --mode training-logs
-## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260530_145357_v51_dataset_add_graph --mode training-logs
+## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260522_201059_v35_dataset_add
+## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260530_145351_v51_dataset_add_free
+## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260530_145357_v51_dataset_add_graph
 
 # ReLu
-## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260522_210639_v37_dataset_relu --mode training-logs
-## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260530_145246_v52_dataset_relu_free --mode training-logs
-## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260530_145252_v52_dataset_relu_graph --mode training-logs
-## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260603_024434_v52_dataset_relu_free --mode training-logs
-## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260603_024449_v52_dataset_relu_graph --mode training-logs
+## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260522_210639_v37_dataset_relu
+## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260530_145246_v52_dataset_relu_free
+## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260530_145252_v52_dataset_relu_graph
+## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260603_024434_v52_dataset_relu_free
+## sbatch llm_action/scripts/evaluate.sh --run-name ppo_20260603_024449_v52_dataset_relu_graph
