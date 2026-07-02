@@ -1,0 +1,56 @@
+{
+  "implementation": "rl_autoschedular_v4_5",
+  "benchmarks_folder_path": "data/all",
+  "results_dir": "results/V4_5_agent_bergamo_ckpt1900",
+  "eval_json_file": "results/experiment3/exec_times/base_eval.json",
+  "max_num_stores_loads": 7,
+  "max_num_loops": 7,
+  "max_num_load_store_dim": 7,
+  "num_tile_sizes": 7,
+  "vect_size_limit": 512,
+  "order": [
+    [
+      "I"
+    ],
+    [
+      "!",
+      "I",
+      "NT"
+    ],
+    [
+      "!",
+      "I"
+    ],
+    [
+      "V",
+      "NT"
+    ]
+  ],
+  "interchange_mode": "enumerate",
+  "exploration": [
+    "entropy"
+  ],
+  "init_epsilon": 0.5,
+  "normalize_bounds": "max",
+  "normalize_adv": "standard",
+  "reuse_experience": "none",
+  "bench_count": 32,
+  "replay_count": 10,
+  "nb_iterations": 2000,
+  "ppo_epochs": 4,
+  "ppo_batch_size": 64,
+  "value_epochs": 0,
+  "value_batch_size": 32,
+  "value_coef": 0.5,
+  "value_clip": false,
+  "entropy_coef": 0.01,
+  "lr": 0.0003,
+  "truncate": 5,
+  "num_pad_multiples": 3,
+  "num_unroll_factors": 3,
+  "tags": [
+    "v4_5_eval"
+  ],
+  "debug": false,
+  "main_exec_data_file": ""
+}

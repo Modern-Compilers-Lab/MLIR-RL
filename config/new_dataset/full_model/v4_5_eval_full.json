@@ -1,0 +1,85 @@
+{
+  "max_num_stores_loads": 7,
+  "max_num_loops": 7,
+  "max_num_load_store_dim": 7,
+  "num_tile_sizes": 7,
+  "num_pad_multiples": 3,
+  "num_unroll_factors": 3,
+  "vect_size_limit": 512,
+  "order": [
+    [
+      "I"
+    ],
+    [
+      "!",
+      "I",
+      "NT"
+    ],
+    [
+      "!",
+      "I"
+    ],
+    [
+      "V",
+      "NT"
+    ]
+  ],
+  "interchange_mode": "enumerate",
+  "exploration": [
+    "entropy"
+  ],
+  "init_epsilon": 0.5,
+  "normalize_bounds": "max",
+  "normalize_adv": "standard",
+  "reuse_experience": "none",
+  "benchmarks_folder_path": "data/new_dataset/all/eval_full",
+  "bench_count": 32,
+  "replay_count": 10,
+  "nb_iterations": 2000,
+  "ppo_epochs": 4,
+  "ppo_batch_size": 64,
+  "value_epochs": 0,
+  "value_clip": false,
+  "value_coef": 0.5,
+  "entropy_coef": 0.01,
+  "lr": 0.0003,
+  "truncate": 5,
+  "tags": [
+    "new_dataset",
+    "v4_5",
+    "full_model",
+    "eval"
+  ],
+  "debug": false,
+  "main_exec_data_file": "",
+  "results_dir": "results/new_dataset_results/full_model/v4_5_agent",
+  "implementation": "rl_autoschedular_v4_5",
+  "json_file": "",
+  "eval_json_file": "results/new_dataset_results/baselines/mlir/eval_full_base.json",
+  "hardware_auto_detect": true,
+  "hardware_l1_kb": 0,
+  "hardware_l2_kb": 0,
+  "hardware_l3_kb": 0,
+  "hardware_physical_cores": 0,
+  "hardware_logical_cores": 0,
+  "hardware_simd_width": 0,
+  "hardware_clock_mhz": 0,
+  "reward_shaping_enabled": true,
+  "reward_shaping_scale": 1.0,
+  "reward_shaping_clip": 2.0,
+  "reward_shaping_weight_ai": 1.0,
+  "reward_shaping_weight_vectorizable": 0.1,
+  "reward_shaping_weight_parallel": 0.1,
+  "reward_shaping_vectorization_bonus": 0.2,
+  "eval_runs": 5,
+  "eval_aggregation": "median",
+  "transformer_d_model": 256,
+  "transformer_nhead": 8,
+  "transformer_num_layers": 3,
+  "transformer_ffn_dim": 1024,
+  "transformer_dropout": 0.1,
+  "transformer_activation": "gelu",
+  "transformer_pooling": "cls",
+  "transformer_use_action_history_token": false,
+  "value_batch_size": 32
+}

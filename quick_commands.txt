@@ -1,0 +1,73 @@
+# ---------- 0) Go to project root ----------
+
+cd /scratch/mb10856/MLIR-RL
+
+# ---------- 1) One-time shell setup ----------
+
+source ~/envs/mlir/bin/activate && set -a && source .env && set +a
+export PATH="/opt/slurm/20.11.4-13/bin:$PATH"
+
+# Implementation is now selected from the config file via:
+#   "implementation": "rl_autoschedular" | "rl_autoschedular_v1" | "rl_autoschedular_v2" | ...
+# Optional override (only if you want to force one from shell):
+# export AUTOSCHEDULER_IMPL=rl_autoschedular_v1
+
+# Pick config file once (edit as needed)
+export CONFIG=config/train1.json
+export CONFIG_FILE_PATH="$CONFIG"
+
+# ---------- 2) Generate MLIR baseline times ----------
+
+sbatch scripts/baseline/get_base.sh "$CONFIG"
+# Writes: results/<experiment>/exec_times/<impl_prefix>_base.json
+
+# ---------- 3) Generate PyTorch baselines ----------
+
+sbatch scripts/baseline/get_pytorch_times.sh "$CONFIG"
+
+# ---------- 4) Split implementation baseline into train/eval ----------
+
+python scripts/split_json.py "$CONFIG"
+
+# Reads the implementation-specific base file and writes:
+#   <impl_prefix>_base_train.json and <impl_prefix>_base_eval.json
+
+# ---------- 5) Train ----------
+
+sbatch --time=48:00:00 --array=0-3 scripts/train/train.sh
+
+# ---------- 6) Evaluate checkpoints ----------
+
+sbatch scripts/eval/eval.sh "$CONFIG"
+
+# ---------- 7) Compare in Dashboard ----------
+
+cd /scratch/mb10856/MLIR-RL/dashboard
+streamlit run dashboard.py --server.fileWatcherType none
+
+# ---------- Submit + Monitor ----------
+
+scripts/utils/submit_and_monitor.sh scripts/train/train.sh "$CONFIG"
+
+scripts/utils/submit_and_monitor.sh scripts/eval/eval.sh "$CONFIG"
+
+# ---------- Fast Copy/Paste ----------
+
+rsync -avh --progress /path/source/ /path/destination/
+
+rsync -avh --progress dataset_final/ $SCRATCH/MLIR-RL/
+
+# ---------- Get number of files of a folder ----------
+
+find folder/path/ -type f | wc -l
+
+# ---------- Check user quota (disk space and files count) ----------
+
+lfs quota -u $USER directory/path
+
+lfs quota -u $USER .
+
+# ---------- Resubmit Job Example ----------
+
+sbatch scripts/train/train.sh config/ops_and_blocks/train/paper_original.json --resume
+results/ops_and_blocks_results/paper_original_agent

@@ -94,4 +94,3 @@ target_link_libraries(AstDumper
   
     )
 
-mlir_check_all_link_libraries(AstDumper)

@@ -1,10 +1,37 @@
+# Python cache and build outputs
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments and local env files
+.venv/
+venv/
 .env
-.vscode
-.neptune
-*__pycache__
-tools/*/build
-pres/
-tmp-scripts/
-results-tmp/
-results-eval/
-these/
+.env.*
+!.env.example
+
+# Editor/OS noise
+.vscode/
+.idea/
+.DS_Store
+*.swp
+.claude/
+
+# Generated logs/artifacts
+dask-logs/
+logs/
+results/*
+
+# Heavy local dependencies and datasets
+llvm-project/
+tools/ast_dumper/build/
+tools/vectorizer/build/
+data/*
+old_data/*
+
+demo/models/*
+tmp/
