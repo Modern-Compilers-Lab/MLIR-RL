@@ -2,7 +2,12 @@
   "mcpServers": {
     "mlir-tools": {
       "command": "conda",
-      "args": ["run", "-n", "mlir", "--no-capture-output", "python", "-m", "llm_action.src.mcp.mcp_server"],
+      "args": ["run", "-n", "mlir", "--no-capture-output", "python", "-m", "llm_action.src.mcp.mcp_server_minimal"],
+      "cwd": "/scratch/kb5213/workspace/MLIR-RL"
+    },
+    "rl-action-v55": {
+      "command": "conda",
+      "args": ["run", "-n", "mlir", "--no-capture-output", "python", "-m", "llm_action.src.actions.v55.mcp"],
       "cwd": "/scratch/kb5213/workspace/MLIR-RL"
     }
   }

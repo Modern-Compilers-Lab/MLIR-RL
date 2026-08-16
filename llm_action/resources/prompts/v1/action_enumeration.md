@@ -416,8 +416,8 @@ class ActionEnumeration(BaseModel):
 
 # Output Constraints
 
-- Produce **2-3 optimization intents**.
-- Each intent must contain **2-4 transformations**.
+- Produce **3-4 optimization intents**.
+- Each intent must contain **3-4 transformations**.
 - Use consistent transformation names across intents (avoid duplicates with different names).
 - Keep descriptions concise (1-2 sentences).
 - Do **not** include parameter knobs, preconditions, ordering rules, or code.
