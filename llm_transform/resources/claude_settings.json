@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__llm-transform__*",
+      "WebSearch",
+      "WebFetch"
+    ],
+    "deny": [
+      "Write",
+      "Bash",
+      "Read(./tmp/**)",
+      "Glob(./tmp/**)",
+      "Grep(./tmp/**)",
+      "Read(./tests/**)",
+      "Glob(./tests/**)",
+      "Grep(./tests/**)"
+    ]
+  },
+  "autoMemoryEnabled": false,
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read|Glob|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/restrict-paths.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
